@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# react router
+/.react-router/
+/build/
+
+# testing
+coverage/
+
+# misc
+.DS_Store
+*.tsbuildinfo
+.eslintcache
+
+# logs
+npm-debug.log*
+
+# env files
+.env
+.env.*
+!.env.example
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
