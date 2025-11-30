@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { action as loginAction } from '~/routes/login';
-import { loader as homeLoader } from '~/routes/home';
+import { loader as homeLoader } from '~/routes/dashboard';
 
 import {
   cookieFor,
