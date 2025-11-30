@@ -1,4 +1,4 @@
-import { data, Form, redirect, useNavigation } from 'react-router';
+import { data, Form, redirect, useNavigation, useSearchParams } from 'react-router';
 
 import { Alert, Button, Field, Input } from '~/components/ui';
 import { authenticate, getCurrentUser } from '~/lib/auth.server';
@@ -38,8 +38,8 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function Login({ actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
-  const next =
-    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('next');
+  const [searchParams] = useSearchParams();
+  const next = searchParams.get('next');
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
