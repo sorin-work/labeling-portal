@@ -98,3 +98,68 @@ export function Alert({
     </div>
   );
 }
+
+export function Badge({
+  tone = 'slate',
+  children,
+}: {
+  tone?: 'slate' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'sky';
+  children: ReactNode;
+}) {
+  const styles = {
+    slate: 'bg-slate-100 text-slate-700',
+    indigo: 'bg-indigo-50 text-indigo-700',
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-800',
+    rose: 'bg-rose-50 text-rose-700',
+    sky: 'bg-sky-50 text-sky-700',
+  };
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        styles[tone],
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function EmptyState({
+  title,
+  children,
+  action,
+}: {
+  title: string;
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border-2 border-dashed border-slate-200 px-6 py-12 text-center">
+      <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+      {children && <div className="mt-1 text-sm text-slate-500">{children}</div>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 className="text-2xl font-semibold">{title}</h1>
+        {subtitle && <div className="mt-1 text-sm text-slate-600">{subtitle}</div>}
+      </div>
+      {actions && <div className="flex gap-2">{actions}</div>}
+    </div>
+  );
+}
