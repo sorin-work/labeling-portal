@@ -7,5 +7,8 @@ export default [
     index('routes/dashboard.tsx'),
     route('projects', 'routes/projects.tsx'),
     route('projects/new', 'routes/project-new.tsx'),
+    route('projects/:projectId', 'routes/project-layout.tsx', [
+      index('routes/project-overview.tsx'),
+    ]),
   ]),
 ] satisfies RouteConfig;
