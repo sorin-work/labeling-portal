@@ -102,3 +102,42 @@ export function statusOf(result: unknown): number {
 export function locationOf(result: unknown): string | null {
   return result instanceof Response ? result.headers.get('Location') : null;
 }
+
+export async function createTestProject(
+  orgId: string,
+  overrides: Partial<{
+    name: string;
+    schema: object;
+    status: 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ARCHIVED';
+    overlap: number;
+    timeLimitMinutes: number;
+    reviewRequired: boolean;
+    instructions: string;
+  }> = {},
+) {
+  const schema = overrides.schema ?? {
+    kind: 'text_classification',
+    textField: 'text',
+    labels: ['positive', 'negative'],
+    multiple: false,
+  };
+  const kinds: Record<string, 'TEXT_CLASSIFICATION' | 'NER' | 'PAIRWISE' | 'BBOX'> = {
+    text_classification: 'TEXT_CLASSIFICATION',
+    ner: 'NER',
+    pairwise: 'PAIRWISE',
+    bbox: 'BBOX',
+  };
+  return prisma.project.create({
+    data: {
+      orgId,
+      name: overrides.name ?? 'Sentiment',
+      schema,
+      kind: kinds[(schema as { kind: string }).kind],
+      status: overrides.status ?? 'ACTIVE',
+      overlap: overrides.overlap ?? 1,
+      timeLimitMinutes: overrides.timeLimitMinutes ?? 30,
+      reviewRequired: overrides.reviewRequired ?? true,
+      instructions: overrides.instructions ?? '',
+    },
+  });
+}
