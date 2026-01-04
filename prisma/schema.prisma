@@ -21,6 +21,16 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum ImportFormat {
+  CSV
+  JSONL
+}
+
+enum TaskStatus {
+  OPEN
+  COMPLETE
+}
+
 enum Role {
   ADMIN
   PROJECT_MANAGER
@@ -76,6 +86,8 @@ model Project {
   updatedAt        DateTime        @updatedAt
   org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   members          ProjectMember[]
+  batches          Batch[]
+  tasks            Task[]
 
   @@index([orgId])
 }
@@ -90,4 +102,33 @@ model ProjectMember {
 
   @@unique([projectId, userId])
   @@index([userId])
+}
+
+model Batch {
+  id        String       @id @default(cuid())
+  projectId String
+  name      String
+  format    ImportFormat
+  createdAt DateTime     @default(now())
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@index([projectId])
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  projectId   String
+  batchId     String
+  externalId  String?
+  position    Int
+  data        Json
+  status      TaskStatus @default(OPEN)
+  createdAt   DateTime   @default(now())
+  completedAt DateTime?
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  batch       Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status, position])
+  @@index([batchId, position])
 }
