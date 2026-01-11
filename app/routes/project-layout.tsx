@@ -32,6 +32,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
   const base = `/projects/${project.id}`;
   const tabs = [
     { to: base, label: 'Overview', show: true },
+    { to: `${base}/batches`, label: 'Batches', show: can.manage },
     { to: `${base}/members`, label: 'Members', show: can.manage },
     { to: `${base}/settings`, label: 'Settings', show: can.manage },
   ].filter((tab) => tab.show);
@@ -44,7 +45,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
           <Badge tone={STATUS_TONES[project.status]}>{titleCase(project.status)}</Badge>
           <Badge tone="indigo">{KIND_NAMES[project.kind]}</Badge>
         </div>
-        <nav className="mt-4 flex gap-1 border-b border-slate-200">
+        <nav className="mt-4 flex gap-1 overflow-x-auto border-b border-slate-200">
           {tabs.map((tab) => (
             <NavLink
               key={tab.to}

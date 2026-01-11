@@ -9,6 +9,7 @@ export default [
     route('projects/new', 'routes/project-new.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
       index('routes/project-overview.tsx'),
+      route('batches', 'routes/project-batches.tsx'),
       route('members', 'routes/project-members.tsx'),
       route('settings', 'routes/project-settings.tsx'),
     ]),
