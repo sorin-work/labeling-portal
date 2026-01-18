@@ -1,0 +1,175 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { action as importAction } from '~/routes/batch-new';
+import { loader as batchLoader } from '~/routes/batch-detail';
+import { loader as batchesLoader } from '~/routes/project-batches';
+
+import {
+  cookieFor,
+  createMember,
+  createOrg,
+  createTestProject,
+  locationOf,
+  makeRequest,
+  payload,
+  prisma,
+  resetDb,
+  run,
+  statusOf,
+} from './helpers';
+
+async function setup() {
+  const org = await createOrg();
+  const pm = await createMember(org.id, 'PROJECT_MANAGER');
+  const project = await createTestProject(org.id);
+  const cookie = await cookieFor(pm, org.id);
+  return { org, pm, project, cookie };
+}
+
+function upload(name: string, text: string) {
+  return new File([text], name, { type: 'text/plain' });
+}
+
+describe('batch import', () => {
+  beforeEach(resetDb);
+
+  it('imports a csv file as a batch of tasks', async () => {
+    const { project, cookie } = await setup();
+    const file = upload('reviews.csv', 'id,text\na,good\nb,bad\nc,"fine, I guess"\n');
+
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file, name: '' } }),
+      { projectId: project.id },
+    );
+
+    const batch = await prisma.batch.findFirstOrThrow();
+    expect(locationOf(result)).toBe(`/projects/${project.id}/batches/${batch.id}`);
+    expect(batch).toMatchObject({ name: 'reviews', format: 'CSV' });
+    const tasks = await prisma.task.findMany({ orderBy: { position: 'asc' } });
+    expect(tasks.map((t) => [t.position, t.externalId])).toEqual([
+      [1, 'a'],
+      [2, 'b'],
+      [3, 'c'],
+    ]);
+    expect(tasks[2].data).toEqual({ id: 'c', text: 'fine, I guess' });
+  });
+
+  it('continues positions across batches', async () => {
+    const { project, cookie } = await setup();
+    const path = `/projects/${project.id}/batches/new`;
+    await run(
+      importAction,
+      makeRequest(path, {
+        cookie,
+        form: { file: upload('a.jsonl', '{"text":"1"}\n{"text":"2"}') },
+      }),
+      {
+        projectId: project.id,
+      },
+    );
+    await run(
+      importAction,
+      makeRequest(path, { cookie, form: { file: upload('b.jsonl', '{"text":"3"}') } }),
+      {
+        projectId: project.id,
+      },
+    );
+
+    const positions = (await prisma.task.findMany({ orderBy: { position: 'asc' } })).map(
+      (t) => t.position,
+    );
+    expect(positions).toEqual([1, 2, 3]);
+  });
+
+  it('rejects a file with invalid rows unless asked to skip them', async () => {
+    const { project, cookie } = await setup();
+    const path = `/projects/${project.id}/batches/new`;
+    const text = 'id,text\n1,ok\n2,\n';
+
+    const rejected = await run(
+      importAction,
+      makeRequest(path, { cookie, form: { file: upload('t.csv', text) } }),
+      {
+        projectId: project.id,
+      },
+    );
+    expect(statusOf(rejected)).toBe(400);
+    expect(payload<{ errors: unknown[]; validRows: number }>(rejected)).toMatchObject({
+      errors: [{ line: 3, message: 'Missing text' }],
+      validRows: 1,
+    });
+    expect(await prisma.task.count()).toBe(0);
+
+    await run(
+      importAction,
+      makeRequest(path, { cookie, form: { file: upload('t.csv', text), skipInvalid: 'on' } }),
+      { projectId: project.id },
+    );
+    expect(await prisma.task.count()).toBe(1);
+  });
+
+  it('requires a file', async () => {
+    const { project, cookie } = await setup();
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { name: 'x' } }),
+      { projectId: project.id },
+    );
+    expect(statusOf(result)).toBe(400);
+  });
+
+  it('is not available to annotators', async () => {
+    const { org, project } = await setup();
+    const annotator = await createMember(org.id, 'ANNOTATOR');
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: annotator.id } });
+    const cookie = await cookieFor(annotator, org.id);
+
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: upload('t.csv', 'text\nx\n') },
+      }),
+      { projectId: project.id },
+    );
+    expect(statusOf(result)).toBe(403);
+  });
+
+  it('lists batches with their progress and pages through tasks', async () => {
+    const { project, cookie } = await setup();
+    const rows = Array.from({ length: 50 }, (_, i) => `t${i + 1},text ${i + 1}`).join('\n');
+    await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: upload('big.csv', `id,text\n${rows}\n`) },
+      }),
+      { projectId: project.id },
+    );
+    const batch = await prisma.batch.findFirstOrThrow();
+
+    const list = await run(
+      batchesLoader,
+      makeRequest(`/projects/${project.id}/batches`, { cookie }),
+      {
+        projectId: project.id,
+      },
+    );
+    expect(
+      payload<{ batches: Array<{ total: number; complete: number }> }>(list).batches[0],
+    ).toMatchObject({
+      total: 50,
+      complete: 0,
+    });
+
+    const page2 = await run(
+      batchLoader,
+      makeRequest(`/projects/${project.id}/batches/${batch.id}?page=2`, { cookie }),
+      { projectId: project.id, batchId: batch.id },
+    );
+    const tasks = payload<{ tasks: Array<{ externalId: string }> }>(page2).tasks;
+    expect(tasks[0].externalId).toBe('t26');
+    expect(tasks).toHaveLength(25);
+  });
+});

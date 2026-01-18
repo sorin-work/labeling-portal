@@ -48,7 +48,8 @@ export async function cookieFor(user: { id: string }, orgId: string): Promise<st
   return setCookie.split(';')[0];
 }
 
-type RequestInit = { cookie?: string; form?: Record<string, string | string[]> };
+type FormValue = string | File;
+type RequestInit = { cookie?: string; form?: Record<string, FormValue | FormValue[]> };
 
 export function makeRequest(path: string, init: RequestInit = {}): Request {
   const headers = new Headers();
