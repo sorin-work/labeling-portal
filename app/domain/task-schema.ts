@@ -149,7 +149,12 @@ export function requiredFields(schema: TaskSchema): string[] {
   }
 }
 
-export const SCHEMA_TEMPLATES: Record<SchemaKind, TaskSchema> = {
+export const SCHEMA_TEMPLATES: {
+  text_classification: TextClassificationSchema;
+  ner: NerSchema;
+  pairwise: PairwiseSchema;
+  bbox: BboxSchema;
+} = {
   text_classification: {
     kind: 'text_classification',
     textField: 'text',
