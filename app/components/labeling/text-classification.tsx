@@ -4,6 +4,7 @@ import type { TextClassificationSchema } from '~/domain/task-schema';
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
+import { useHotkeys } from './use-hotkeys';
 
 export function TextClassification({
   schema,
@@ -24,15 +25,27 @@ export function TextClassification({
     onChange({ labels: next });
   };
 
+  useHotkeys((key) => {
+    const index = Number(key) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= Math.min(9, schema.labels.length)) {
+      return false;
+    }
+    toggle(schema.labels[index]);
+    return true;
+  }, !readOnly);
+
   return (
     <div className="space-y-5">
       <p className="whitespace-pre-wrap text-base leading-7">{text}</p>
       <div>
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
           {schema.multiple ? 'Pick every label that applies' : 'Pick one label'}
+          {!readOnly && (
+            <span className="ml-2 normal-case text-slate-400">(number keys work too)</span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2" role={schema.multiple ? 'group' : 'radiogroup'}>
-          {schema.labels.map((label) => {
+          {schema.labels.map((label, index) => {
             const active = selected.includes(label);
             return (
               <button
@@ -49,6 +62,16 @@ export function TextClassification({
                     : 'bg-white text-slate-700 ring-slate-300 hover:bg-slate-50',
                 )}
               >
+                {index < 9 && !readOnly && (
+                  <kbd
+                    className={cx(
+                      'mr-1.5 font-mono text-xs',
+                      active ? 'text-indigo-200' : 'text-slate-400',
+                    )}
+                  >
+                    {index + 1}
+                  </kbd>
+                )}
                 {label}
               </button>
             );
