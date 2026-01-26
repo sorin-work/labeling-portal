@@ -142,3 +142,26 @@ export async function createTestProject(
     },
   });
 }
+
+export async function createTasks(projectId: string, rows: Array<Record<string, unknown>>) {
+  const batch = await prisma.batch.create({ data: { projectId, name: 'batch', format: 'JSONL' } });
+  const last = await prisma.task.aggregate({ where: { projectId }, _max: { position: true } });
+  const start = (last._max.position ?? 0) + 1;
+  await prisma.task.createMany({
+    data: rows.map((data, i) => ({
+      projectId,
+      batchId: batch.id,
+      position: start + i,
+      externalId: `t${start + i}`,
+      data: data as object,
+    })),
+  });
+  return prisma.task.findMany({ where: { batchId: batch.id }, orderBy: { position: 'asc' } });
+}
+
+export async function addToProject(projectId: string, ...users: Array<{ id: string }>) {
+  await prisma.projectMember.createMany({
+    data: users.map((u) => ({ projectId, userId: u.id })),
+    skipDuplicates: true,
+  });
+}
