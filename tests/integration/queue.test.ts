@@ -211,3 +211,31 @@ describe('work routes', () => {
     expect(statusOf(result)).toBe(404);
   });
 });
+
+describe('expired claims', () => {
+  beforeEach(resetDb);
+
+  it('puts abandoned claims back in the queue', async () => {
+    const { org, project, ann, tasks } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    await claimNextTask(project, ann.id, t0);
+
+    const other = await createMember(org.id, 'ANNOTATOR');
+    const later = new Date(t0.getTime() + 31 * 60_000);
+    const claim = await claimNextTask(project, other.id, later);
+
+    expect(claim.ok && claim.assignment.taskId).toBe(tasks[0].id);
+    const old = await prisma.assignment.findFirstOrThrow({ where: { userId: ann.id } });
+    expect(old.status).toBe('EXPIRED');
+  });
+
+  it('keeps claims that are still within the limit', async () => {
+    const { org, project, ann, tasks } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    await claimNextTask(project, ann.id, t0);
+
+    const other = await createMember(org.id, 'ANNOTATOR');
+    const claim = await claimNextTask(project, other.id, new Date(t0.getTime() + 29 * 60_000));
+    expect(claim.ok && claim.assignment.taskId).toBe(tasks[1].id);
+  });
+});

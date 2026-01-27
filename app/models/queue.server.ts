@@ -43,12 +43,25 @@ async function nextCandidate(project: Project, userId: string, now: Date) {
   return rows[0]?.id ?? null;
 }
 
+/**
+ * Marks claims that ran past their time limit as expired so the task goes back
+ * to the queue. Runs lazily whenever someone asks for work.
+ */
+export async function releaseExpiredClaims(projectId?: string, now = new Date()): Promise<number> {
+  const result = await prisma.assignment.updateMany({
+    where: { status: 'ACTIVE', expiresAt: { lte: now }, ...(projectId ? { projectId } : {}) },
+    data: { status: 'EXPIRED' },
+  });
+  return result.count;
+}
+
 /** Gives the annotator their current claim, or claims the next available task. */
 export async function claimNextTask(
   project: Project,
   userId: string,
   now = new Date(),
 ): Promise<ClaimResult> {
+  await releaseExpiredClaims(project.id, now);
   const existing = await findActiveAssignment(project.id, userId, now);
   if (existing) return { ok: true, assignment: existing, resumed: true };
   if (project.status !== 'ACTIVE') return { ok: false, reason: 'inactive' };

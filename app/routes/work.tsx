@@ -12,7 +12,12 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
 import { projectSchema } from '~/models/projects.server';
-import { claimNextTask, skipAssignment, submitAssignment } from '~/models/queue.server';
+import {
+  claimNextTask,
+  releaseExpiredClaims,
+  skipAssignment,
+  submitAssignment,
+} from '~/models/queue.server';
 
 import type { Route } from './+types/work';
 
@@ -40,6 +45,10 @@ async function loadOwnAssignment(assignmentId: string, userId: string) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadOwnAssignment(params.assignmentId, user.id);
+  if (assignment.status === 'ACTIVE' && assignment.expiresAt <= new Date()) {
+    await releaseExpiredClaims(assignment.projectId);
+    throw redirect(`/projects/${assignment.projectId}?queue=expired`);
+  }
   if (assignment.status !== 'ACTIVE') {
     throw redirect(`/projects/${assignment.projectId}`);
   }

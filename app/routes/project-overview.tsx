@@ -28,7 +28,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         ? 'There are no more tasks for you in this project right now.'
         : queue === 'inactive'
           ? 'This project is not taking work at the moment.'
-          : null,
+          : queue === 'expired'
+            ? 'Your time on that task ran out, so it went back to the queue.'
+            : null,
     project: {
       id: project.id,
       status: project.status,
