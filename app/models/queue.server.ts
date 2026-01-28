@@ -130,3 +130,14 @@ export async function skipAssignment(
   });
   return { ok: true };
 }
+
+/** Hands a claim back without an answer so someone else can take it. */
+export async function releaseAssignment(
+  assignmentId: string,
+  userId: string,
+): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
+  const found = await ownActive(assignmentId, userId);
+  if ('error' in found) return { ok: false, error: found.error! };
+  await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'RELEASED' } });
+  return { ok: true };
+}

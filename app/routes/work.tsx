@@ -14,6 +14,7 @@ import { notFound } from '~/lib/http';
 import { projectSchema } from '~/models/projects.server';
 import {
   claimNextTask,
+  releaseAssignment,
   releaseExpiredClaims,
   skipAssignment,
   submitAssignment,
@@ -75,6 +76,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   const assignment = await loadOwnAssignment(params.assignmentId, user.id);
   const form = await request.formData();
   const intent = form.get('intent');
+
+  if (intent === 'release') {
+    await releaseAssignment(assignment.id, user.id);
+    return redirect(`/projects/${assignment.projectId}`);
+  }
 
   if (intent === 'skip') {
     const choice = String(form.get('reason') ?? '');
@@ -149,6 +155,17 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
           </Button>
           <Button type="button" variant="secondary" onClick={() => setSkipping((s) => !s)}>
             Skip…
+          </Button>
+          <Button
+            type="submit"
+            name="intent"
+            value="release"
+            variant="ghost"
+            formNoValidate
+            disabled={busy}
+            title="Stop for now and give the task back to the queue"
+          >
+            Stop and release
           </Button>
         </Form>
         {skipping && (

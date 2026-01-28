@@ -239,3 +239,26 @@ describe('expired claims', () => {
     expect(claim.ok && claim.assignment.taskId).toBe(tasks[1].id);
   });
 });
+
+describe('releasing a claim', () => {
+  beforeEach(resetDb);
+
+  it('returns the task to the queue for other annotators', async () => {
+    const { org, project, ann, cookie, tasks } = await setup();
+    const claim = await claimNextTask(project, ann.id);
+    const id = claim.ok ? claim.assignment.id : '';
+
+    const result = await run(
+      workAction,
+      makeRequest(`/work/${id}`, { cookie, form: { intent: 'release' } }),
+      {
+        assignmentId: id,
+      },
+    );
+    expect(locationOf(result)).toBe(`/projects/${project.id}`);
+
+    const other = await createMember(org.id, 'ANNOTATOR');
+    const next = await claimNextTask(project, other.id);
+    expect(next.ok && next.assignment.taskId).toBe(tasks[0].id);
+  });
+});
