@@ -1,6 +1,7 @@
-import type { Answer, ClassificationAnswer } from '~/domain/answers';
+import type { Answer, ClassificationAnswer, NerAnswer } from '~/domain/answers';
 import type { TaskSchema } from '~/domain/task-schema';
 
+import { NerSpans } from './ner';
 import { TextClassification } from './text-classification';
 
 export type LabelingProps<S extends TaskSchema = TaskSchema, A = Answer> = {
@@ -21,6 +22,15 @@ export function LabelingInterface(props: LabelingProps) {
           {...props}
           schema={schema}
           value={value as ClassificationAnswer | null}
+          onChange={onChange}
+        />
+      );
+    case 'ner':
+      return (
+        <NerSpans
+          {...props}
+          schema={schema}
+          value={value as NerAnswer | null}
           onChange={onChange}
         />
       );
