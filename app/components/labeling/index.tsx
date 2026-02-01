@@ -1,7 +1,8 @@
-import type { Answer, ClassificationAnswer, NerAnswer } from '~/domain/answers';
+import type { Answer, ClassificationAnswer, NerAnswer, PairwiseAnswer } from '~/domain/answers';
 import type { TaskSchema } from '~/domain/task-schema';
 
 import { NerSpans } from './ner';
+import { PairwiseRubric } from './pairwise';
 import { TextClassification } from './text-classification';
 
 export type LabelingProps<S extends TaskSchema = TaskSchema, A = Answer> = {
@@ -31,6 +32,15 @@ export function LabelingInterface(props: LabelingProps) {
           {...props}
           schema={schema}
           value={value as NerAnswer | null}
+          onChange={onChange}
+        />
+      );
+    case 'pairwise':
+      return (
+        <PairwiseRubric
+          {...props}
+          schema={schema}
+          value={value as PairwiseAnswer | null}
           onChange={onChange}
         />
       );
