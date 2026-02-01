@@ -1,6 +1,13 @@
-import type { Answer, ClassificationAnswer, NerAnswer, PairwiseAnswer } from '~/domain/answers';
+import type {
+  Answer,
+  BboxAnswer,
+  ClassificationAnswer,
+  NerAnswer,
+  PairwiseAnswer,
+} from '~/domain/answers';
 import type { TaskSchema } from '~/domain/task-schema';
 
+import { BoundingBoxes } from './bounding-boxes';
 import { NerSpans } from './ner';
 import { PairwiseRubric } from './pairwise';
 import { TextClassification } from './text-classification';
@@ -44,9 +51,14 @@ export function LabelingInterface(props: LabelingProps) {
           onChange={onChange}
         />
       );
-    default:
+    case 'bbox':
       return (
-        <p className="text-sm text-slate-500">This labeling interface is not available yet.</p>
+        <BoundingBoxes
+          {...props}
+          schema={schema}
+          value={value as BboxAnswer | null}
+          onChange={onChange}
+        />
       );
   }
 }
