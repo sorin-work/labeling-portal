@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
+import { formatDuration, useActiveTime } from '~/components/use-active-time';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
@@ -120,6 +121,7 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
   const [skipping, setSkipping] = useState(false);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
+  const activeSeconds = useActiveTime();
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -136,7 +138,15 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
               <span className="ml-2 font-mono text-xs text-slate-400">{task.externalId}</span>
             )}
           </div>
-          <Countdown expiresAt={assignment.expiresAt} />
+          <div className="flex items-center gap-3">
+            <span
+              className="text-xs text-slate-500"
+              title="Time you have actively worked on this task"
+            >
+              Working time {formatDuration(activeSeconds)}
+            </span>
+            <Countdown expiresAt={assignment.expiresAt} />
+          </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
         <Card>
@@ -150,6 +160,7 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
         </Card>
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={answer ? JSON.stringify(answer) : ''} />
+          <input type="hidden" name="activeSeconds" value={activeSeconds} />
           <Button type="submit" name="intent" value="submit" disabled={busy || !answer}>
             Submit and next
           </Button>
