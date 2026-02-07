@@ -1,4 +1,4 @@
-import type { Assignment, Prisma, Project } from '@prisma/client';
+import { Prisma, type Assignment, type Project } from '@prisma/client';
 
 import { prisma } from '~/lib/db.server';
 
@@ -53,6 +53,33 @@ export async function releaseExpiredClaims(projectId?: string, now = new Date())
     data: { status: 'EXPIRED' },
   });
   return result.count;
+}
+
+/** How many tasks the annotator could still pick up in each project. */
+export async function countAvailable(
+  projectIds: string[],
+  userId: string,
+  now = new Date(),
+): Promise<Map<string, number>> {
+  if (projectIds.length === 0) return new Map();
+  const rows = await prisma.$queryRaw<Array<{ projectId: string; count: bigint }>>`
+    SELECT t."projectId", count(*) AS count
+    FROM "Task" t
+    JOIN "Project" p ON p.id = t."projectId"
+    WHERE t."projectId" IN (${Prisma.join(projectIds)})
+      AND t.status = 'OPEN'
+      AND NOT EXISTS (
+        SELECT 1 FROM "Assignment" mine
+        WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
+          AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
+      )
+      AND (
+        SELECT count(*) FROM "Assignment" a
+        WHERE a."taskId" = t.id
+          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+      ) < p.overlap
+    GROUP BY t."projectId"`;
+  return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
 
 /** Gives the annotator their current claim, or claims the next available task. */
