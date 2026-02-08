@@ -127,7 +127,7 @@ export function clampActiveSeconds(reported: number, claimedAt: Date, now: Date)
 export async function submitAssignment(
   assignmentId: string,
   userId: string,
-  input: { answer: Prisma.InputJsonValue; activeSeconds: number },
+  input: { answer: Prisma.InputJsonValue; activeSeconds: number; reviewRequired: boolean },
   now = new Date(),
 ): Promise<{ ok: true; assignment: Assignment } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
@@ -138,6 +138,7 @@ export async function submitAssignment(
       status: 'SUBMITTED',
       submittedAt: now,
       answer: input.answer,
+      reviewStatus: input.reviewRequired ? 'PENDING' : 'NOT_REQUIRED',
       activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
     },
   });

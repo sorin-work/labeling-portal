@@ -106,6 +106,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     const result = await submitAssignment(assignment.id, user.id, {
       answer: checked.answer as Prisma.InputJsonValue,
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
+      reviewRequired: assignment.project.reviewRequired,
     });
     if (!result.ok) return data({ error: 'This task is no longer yours.' }, { status: 409 });
   }

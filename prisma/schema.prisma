@@ -39,6 +39,20 @@ enum AssignmentStatus {
   RELEASED
 }
 
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  SENT_BACK
+  FIXED
+  NOT_REQUIRED
+}
+
+enum ReviewDecision {
+  APPROVE
+  SEND_BACK
+  FIX
+}
+
 enum Role {
   ADMIN
   PROJECT_MANAGER
@@ -64,6 +78,7 @@ model User {
   memberships  Membership[]
   projects     ProjectMember[]
   assignments  Assignment[]
+  reviews      Review[]
 }
 
 model Membership {
@@ -157,6 +172,9 @@ model Assignment {
   skipReason    String?
   answer        Json?
   activeSeconds Int              @default(0)
+  reviewStatus  ReviewStatus?
+  reviewedAt    DateTime?
+  reviews       Review[]
   project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -164,4 +182,21 @@ model Assignment {
   @@index([projectId, status])
   @@index([userId, status])
   @@index([taskId, status])
+  @@index([projectId, reviewStatus])
+}
+
+model Review {
+  id              String         @id @default(cuid())
+  assignmentId    String
+  reviewerId      String
+  decision        ReviewDecision
+  qaScore         Int?
+  feedback        String         @default("")
+  correctedAnswer Json?
+  createdAt       DateTime       @default(now())
+  assignment      Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  reviewer        User           @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+  @@index([reviewerId, createdAt])
 }
