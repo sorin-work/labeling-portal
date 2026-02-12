@@ -8,6 +8,7 @@ export default [
     route('projects', 'routes/projects.tsx'),
     route('projects/new', 'routes/project-new.tsx'),
     route('work/:assignmentId', 'routes/work.tsx'),
+    route('review/:assignmentId', 'routes/review.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
       index('routes/project-overview.tsx'),
       route('batches', 'routes/project-batches.tsx'),
@@ -16,6 +17,7 @@ export default [
       route('members', 'routes/project-members.tsx'),
       route('settings', 'routes/project-settings.tsx'),
       route('work', 'routes/project-work.tsx'),
+      route('review', 'routes/project-review.tsx'),
     ]),
   ]),
 ] satisfies RouteConfig;

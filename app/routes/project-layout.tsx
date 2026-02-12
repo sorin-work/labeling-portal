@@ -32,6 +32,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
   const base = `/projects/${project.id}`;
   const tabs = [
     { to: base, label: 'Overview', show: true },
+    { to: `${base}/review`, label: 'Review', show: can.review },
     { to: `${base}/batches`, label: 'Batches', show: can.manage },
     { to: `${base}/members`, label: 'Members', show: can.manage },
     { to: `${base}/settings`, label: 'Settings', show: can.manage },
