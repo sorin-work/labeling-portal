@@ -21,6 +21,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const links = [
     { to: '/', label: 'Dashboard', show: true },
     { to: '/projects', label: 'Projects', show: true },
+    { to: '/my-work', label: 'My work', show: can(role, 'annotate') },
     { to: '/payouts', label: 'Payouts', show: can(role, 'viewPayouts') },
     { to: '/people', label: 'People', show: can(role, 'manageUsers') },
   ].filter((link) => link.show);
