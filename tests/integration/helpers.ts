@@ -165,3 +165,24 @@ export async function addToProject(projectId: string, ...users: Array<{ id: stri
     skipDuplicates: true,
   });
 }
+
+/** Claims and submits a task for a user directly through the queue functions. */
+export async function submitWork(
+  project: { id: string },
+  userId: string,
+  answer: object,
+  opts: { activeSeconds?: number; now?: Date } = {},
+) {
+  const { claimNextTask, submitAssignment } = await import('~/models/queue.server');
+  const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+  const claim = await claimNextTask(fresh, userId, opts.now);
+  if (!claim.ok) throw new Error(`nothing to claim: ${claim.reason}`);
+  const result = await submitAssignment(
+    claim.assignment.id,
+    userId,
+    { answer, activeSeconds: opts.activeSeconds ?? 30, reviewRequired: fresh.reviewRequired },
+    opts.now && new Date(opts.now.getTime() + 60_000),
+  );
+  if (!result.ok) throw new Error(result.error);
+  return result.assignment;
+}
