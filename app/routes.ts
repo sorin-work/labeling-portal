@@ -10,6 +10,7 @@ export default [
     route('work/:assignmentId', 'routes/work.tsx'),
     route('review/:assignmentId', 'routes/review.tsx'),
     route('my-work', 'routes/my-work.tsx'),
+    route('my-work/:assignmentId', 'routes/my-work-revise.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
       index('routes/project-overview.tsx'),
       route('batches', 'routes/project-batches.tsx'),

@@ -159,6 +159,27 @@ export async function skipAssignment(
   return { ok: true };
 }
 
+/**
+ * Replaces the answer on a submission a reviewer sent back and puts it in the
+ * review queue again. Only the annotator who made it can do this.
+ */
+export async function resubmitAssignment(
+  assignmentId: string,
+  userId: string,
+  answer: Prisma.InputJsonValue,
+  now = new Date(),
+): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
+  const result = await prisma.assignment.updateMany({
+    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+    data: { answer, reviewStatus: 'PENDING', submittedAt: now, reviewedAt: null },
+  });
+  if (result.count === 0) {
+    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
+    return { ok: false, error: exists ? 'not_active' : 'not_found' };
+  }
+  return { ok: true };
+}
+
 /** Hands a claim back without an answer so someone else can take it. */
 export async function releaseAssignment(
   assignmentId: string,
