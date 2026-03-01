@@ -208,3 +208,42 @@ describe('review', () => {
     expect(statusOf(again)).toBe(409);
   });
 });
+
+describe('task completion', () => {
+  beforeEach(resetDb);
+
+  it('completes a task once enough submissions are approved', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2 });
+    const [task] = await createTasks(project.id, [{ text: 'x' }]);
+    const a = await createMember(org.id, 'ANNOTATOR');
+    const b = await createMember(org.id, 'ANNOTATOR');
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const cookie = await cookieFor(reviewer, org.id);
+    const first = await submitWork(project, a.id, { labels: ['positive'] });
+    const second = await submitWork(project, b.id, { labels: ['positive'] });
+
+    const approve = (id: string) =>
+      run(reviewAction, makeRequest(`/review/${id}`, { cookie, form: { intent: 'approve' } }), {
+        assignmentId: id,
+      });
+
+    await approve(first.id);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe('OPEN');
+    await approve(second.id);
+    const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(done.status).toBe('COMPLETE');
+    expect(done.completedAt).not.toBeNull();
+  });
+
+  it('completes immediately when review is not required', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { reviewRequired: false });
+    const [task] = await createTasks(project.id, [{ text: 'x' }]);
+    const a = await createMember(org.id, 'ANNOTATOR');
+    await submitWork(project, a.id, { labels: ['negative'] });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+      'COMPLETE',
+    );
+  });
+});

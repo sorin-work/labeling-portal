@@ -2,6 +2,8 @@ import { Prisma, type Assignment, type Project } from '@prisma/client';
 
 import { prisma } from '~/lib/db.server';
 
+import { refreshTaskStatus } from './tasks.server';
+
 export type ClaimResult =
   | { ok: true; assignment: Assignment; resumed: boolean }
   | { ok: false; reason: 'inactive' | 'empty' };
@@ -142,6 +144,7 @@ export async function submitAssignment(
       activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
     },
   });
+  if (!input.reviewRequired) await refreshTaskStatus(assignment.taskId, prisma, now);
   return { ok: true, assignment };
 }
 

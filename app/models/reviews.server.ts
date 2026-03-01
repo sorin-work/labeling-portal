@@ -2,6 +2,8 @@ import type { Prisma, ReviewDecision, ReviewStatus } from '@prisma/client';
 
 import { prisma } from '~/lib/db.server';
 
+import { refreshTaskStatus } from './tasks.server';
+
 const STATUS_AFTER: Record<ReviewDecision, ReviewStatus> = {
   APPROVE: 'APPROVED',
   SEND_BACK: 'SENT_BACK',
@@ -74,6 +76,7 @@ export async function recordReview(
       where: { id: assignmentId },
       data: { reviewStatus: STATUS_AFTER[input.decision], reviewedAt: now },
     });
+    await refreshTaskStatus(assignment.taskId, tx, now);
     return { review, assignment };
   });
 }
