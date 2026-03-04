@@ -247,3 +247,20 @@ describe('task completion', () => {
     );
   });
 });
+
+describe('consensus on completion', () => {
+  beforeEach(resetDb);
+
+  it('stores the merged answer and agreement', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 3, reviewRequired: false });
+    const [task] = await createTasks(project.id, [{ text: 'x' }]);
+    for (const label of ['positive', 'positive', 'negative']) {
+      const user = await createMember(org.id, 'ANNOTATOR');
+      await submitWork(project, user.id, { labels: [label] });
+    }
+    const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
+    expect(done.agreement).toBeCloseTo(0.6667);
+  });
+});
