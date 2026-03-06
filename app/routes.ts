@@ -16,6 +16,7 @@ export default [
       route('batches', 'routes/project-batches.tsx'),
       route('batches/new', 'routes/batch-new.tsx'),
       route('batches/:batchId', 'routes/batch-detail.tsx'),
+      route('tasks/:taskId', 'routes/task-detail.tsx'),
       route('members', 'routes/project-members.tsx'),
       route('settings', 'routes/project-settings.tsx'),
       route('work', 'routes/project-work.tsx'),

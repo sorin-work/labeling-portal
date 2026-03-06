@@ -1,4 +1,4 @@
-import type { ProjectStatus, TaskKind } from '@prisma/client';
+import type { ProjectStatus, ReviewStatus, TaskKind } from '@prisma/client';
 
 export const KIND_NAMES: Record<TaskKind, string> = {
   TEXT_CLASSIFICATION: 'Text classification',
@@ -40,3 +40,14 @@ export function formatDateTime(value: Date | string): string {
 export function titleCase(value: string): string {
   return value.charAt(0) + value.slice(1).toLowerCase().replace(/_/g, ' ');
 }
+
+export const REVIEW_BADGES: Record<
+  ReviewStatus,
+  { label: string; tone: 'slate' | 'emerald' | 'amber' | 'sky' }
+> = {
+  PENDING: { label: 'Waiting for review', tone: 'slate' },
+  APPROVED: { label: 'Approved', tone: 'emerald' },
+  SENT_BACK: { label: 'Needs changes', tone: 'amber' },
+  FIXED: { label: 'Corrected by reviewer', tone: 'sky' },
+  NOT_REQUIRED: { label: 'Accepted', tone: 'emerald' },
+};

@@ -1,4 +1,4 @@
-import type { Prisma, ReviewStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { Link } from 'react-router';
 
 import { Pagination } from '~/components/pagination';
@@ -7,22 +7,11 @@ import { formatDuration } from '~/components/use-active-time';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDateTime } from '~/lib/format';
+import { formatDateTime, REVIEW_BADGES } from '~/lib/format';
 import { paginate, readPage } from '~/lib/pagination';
 import { projectSchema } from '~/models/projects.server';
 
 import type { Route } from './+types/my-work';
-
-export const REVIEW_BADGES: Record<
-  ReviewStatus,
-  { label: string; tone: 'slate' | 'emerald' | 'amber' | 'sky' }
-> = {
-  PENDING: { label: 'Waiting for review', tone: 'slate' },
-  APPROVED: { label: 'Approved', tone: 'emerald' },
-  SENT_BACK: { label: 'Needs changes', tone: 'amber' },
-  FIXED: { label: 'Corrected by reviewer', tone: 'sky' },
-  NOT_REQUIRED: { label: 'Accepted', tone: 'emerald' },
-};
 
 export function meta() {
   return [{ title: 'My work · Labeling Portal' }];
