@@ -175,13 +175,15 @@ export async function submitWork(
 ) {
   const { claimNextTask, submitAssignment } = await import('~/models/queue.server');
   const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
-  const claim = await claimNextTask(fresh, userId, opts.now);
+  // claim a few minutes in the past so the reported working time fits
+  const claimedAt = opts.now ?? new Date(Date.now() - 10 * 60_000);
+  const claim = await claimNextTask(fresh, userId, claimedAt);
   if (!claim.ok) throw new Error(`nothing to claim: ${claim.reason}`);
   const result = await submitAssignment(
     claim.assignment.id,
     userId,
     { answer, activeSeconds: opts.activeSeconds ?? 30, reviewRequired: fresh.reviewRequired },
-    opts.now && new Date(opts.now.getTime() + 60_000),
+    new Date(claimedAt.getTime() + 5 * 60_000),
   );
   if (!result.ok) throw new Error(result.error);
   return result.assignment;
