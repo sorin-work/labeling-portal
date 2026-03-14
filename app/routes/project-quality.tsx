@@ -1,0 +1,134 @@
+import { Card, EmptyState } from '~/components/ui';
+import { formatDuration } from '~/components/use-active-time';
+import { describeKappa } from '~/domain/agreement';
+import { requireUser } from '~/lib/auth.server';
+import { requireProject } from '~/models/projects.server';
+import { projectQuality } from '~/models/quality.server';
+
+import type { Route } from './+types/project-quality';
+
+export function meta() {
+  return [{ title: 'Quality · Labeling Portal' }];
+}
+
+export async function loader({ request, params }: Route.LoaderArgs) {
+  const current = await requireUser(request);
+  const project = await requireProject(current, params.projectId, 'viewQuality');
+  return projectQuality(project);
+}
+
+function pct(value: number | null): string {
+  return value === null ? '–' : `${Math.round(value * 100)}%`;
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Card>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+      {hint && <div className="text-xs text-slate-500">{hint}</div>}
+    </Card>
+  );
+}
+
+export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
+  const { annotators, agreement } = loaderData;
+  if (annotators.length === 0) {
+    return (
+      <EmptyState title="No submissions yet">
+        Quality numbers appear once people start labeling.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-3">
+        {agreement.categorical ? (
+          <Stat
+            label="Fleiss' kappa"
+            value={agreement.fleiss === null ? '–' : agreement.fleiss.toFixed(2)}
+            hint={describeKappa(agreement.fleiss)}
+          />
+        ) : (
+          <Stat
+            label="Mean task agreement (F1)"
+            value={pct(agreement.meanTaskAgreement)}
+            hint="Across completed tasks"
+          />
+        )}
+        <Stat label="Completed tasks" value={String(agreement.completedTasks)} />
+        <Stat
+          label="Submissions"
+          value={String(annotators.reduce((s, a) => s + a.submitted, 0))}
+          hint={`${annotators.length} annotators`}
+        />
+      </div>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Annotators
+        </h2>
+        <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-2">Name</th>
+                <th className="px-4 py-2 text-right">Submitted</th>
+                <th className="px-4 py-2 text-right">Skipped</th>
+                <th className="px-4 py-2 text-right">Approval</th>
+                <th className="px-4 py-2 text-right">Sent back</th>
+                <th className="px-4 py-2 text-right">QA score</th>
+                <th className="px-4 py-2 text-right">Avg time</th>
+                <th className="px-4 py-2 text-right">Tasks / hour</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {annotators.map((a) => (
+                <tr key={a.userId}>
+                  <td className="px-4 py-2 font-medium">{a.name}</td>
+                  <td className="px-4 py-2 text-right">{a.submitted}</td>
+                  <td className="px-4 py-2 text-right">{a.skipped}</td>
+                  <td className="px-4 py-2 text-right">{pct(a.approvalRate)}</td>
+                  <td className="px-4 py-2 text-right">{a.sentBack}</td>
+                  <td className="px-4 py-2 text-right">{a.avgQaScore?.toFixed(1) ?? '–'}</td>
+                  <td className="px-4 py-2 text-right">
+                    {a.avgSeconds === null ? '–' : formatDuration(a.avgSeconds)}
+                  </td>
+                  <td className="px-4 py-2 text-right">{a.tasksPerHour ?? '–'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {agreement.categorical && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Pairwise agreement (Cohen&apos;s kappa)
+          </h2>
+          {agreement.pairs.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Pairs of annotators need at least three tasks in common.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100 rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
+              {agreement.pairs.map((p) => (
+                <li key={`${p.a}-${p.b}`} className="flex justify-between px-4 py-2">
+                  <span>
+                    {p.a} &amp; {p.b} <span className="text-slate-400">({p.shared} shared)</span>
+                  </span>
+                  <span>
+                    {p.kappa === null ? '–' : p.kappa.toFixed(2)}{' '}
+                    <span className="text-slate-500">{describeKappa(p.kappa)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
