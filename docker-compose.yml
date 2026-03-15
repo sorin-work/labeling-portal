@@ -1,0 +1,41 @@
+name: labeling-portal
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labeling
+      POSTGRES_PASSWORD: labeling
+      POSTGRES_DB: labeling
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U labeling -d labeling']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling
+      SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
+      # Creates the demo organisation, users and projects on first start.
+      SEED_DEMO: ${SEED_DEMO:-true}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '${WEB_PORT:-4421}:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/healthz || exit 1']
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  db-data:
