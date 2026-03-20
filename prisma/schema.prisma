@@ -152,6 +152,9 @@ model Task {
   /// merged answer of the accepted submissions, set when the task completes
   consensus   Json?
   agreement   Float?
+  /// honeypot task with a known answer, scored automatically
+  isGold      Boolean      @default(false)
+  goldAnswer  Json?
   createdAt   DateTime     @default(now())
   completedAt DateTime?
   project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -177,6 +180,8 @@ model Assignment {
   activeSeconds Int              @default(0)
   reviewStatus  ReviewStatus?
   reviewedAt    DateTime?
+  /// 0..1 match against the gold answer, for gold tasks only
+  goldScore     Float?
   reviews       Review[]
   project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
