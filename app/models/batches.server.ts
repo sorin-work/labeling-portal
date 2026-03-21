@@ -21,6 +21,8 @@ export async function createBatch(
         externalId: row.externalId,
         position: start + i,
         data: row.data as Prisma.InputJsonValue,
+        isGold: row.gold !== undefined,
+        goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
       })),
     });
     return batch;

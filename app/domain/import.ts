@@ -1,4 +1,6 @@
+import type { Answer } from './answers';
 import { parseCsv } from './csv';
+import { parseGold } from './gold';
 import { requiredFields, type TaskSchema } from './task-schema';
 
 export type ImportFormat = 'CSV' | 'JSONL';
@@ -7,6 +9,8 @@ export type ImportRow = {
   line: number;
   externalId: string | null;
   data: Record<string, unknown>;
+  /** set for gold (honeypot) tasks */
+  gold?: Answer;
 };
 
 export type ImportError = { line: number; message: string };
@@ -21,6 +25,7 @@ export const MAX_IMPORT_ROWS = 5000;
 
 /** Columns/keys with a leading underscore are instructions to the importer, not task data. */
 const ID_KEYS = ['_id', 'id'];
+const GOLD_KEY = '_gold';
 
 export function detectFormat(filename: string, text: string): ImportFormat {
   const lower = filename.toLowerCase();
@@ -130,6 +135,16 @@ export function parseImport(text: string, format: ImportFormat, schema: TaskSche
         continue;
       }
       seenIds.set(externalId, record.line);
+    }
+    const rawGold = record.data[GOLD_KEY];
+    if (!isBlank(rawGold)) {
+      const gold = parseGold(schema, data, rawGold);
+      if (!gold.ok) {
+        errors.push({ line: record.line, message: `Gold answer: ${gold.error}` });
+        continue;
+      }
+      rows.push({ line: record.line, externalId, data, gold: gold.answer });
+      continue;
     }
     rows.push({ line: record.line, externalId, data });
   }

@@ -1,13 +1,68 @@
-import type {
-  Answer,
-  BboxAnswer,
-  ClassificationAnswer,
-  NerAnswer,
-  PairwiseAnswer,
+import {
+  validateBbox,
+  validateClassification,
+  validateNer,
+  type Answer,
+  type AnswerResult,
+  type BboxAnswer,
+  type ClassificationAnswer,
+  type NerAnswer,
+  type PairwiseAnswer,
 } from './answers';
 import { boxF1, spanF1 } from './consensus';
 import { round } from './geometry';
 import type { TaskSchema } from './task-schema';
+
+function decode(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw;
+  const text = raw.trim();
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return raw;
+    }
+  }
+  return text;
+}
+
+/**
+ * Reads a gold answer from an import row. Besides full answer objects, short
+ * forms are accepted: "label" or "a|b" for classification and "A", "B" or
+ * "tie" for pairwise preferences.
+ */
+export function parseGold(
+  schema: TaskSchema,
+  data: Record<string, unknown>,
+  raw: unknown,
+): AnswerResult {
+  const value = decode(raw);
+  switch (schema.kind) {
+    case 'text_classification':
+      return validateClassification(
+        schema,
+        typeof value === 'string' ? { labels: value.split('|').map((l) => l.trim()) } : value,
+      );
+    case 'ner':
+      return validateNer(schema, data, value);
+    case 'pairwise': {
+      const preference =
+        typeof value === 'string' ? value : (value as { preference?: unknown } | null)?.preference;
+      if (preference !== 'A' && preference !== 'B' && preference !== 'tie') {
+        return { ok: false, error: 'Gold preference must be A, B or tie' };
+      }
+      return { ok: true, answer: { preference, scores: { a: {}, b: {} }, rationale: '' } };
+    }
+    case 'bbox': {
+      const box = (value ?? {}) as Record<string, unknown>;
+      return validateBbox(schema, {
+        imageWidth: Number(data.width) || undefined,
+        imageHeight: Number(data.height) || undefined,
+        ...box,
+      });
+    }
+  }
+}
 
 /** Default share of gold answers an annotator must match to count as accurate. */
 export const GOLD_PASS_SCORE = 0.8;

@@ -79,3 +79,51 @@ describe('parseImport', () => {
     expect(parseImport('', 'CSV', classification).errors[0].message).toBe('The file has no tasks');
   });
 });
+
+describe('gold answers', () => {
+  it('reads short gold labels from a csv column', () => {
+    const result = parseImport('id,text,_gold\n1,great,positive\n2,meh,\n', 'CSV', classification);
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0]).toEqual({
+      line: 2,
+      externalId: '1',
+      data: { id: '1', text: 'great' },
+      gold: { labels: ['positive'] },
+    });
+    expect(result.rows[1].gold).toBeUndefined();
+  });
+
+  it('rejects gold labels that are not in the schema', () => {
+    const result = parseImport('text,_gold\nx,amazing\n', 'CSV', classification);
+    expect(result.errors).toEqual([{ line: 2, message: 'Gold answer: Unknown label: amazing' }]);
+  });
+
+  it('reads pairwise gold preferences and entity spans from jsonl', () => {
+    const pairs = parseImport(
+      '{"prompt":"p","response_a":"a","response_b":"b","_gold":"B"}',
+      'JSONL',
+      SCHEMA_TEMPLATES.pairwise,
+    );
+    expect(pairs.rows[0].gold).toEqual({
+      preference: 'B',
+      scores: { a: {}, b: {} },
+      rationale: '',
+    });
+
+    const ner = parseImport(
+      '{"text":"Ada wrote","_gold":{"spans":[{"start":0,"end":3,"label":"PERSON"}]}}',
+      'JSONL',
+      SCHEMA_TEMPLATES.ner,
+    );
+    expect(ner.rows[0].gold).toEqual({ spans: [{ start: 0, end: 3, label: 'PERSON' }] });
+  });
+
+  it('takes image size for gold boxes from the row', () => {
+    const result = parseImport(
+      '{"image_url":"/a.png","width":100,"height":80,"_gold":{"boxes":[{"x":1,"y":1,"w":10,"h":10,"label":"car"}]}}',
+      'JSONL',
+      SCHEMA_TEMPLATES.bbox,
+    );
+    expect(result.rows[0].gold).toMatchObject({ imageWidth: 100, imageHeight: 80 });
+  });
+});
