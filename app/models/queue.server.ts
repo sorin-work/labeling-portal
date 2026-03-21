@@ -1,5 +1,8 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
+import type { Answer } from '~/domain/answers';
+import { scoreAgainstGold } from '~/domain/gold';
+import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
 import { refreshTaskStatus } from './tasks.server';
@@ -36,10 +39,13 @@ async function nextCandidate(project: Project, userId: string, now: Date) {
           AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
       )
       AND (
-        SELECT count(*) FROM "Assignment" a
-        WHERE a."taskId" = t.id
-          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
-      ) < ${project.overlap}
+        t."isGold"
+        OR (
+          SELECT count(*) FROM "Assignment" a
+          WHERE a."taskId" = t.id
+            AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+        ) < ${project.overlap}
+      )
     ORDER BY t.position
     LIMIT 1`;
   return rows[0]?.id ?? null;
@@ -76,10 +82,13 @@ export async function countAvailable(
           AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
       )
       AND (
-        SELECT count(*) FROM "Assignment" a
-        WHERE a."taskId" = t.id
-          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
-      ) < p.overlap
+        t."isGold"
+        OR (
+          SELECT count(*) FROM "Assignment" a
+          WHERE a."taskId" = t.id
+            AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+        ) < p.overlap
+      )
     GROUP BY t."projectId"`;
   return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
@@ -134,17 +143,37 @@ export async function submitAssignment(
 ): Promise<{ ok: true; assignment: Assignment } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
+
+  // gold tasks are scored against their known answer instead of being reviewed
+  const task = await prisma.task.findUniqueOrThrow({
+    where: { id: found.assignment.taskId },
+    include: { project: { select: { schema: true } } },
+  });
+  let goldScore: number | null = null;
+  if (task.isGold && task.goldAnswer) {
+    const schema = parseTaskSchema(task.project.schema);
+    if (schema.ok) {
+      goldScore = scoreAgainstGold(
+        schema.schema,
+        input.answer as Answer,
+        task.goldAnswer as Answer,
+      );
+    }
+  }
+
   const assignment = await prisma.assignment.update({
     where: { id: assignmentId },
     data: {
       status: 'SUBMITTED',
       submittedAt: now,
       answer: input.answer,
-      reviewStatus: input.reviewRequired ? 'PENDING' : 'NOT_REQUIRED',
+      goldScore,
+      reviewStatus: input.reviewRequired && !task.isGold ? 'PENDING' : 'NOT_REQUIRED',
       activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
     },
   });
-  if (!input.reviewRequired) await refreshTaskStatus(assignment.taskId, prisma, now);
+  if (!input.reviewRequired && !task.isGold)
+    await refreshTaskStatus(assignment.taskId, prisma, now);
   return { ok: true, assignment };
 }
 
