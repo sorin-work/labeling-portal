@@ -79,6 +79,7 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                 <th className="px-4 py-2 text-right">Approval</th>
                 <th className="px-4 py-2 text-right">Sent back</th>
                 <th className="px-4 py-2 text-right">QA score</th>
+                <th className="px-4 py-2 text-right">Gold</th>
                 <th className="px-4 py-2 text-right">Avg time</th>
                 <th className="px-4 py-2 text-right">Tasks / hour</th>
               </tr>
@@ -92,6 +93,13 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                   <td className="px-4 py-2 text-right">{pct(a.approvalRate)}</td>
                   <td className="px-4 py-2 text-right">{a.sentBack}</td>
                   <td className="px-4 py-2 text-right">{a.avgQaScore?.toFixed(1) ?? '–'}</td>
+                  <td
+                    className={`px-4 py-2 text-right ${a.flagged ? 'font-medium text-rose-700' : ''}`}
+                    title={`${a.goldAttempts} gold task${a.goldAttempts === 1 ? '' : 's'}`}
+                  >
+                    {pct(a.goldAccuracy)}
+                    {a.flagged && ' ⚑'}
+                  </td>
                   <td className="px-4 py-2 text-right">
                     {a.avgSeconds === null ? '–' : formatDuration(a.avgSeconds)}
                   </td>

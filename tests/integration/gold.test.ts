@@ -26,6 +26,23 @@ async function setup() {
   return { org, project, gold };
 }
 
+describe('gold accuracy in quality stats', () => {
+  beforeEach(resetDb);
+
+  it('averages gold scores per annotator', async () => {
+    const { org, project } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Ann' });
+    await submitWork(project, ann.id, { labels: ['negative'] });
+    const { projectQuality } = await import('~/models/quality.server');
+    const quality = await projectQuality(project);
+    expect(quality.annotators[0]).toMatchObject({
+      goldAttempts: 1,
+      goldAccuracy: 0,
+      flagged: false,
+    });
+  });
+});
+
 describe('gold tasks', () => {
   beforeEach(resetDb);
 

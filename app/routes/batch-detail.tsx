@@ -39,7 +39,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     orderBy: { position: 'asc' },
     skip: page.skip,
     take: page.take,
-    select: { id: true, position: true, externalId: true, status: true, data: true },
+    select: { id: true, position: true, externalId: true, status: true, data: true, isGold: true },
   });
   const schema = projectSchema(project);
 
@@ -53,6 +53,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       position: t.position,
       externalId: t.externalId,
       status: t.status,
+      isGold: t.isGold,
       preview: taskPreview(schema, t.data),
     })),
   };
@@ -116,9 +117,13 @@ export default function BatchDetail({ loaderData }: Route.ComponentProps) {
                   </Link>
                 </td>
                 <td className="px-4 py-2">
-                  <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
-                    {titleCase(task.status)}
-                  </Badge>
+                  {task.isGold ? (
+                    <Badge tone="amber">Gold</Badge>
+                  ) : (
+                    <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
+                      {titleCase(task.status)}
+                    </Badge>
+                  )}
                 </td>
               </tr>
             ))}
