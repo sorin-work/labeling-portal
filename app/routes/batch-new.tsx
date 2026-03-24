@@ -46,6 +46,17 @@ export async function action({ request, params }: Route.ActionArgs) {
   const format = detectFormat(file.name, text);
   const result = parseImport(text, format, projectSchema(project));
   const skipInvalid = form.get('skipInvalid') === 'on';
+  const qualification = form.get('qualification') === 'on';
+  if (qualification) {
+    for (const row of result.rows.filter((r) => r.gold === undefined)) {
+      result.errors.push({
+        line: row.line,
+        message: 'Qualification questions need a _gold answer',
+      });
+    }
+    result.rows = result.rows.filter((r) => r.gold !== undefined);
+    result.errors.sort((a, b) => a.line - b.line);
+  }
 
   if (result.rows.length === 0 || (result.errors.length > 0 && !skipInvalid)) {
     return data<ActionResult>(
@@ -62,7 +73,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   const name = String(form.get('name') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
-  const batch = await createBatch(project.id, { name, format, rows: result.rows });
+  const batch = await createBatch(project.id, { name, format, rows: result.rows, qualification });
   return redirect(`/projects/${project.id}/batches/${batch.id}`);
 }
 
@@ -107,6 +118,10 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" name="skipInvalid" />
           Skip invalid rows and import the rest
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" name="qualification" />
+          This batch is the qualification test (every row needs a <code>_gold</code> answer)
         </label>
         <div className="flex gap-2">
           <Button type="submit" disabled={navigation.state === 'submitting'}>

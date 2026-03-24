@@ -13,6 +13,8 @@ export type ProjectFormDefaults = {
   overlap: number;
   timeLimitMinutes: number;
   reviewRequired: boolean;
+  qualificationRequired: boolean;
+  qualificationPassPercent: number;
 };
 
 export const EMPTY_PROJECT: ProjectFormDefaults = {
@@ -23,6 +25,8 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   overlap: 1,
   timeLimitMinutes: 30,
   reviewRequired: true,
+  qualificationRequired: false,
+  qualificationPassPercent: 80,
 };
 
 const textareaClass =
@@ -140,6 +144,33 @@ export function ProjectForm({
           Every submission needs review
         </label>
       </div>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Qualification</legend>
+        <label className="flex items-center gap-2 self-center text-sm text-slate-700">
+          <input
+            type="checkbox"
+            name="qualificationRequired"
+            defaultChecked={defaults.qualificationRequired}
+          />
+          Annotators must pass a test before they can work
+        </label>
+        <Field
+          label="Pass mark (%)"
+          htmlFor="qualificationPassPercent"
+          error={errors?.qualificationPassPercent}
+          hint="Import test questions as a batch marked as a qualification test."
+        >
+          <Input
+            id="qualificationPassPercent"
+            name="qualificationPassPercent"
+            type="number"
+            min={1}
+            max={100}
+            defaultValue={defaults.qualificationPassPercent}
+          />
+        </Field>
+      </fieldset>
 
       <div className="flex justify-end">
         <Button type="submit">{submitLabel}</Button>

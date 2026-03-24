@@ -35,6 +35,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       overlap: project.overlap,
       timeLimitMinutes: project.timeLimitMinutes,
       reviewRequired: project.reviewRequired,
+      qualificationRequired: project.qualificationRequired,
+      qualificationPassPercent: project.qualificationPassPercent,
     },
   };
 }

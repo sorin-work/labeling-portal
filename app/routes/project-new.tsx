@@ -45,6 +45,8 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         overlap: Number(values.overlap) || 1,
         timeLimitMinutes: Number(values.timeLimitMinutes) || 30,
         reviewRequired: values.reviewRequired === 'on',
+        qualificationRequired: values.qualificationRequired === 'on',
+        qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
       }
     : EMPTY_PROJECT;
 

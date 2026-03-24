@@ -6,7 +6,7 @@ import { prisma } from '~/lib/db.server';
 /** Creates a batch and its tasks. Task positions continue after the project's last task. */
 export async function createBatch(
   projectId: string,
-  input: { name: string; format: ImportFormat; rows: ImportRow[] },
+  input: { name: string; format: ImportFormat; rows: ImportRow[]; qualification?: boolean },
 ) {
   return prisma.$transaction(async (tx) => {
     const last = await tx.task.aggregate({ where: { projectId }, _max: { position: true } });
@@ -21,7 +21,8 @@ export async function createBatch(
         externalId: row.externalId,
         position: start + i,
         data: row.data as Prisma.InputJsonValue,
-        isGold: row.gold !== undefined,
+        isGold: row.gold !== undefined && !input.qualification,
+        isQualification: input.qualification ?? false,
         goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
       })),
     });

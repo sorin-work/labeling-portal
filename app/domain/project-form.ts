@@ -16,6 +16,8 @@ export const projectFormSchema = z.object({
   overlap: int(1, 10, 'Annotators per task'),
   timeLimitMinutes: int(1, 480, 'Time limit'),
   reviewRequired: z.boolean(),
+  qualificationRequired: z.boolean(),
+  qualificationPassPercent: int(1, 100, 'Pass mark'),
 });
 
 export type ProjectInput = z.infer<typeof projectFormSchema> & { schema: TaskSchema };
@@ -34,6 +36,8 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
     overlap: form.get('overlap') ?? 1,
     timeLimitMinutes: form.get('timeLimitMinutes') ?? 30,
     reviewRequired: form.get('reviewRequired') === 'on',
+    qualificationRequired: form.get('qualificationRequired') === 'on',
+    qualificationPassPercent: form.get('qualificationPassPercent') ?? 80,
   });
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {

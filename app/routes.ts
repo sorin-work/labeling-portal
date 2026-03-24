@@ -21,6 +21,7 @@ export default [
       route('members', 'routes/project-members.tsx'),
       route('settings', 'routes/project-settings.tsx'),
       route('work', 'routes/project-work.tsx'),
+      route('qualification', 'routes/project-qualification.tsx'),
       route('review', 'routes/project-review.tsx'),
       route('quality', 'routes/project-quality.tsx'),
     ]),
