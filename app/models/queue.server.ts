@@ -9,7 +9,7 @@ import { refreshTaskStatus } from './tasks.server';
 
 export type ClaimResult =
   | { ok: true; assignment: Assignment; resumed: boolean }
-  | { ok: false; reason: 'inactive' | 'empty' };
+  | { ok: false; reason: 'inactive' | 'empty' | 'unqualified' };
 
 function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
@@ -33,6 +33,7 @@ async function nextCandidate(project: Project, userId: string, now: Date) {
     FROM "Task" t
     WHERE t."projectId" = ${project.id}
       AND t.status = 'OPEN'
+      AND NOT t."isQualification"
       AND NOT EXISTS (
         SELECT 1 FROM "Assignment" mine
         WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
@@ -76,6 +77,7 @@ export async function countAvailable(
     JOIN "Project" p ON p.id = t."projectId"
     WHERE t."projectId" IN (${Prisma.join(projectIds)})
       AND t.status = 'OPEN'
+      AND NOT t."isQualification"
       AND NOT EXISTS (
         SELECT 1 FROM "Assignment" mine
         WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
@@ -103,6 +105,12 @@ export async function claimNextTask(
   const existing = await findActiveAssignment(project.id, userId, now);
   if (existing) return { ok: true, assignment: existing, resumed: true };
   if (project.status !== 'ACTIVE') return { ok: false, reason: 'inactive' };
+  if (project.qualificationRequired) {
+    const member = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: project.id, userId } },
+    });
+    if (!member?.qualifiedAt) return { ok: false, reason: 'unqualified' };
+  }
 
   const taskId = await nextCandidate(project, userId, now);
   if (!taskId) return { ok: false, reason: 'empty' };

@@ -15,6 +15,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   const project = await requireProject(current, params.projectId);
   const result = await claimNextTask(project, current.user.id);
   if (!result.ok) {
+    if (result.reason === 'unqualified') return redirect(`/projects/${project.id}/qualification`);
     return redirect(`/projects/${project.id}?queue=${result.reason}`);
   }
   return redirect(`/work/${result.assignment.id}`);

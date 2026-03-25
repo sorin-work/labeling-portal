@@ -1,4 +1,4 @@
-import { Form } from 'react-router';
+import { Form, Link } from 'react-router';
 
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState } from '~/components/ui';
@@ -6,6 +6,7 @@ import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { can } from '~/lib/permissions';
 import { requireProject } from '~/models/projects.server';
+import { qualificationStatus } from '~/models/qualification.server';
 import { findActiveAssignment } from '~/models/queue.server';
 
 import type { Route } from './+types/project-overview';
@@ -19,6 +20,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const project = await requireProject(current, params.projectId);
   const canAnnotate = can(current.membership.role, 'annotate');
   const active = canAnnotate ? await findActiveAssignment(project.id, current.user.id) : null;
+  const qualification = canAnnotate ? await qualificationStatus(project, current.user.id) : null;
   const queue = new URL(request.url).searchParams.get('queue');
   return {
     canAnnotate,
@@ -30,7 +32,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           ? 'This project is not taking work at the moment.'
           : queue === 'expired'
             ? 'Your time on that task ran out, so it went back to the queue.'
-            : null,
+            : queue === 'qualified'
+              ? 'You passed the qualification test. Welcome aboard!'
+              : null,
+    needsQualification: qualification ? !qualification.qualified : false,
     project: {
       id: project.id,
       status: project.status,
@@ -45,11 +50,31 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
-  const { project, instructionsHtml, canAnnotate, activeAssignmentId, queueMessage } = loaderData;
+  const {
+    project,
+    instructionsHtml,
+    canAnnotate,
+    activeAssignmentId,
+    queueMessage,
+    needsQualification,
+  } = loaderData;
   return (
     <div className="space-y-6">
       {queueMessage && <Alert tone="info">{queueMessage}</Alert>}
-      {canAnnotate && project.status === 'ACTIVE' && (
+      {canAnnotate && project.status === 'ACTIVE' && needsQualification && (
+        <Card className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-medium">Qualification required</div>
+            <div className="text-sm text-slate-500">
+              Read the instructions, then pass a short test to start working on this project.
+            </div>
+          </div>
+          <Link to={`/projects/${project.id}/qualification`}>
+            <Button>Take the test</Button>
+          </Link>
+        </Card>
+      )}
+      {canAnnotate && project.status === 'ACTIVE' && !needsQualification && (
         <Card className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="font-medium">
