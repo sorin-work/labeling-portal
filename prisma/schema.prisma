@@ -53,6 +53,11 @@ enum ReviewDecision {
   FIX
 }
 
+enum PayMode {
+  PER_TASK
+  HOURLY
+}
+
 enum Role {
   ADMIN
   PROJECT_MANAGER
@@ -109,6 +114,9 @@ model Project {
   reviewRequired           Boolean                @default(true)
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
+  payMode                  PayMode                @default(PER_TASK)
+  /// cents per accepted task, or per hour of active time
+  rateCents                Int                    @default(0)
   createdAt                DateTime               @default(now())
   updatedAt                DateTime               @updatedAt
   org                      Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
