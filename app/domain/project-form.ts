@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { parseMoney } from './payouts';
 import { parseTaskSchema, type TaskSchema } from './task-schema';
 
 const int = (min: number, max: number, label: string) =>
@@ -18,9 +19,13 @@ export const projectFormSchema = z.object({
   reviewRequired: z.boolean(),
   qualificationRequired: z.boolean(),
   qualificationPassPercent: int(1, 100, 'Pass mark'),
+  payMode: z.enum(['PER_TASK', 'HOURLY']),
 });
 
-export type ProjectInput = z.infer<typeof projectFormSchema> & { schema: TaskSchema };
+export type ProjectInput = z.infer<typeof projectFormSchema> & {
+  schema: TaskSchema;
+  rateCents: number;
+};
 
 export type ProjectFormResult =
   | { ok: true; value: ProjectInput }
@@ -38,6 +43,7 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
     reviewRequired: form.get('reviewRequired') === 'on',
     qualificationRequired: form.get('qualificationRequired') === 'on',
     qualificationPassPercent: form.get('qualificationPassPercent') ?? 80,
+    payMode: form.get('payMode') ?? 'PER_TASK',
   });
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
@@ -47,7 +53,9 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
   }
   const schema = parseTaskSchema(String(form.get('schema') ?? ''));
   if (!schema.ok) errors.schema = schema.errors.join('; ');
+  const rateCents = parseMoney(String(form.get('rate') ?? '0'));
+  if (rateCents === null) errors.rate = 'Enter the rate as an amount like 0.25 or 18.00';
 
-  if (!parsed.success || !schema.ok) return { ok: false, errors };
-  return { ok: true, value: { ...parsed.data, schema: schema.schema } };
+  if (!parsed.success || !schema.ok || rateCents === null) return { ok: false, errors };
+  return { ok: true, value: { ...parsed.data, schema: schema.schema, rateCents } };
 }

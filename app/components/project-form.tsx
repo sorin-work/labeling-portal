@@ -15,6 +15,8 @@ export type ProjectFormDefaults = {
   reviewRequired: boolean;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
+  payMode: 'PER_TASK' | 'HOURLY';
+  rate: string;
 };
 
 export const EMPTY_PROJECT: ProjectFormDefaults = {
@@ -27,6 +29,8 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   reviewRequired: true,
   qualificationRequired: false,
   qualificationPassPercent: 80,
+  payMode: 'PER_TASK',
+  rate: '0.00',
 };
 
 const textareaClass =
@@ -169,6 +173,24 @@ export function ProjectForm({
             max={100}
             defaultValue={defaults.qualificationPassPercent}
           />
+        </Field>
+      </fieldset>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Pay</legend>
+        <Field label="Pay by" htmlFor="payMode">
+          <select
+            id="payMode"
+            name="payMode"
+            defaultValue={defaults.payMode}
+            className="block w-full rounded-md border-0 px-3 py-2 text-sm ring-1 ring-slate-300"
+          >
+            <option value="PER_TASK">Accepted task</option>
+            <option value="HOURLY">Hour of active work</option>
+          </select>
+        </Field>
+        <Field label="Rate (USD)" htmlFor="rate" error={errors?.rate}>
+          <Input id="rate" name="rate" inputMode="decimal" defaultValue={defaults.rate} />
         </Field>
       </fieldset>
 

@@ -37,6 +37,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       reviewRequired: project.reviewRequired,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
+      payMode: project.payMode,
+      rate: (project.rateCents / 100).toFixed(2),
     },
   };
 }

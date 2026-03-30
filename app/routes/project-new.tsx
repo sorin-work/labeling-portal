@@ -47,6 +47,7 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         reviewRequired: values.reviewRequired === 'on',
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
+        payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),
       }
     : EMPTY_PROJECT;
 
