@@ -5,6 +5,7 @@ export default [
   route('logout', 'routes/logout.tsx'),
   route('healthz', 'routes/healthz.ts'),
   route('payouts/export', 'routes/payouts-export.ts'),
+  route('projects/:projectId/download', 'routes/project-download.ts'),
   layout('routes/app-layout.tsx', [
     index('routes/dashboard.tsx'),
     route('projects', 'routes/projects.tsx'),
@@ -26,6 +27,7 @@ export default [
       route('qualification', 'routes/project-qualification.tsx'),
       route('review', 'routes/project-review.tsx'),
       route('quality', 'routes/project-quality.tsx'),
+      route('export', 'routes/project-export.tsx'),
     ]),
   ]),
 ] satisfies RouteConfig;

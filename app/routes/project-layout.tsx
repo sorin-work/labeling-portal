@@ -23,6 +23,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       manage: can(role, 'manageProjects'),
       review: can(role, 'review'),
       quality: can(role, 'viewQuality'),
+      export: can(role, 'exportLabels'),
     },
   };
 }
@@ -35,6 +36,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
     { to: `${base}/review`, label: 'Review', show: can.review },
     { to: `${base}/quality`, label: 'Quality', show: can.quality },
     { to: `${base}/batches`, label: 'Batches', show: can.manage },
+    { to: `${base}/export`, label: 'Export', show: can.export },
     { to: `${base}/members`, label: 'Members', show: can.manage },
     { to: `${base}/settings`, label: 'Settings', show: can.manage },
   ].filter((tab) => tab.show);
