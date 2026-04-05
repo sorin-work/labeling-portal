@@ -145,3 +145,64 @@ export function toCsvExport(schema: TaskSchema, tasks: ExportTask[]): string {
   }
   return toCsv(header, rows);
 }
+
+export type CocoDataset = {
+  info: { description: string; date_created: string };
+  images: Array<{ id: number; file_name: string; width: number; height: number; task_id: string }>;
+  categories: Array<{ id: number; name: string }>;
+  annotations: Array<{
+    id: number;
+    image_id: number;
+    category_id: number;
+    bbox: [number, number, number, number];
+    area: number;
+    iscrowd: 0;
+  }>;
+};
+
+/**
+ * COCO object-detection format for box projects. Uses the consensus boxes of
+ * each task, or the single accepted annotation when there is no consensus.
+ */
+export function toCoco(
+  schema: TaskSchema,
+  tasks: ExportTask[],
+  description: string,
+  now = new Date(),
+): CocoDataset {
+  if (schema.kind !== 'bbox') throw new Error('COCO export is only available for box projects');
+  const categories = schema.labels.map((name, i) => ({ id: i + 1, name }));
+  const categoryId = new Map(categories.map((c) => [c.name, c.id]));
+  const dataset: CocoDataset = {
+    info: { description, date_created: now.toISOString() },
+    images: [],
+    categories,
+    annotations: [],
+  };
+
+  tasks.forEach((task, index) => {
+    const answer = (task.consensus ??
+      (task.annotations.length === 1 ? task.annotations[0].answer : null)) as BboxAnswer | null;
+    const imageId = index + 1;
+    dataset.images.push({
+      id: imageId,
+      file_name: String(task.data[schema.imageField] ?? ''),
+      width: answer?.imageWidth ?? Number(task.data.width ?? 0),
+      height: answer?.imageHeight ?? Number(task.data.height ?? 0),
+      task_id: task.id,
+    });
+    for (const box of answer?.boxes ?? []) {
+      const category = categoryId.get(box.label);
+      if (!category) continue;
+      dataset.annotations.push({
+        id: dataset.annotations.length + 1,
+        image_id: imageId,
+        category_id: category,
+        bbox: [box.x, box.y, box.w, box.h],
+        area: Math.round(box.w * box.h * 10) / 10,
+        iscrowd: 0,
+      });
+    }
+  });
+  return dataset;
+}
