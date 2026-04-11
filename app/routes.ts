@@ -14,6 +14,7 @@ export default [
     route('review/:assignmentId', 'routes/review.tsx'),
     route('my-work', 'routes/my-work.tsx'),
     route('payouts', 'routes/payouts.tsx'),
+    route('people', 'routes/people.tsx'),
     route('my-work/:assignmentId', 'routes/my-work-revise.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
       index('routes/project-overview.tsx'),

@@ -28,6 +28,8 @@ export function can(role: Role, capability: Capability): boolean {
   return CAPABILITIES[role].includes(capability);
 }
 
+export const ROLES = ['ADMIN', 'PROJECT_MANAGER', 'REVIEWER', 'ANNOTATOR'] as const;
+
 export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: 'Admin',
   PROJECT_MANAGER: 'Project manager',
