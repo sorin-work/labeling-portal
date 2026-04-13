@@ -1,4 +1,4 @@
-import { Form, NavLink, Outlet } from 'react-router';
+import { Form, Link, NavLink, Outlet } from 'react-router';
 
 import { cx } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
@@ -51,10 +51,10 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
               </NavLink>
             ))}
           </nav>
-          <div className="text-right">
+          <Link to="/account" className="text-right hover:opacity-80">
             <div className="text-sm font-medium">{user.name}</div>
             <div className="text-xs text-slate-500">{ROLE_LABELS[role]}</div>
-          </div>
+          </Link>
           <Form method="post" action="/logout">
             <button className="text-sm text-slate-500 hover:text-slate-800">Sign out</button>
           </Form>
