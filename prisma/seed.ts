@@ -7,6 +7,7 @@
 import { PrismaClient, type Prisma, type Role, type TaskKind } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
+import { seedPairwiseActivity, seedSentimentActivity } from './seed-activity';
 import { INSTRUCTIONS, newsRows, pairwiseRows, reviewRows, streetRows } from './seed-data';
 
 const prisma = new PrismaClient();
@@ -57,6 +58,8 @@ async function main() {
     schema: Prisma.InputJsonValue;
     overlap: number;
     timeLimitMinutes: number;
+    payMode: 'PER_TASK' | 'HOURLY';
+    rateCents: number;
     rows: Array<Record<string, unknown>>;
   }> = [
     {
@@ -72,6 +75,8 @@ async function main() {
       },
       overlap: 2,
       timeLimitMinutes: 10,
+      payMode: 'PER_TASK',
+      rateCents: 8,
       rows: reviewRows(36),
     },
     {
@@ -90,6 +95,8 @@ async function main() {
       },
       overlap: 1,
       timeLimitMinutes: 15,
+      payMode: 'PER_TASK',
+      rateCents: 12,
       rows: newsRows,
     },
     {
@@ -112,6 +119,8 @@ async function main() {
       },
       overlap: 2,
       timeLimitMinutes: 20,
+      payMode: 'HOURLY',
+      rateCents: 1800,
       rows: pairwiseRows,
     },
     {
@@ -122,6 +131,8 @@ async function main() {
       schema: { kind: 'bbox', imageField: 'image_url', labels: ['car', 'person'], minBoxSize: 6 },
       overlap: 1,
       timeLimitMinutes: 15,
+      payMode: 'PER_TASK',
+      rateCents: 15,
       rows: streetRows,
     },
   ];
@@ -138,6 +149,8 @@ async function main() {
         status: 'ACTIVE',
         overlap: spec.overlap,
         timeLimitMinutes: spec.timeLimitMinutes,
+        payMode: spec.payMode,
+        rateCents: spec.rateCents,
         members: { create: workers.map((u) => ({ userId: u.id })) },
       },
     });
@@ -156,6 +169,13 @@ async function main() {
         };
       }),
     });
+
+    const ids = {
+      reviewer: users[PEOPLE.findIndex((p) => p.role === 'REVIEWER')].id,
+      annotators: users.filter((_, i) => PEOPLE[i].role === 'ANNOTATOR').map((u) => u.id),
+    };
+    if (spec.kind === 'TEXT_CLASSIFICATION') await seedSentimentActivity(prisma, project.id, ids);
+    if (spec.kind === 'PAIRWISE') await seedPairwiseActivity(prisma, project.id, batch.id, ids);
   }
 
   console.log(

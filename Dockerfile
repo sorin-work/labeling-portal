@@ -20,6 +20,8 @@ COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/prisma ./prisma
+# the seed script reuses the domain logic (consensus, gold scoring)
+COPY --from=build --chown=node:node /app/app/domain ./app/domain
 COPY --chown=node:node docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 USER node
 EXPOSE 3000
