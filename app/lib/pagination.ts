@@ -17,7 +17,7 @@ export function readPage(url: URL, param = 'page'): number {
 
 /** Works out which slice of a list to show. Pages past the end are clamped to the last one. */
 export function paginate(total: number, requested: number, pageSize = DEFAULT_PAGE_SIZE): PageInfo {
-  const pageCount = Math.max(1, Math.floor(total / pageSize));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(1, requested), pageCount);
   return { page, pageCount, pageSize, skip: (page - 1) * pageSize, take: pageSize, total };
 }

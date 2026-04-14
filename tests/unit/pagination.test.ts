@@ -24,6 +24,12 @@ describe('paginate', () => {
     expect(paginate(50, 9, 25)).toMatchObject({ page: 2, skip: 25 });
   });
 
+  it('keeps a partial last page reachable', () => {
+    expect(paginate(30, 2, 25)).toMatchObject({ page: 2, pageCount: 2, skip: 25 });
+    expect(paginate(26, 9, 25)).toMatchObject({ page: 2, skip: 25 });
+    expect(paginate(24, 1, 25).pageCount).toBe(1);
+  });
+
   it('has one page when there is nothing to show', () => {
     expect(paginate(0, 1)).toMatchObject({ page: 1, pageCount: 1, skip: 0 });
   });

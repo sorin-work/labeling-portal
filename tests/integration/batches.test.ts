@@ -136,6 +136,31 @@ describe('batch import', () => {
     expect(statusOf(result)).toBe(403);
   });
 
+  it('shows the tasks on a partial last page', async () => {
+    const { project, cookie } = await setup();
+    const rows = Array.from({ length: 30 }, (_, i) => `t${i + 1},text ${i + 1}`).join('\n');
+    await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: upload('thirty.csv', `id,text\n${rows}\n`) },
+      }),
+      { projectId: project.id },
+    );
+    const batch = await prisma.batch.findFirstOrThrow();
+
+    const page2 = await run(
+      batchLoader,
+      makeRequest(`/projects/${project.id}/batches/${batch.id}?page=2`, { cookie }),
+      { projectId: project.id, batchId: batch.id },
+    );
+    const data = payload<{ tasks: Array<{ externalId: string }>; page: { pageCount: number } }>(
+      page2,
+    );
+    expect(data.page.pageCount).toBe(2);
+    expect(data.tasks.map((t) => t.externalId)).toEqual(['t26', 't27', 't28', 't29', 't30']);
+  });
+
   it('lists batches with their progress and pages through tasks', async () => {
     const { project, cookie } = await setup();
     const rows = Array.from({ length: 50 }, (_, i) => `t${i + 1},text ${i + 1}`).join('\n');
