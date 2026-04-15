@@ -1,8 +1,11 @@
-import { Form, Link, NavLink, Outlet } from 'react-router';
+import { data, Form, Link, NavLink, Outlet } from 'react-router';
+
+import { Flash } from '~/components/flash';
 
 import { cx } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
+import { consumeFlash } from '~/lib/flash.server';
 import { can, ROLE_LABELS } from '~/lib/permissions';
 
 import type { Route } from './+types/app-layout';
@@ -13,11 +16,15 @@ export async function loader({ request }: Route.LoaderArgs) {
     where: { id: membership.orgId },
     select: { name: true },
   });
-  return { user, role: membership.role, orgName: org.name };
+  const flash = await consumeFlash(request);
+  return data(
+    { user, role: membership.role, orgName: org.name, flash: flash.message },
+    { headers: flash.headers },
+  );
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, role, orgName } = loaderData;
+  const { user, role, orgName, flash } = loaderData;
   const links = [
     { to: '/', label: 'Dashboard', show: true },
     { to: '/projects', label: 'Projects', show: true },
@@ -63,6 +70,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />
       </main>
+      <Flash message={flash} />
     </div>
   );
 }

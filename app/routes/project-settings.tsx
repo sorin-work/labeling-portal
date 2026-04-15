@@ -1,11 +1,12 @@
 import type { ProjectStatus } from '@prisma/client';
-import { data, Form, redirect } from 'react-router';
+import { data, Form } from 'react-router';
 
 import { ProjectForm } from '~/components/project-form';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseProjectForm } from '~/domain/project-form';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
+import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
 import { requireProject, updateProject } from '~/models/projects.server';
 
@@ -55,7 +56,11 @@ export async function action({ request, params }: Route.ActionArgs) {
       throw badRequest(`A ${project.status.toLowerCase()} project cannot be changed that way`);
     }
     await prisma.project.update({ where: { id: project.id }, data: { status: change.to } });
-    return redirect(`/projects/${project.id}/settings`);
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/settings`,
+      `Project is now ${change.to.toLowerCase()}.`,
+    );
   }
 
   const parsed = parseProjectForm(form);

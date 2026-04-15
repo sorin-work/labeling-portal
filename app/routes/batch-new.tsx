@@ -1,9 +1,10 @@
-import { data, Form, Link, redirect, useNavigation } from 'react-router';
+import { data, Form, Link, useNavigation } from 'react-router';
 
 import { Alert, Button, Card, Field, Input } from '~/components/ui';
 import { detectFormat, parseImport, type ImportError } from '~/domain/import';
 import { requiredFields } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
+import { redirectWithFlash } from '~/lib/flash.server';
 import { createBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -74,7 +75,12 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const name = String(form.get('name') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
   const batch = await createBatch(project.id, { name, format, rows: result.rows, qualification });
-  return redirect(`/projects/${project.id}/batches/${batch.id}`);
+  const skipped = result.errors.length ? `, skipped ${result.errors.length} invalid rows` : '';
+  return redirectWithFlash(
+    request,
+    `/projects/${project.id}/batches/${batch.id}`,
+    `Imported ${result.rows.length} tasks${skipped}.`,
+  );
 }
 
 export default function NewBatch({ loaderData, actionData }: Route.ComponentProps) {
