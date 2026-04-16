@@ -6,6 +6,7 @@ import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { can } from '~/lib/permissions';
 import { requireProject } from '~/models/projects.server';
+import { projectProgress } from '~/models/progress.server';
 import { qualificationStatus } from '~/models/qualification.server';
 import { findActiveAssignment } from '~/models/queue.server';
 
@@ -21,6 +22,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const canAnnotate = can(current.membership.role, 'annotate');
   const active = canAnnotate ? await findActiveAssignment(project.id, current.user.id) : null;
   const qualification = canAnnotate ? await qualificationStatus(project, current.user.id) : null;
+  const seesProgress =
+    can(current.membership.role, 'manageProjects') || can(current.membership.role, 'review');
+  const progress = seesProgress ? await projectProgress(project.id) : null;
   const queue = new URL(request.url).searchParams.get('queue');
   return {
     canAnnotate,
@@ -36,6 +40,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
               ? 'You passed the qualification test. Welcome aboard!'
               : null,
     needsQualification: qualification ? !qualification.qualified : false,
+    progress,
     project: {
       id: project.id,
       status: project.status,
@@ -57,10 +62,46 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
     activeAssignmentId,
     queueMessage,
     needsQualification,
+    progress,
   } = loaderData;
+  const pct =
+    progress && progress.tasks ? Math.round((progress.complete / progress.tasks) * 100) : 0;
   return (
     <div className="space-y-6">
       {queueMessage && <Alert tone="info">{queueMessage}</Alert>}
+      {progress && (
+        <Card>
+          <div className="mb-2 flex items-baseline justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Progress
+            </h2>
+            <span className="text-sm text-slate-600">
+              {progress.complete} of {progress.tasks} tasks complete ({pct}%)
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded bg-slate-100">
+            <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+          </div>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="text-slate-500">Waiting for review</dt>
+              <dd className="font-medium">{progress.pendingReview}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Being worked on</dt>
+              <dd className="font-medium">{progress.activeClaims}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Skipped</dt>
+              <dd className="font-medium">{progress.skipped}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Gold tasks</dt>
+              <dd className="font-medium">{progress.gold}</dd>
+            </div>
+          </dl>
+        </Card>
+      )}
       {canAnnotate && project.status === 'ACTIVE' && needsQualification && (
         <Card className="flex flex-wrap items-center justify-between gap-3">
           <div>
