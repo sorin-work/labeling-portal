@@ -27,7 +27,11 @@ export function parseCsvRecords(text: string): Array<{ line: number; values: str
   for (let i = 0; i < input.length; i++) {
     const ch = input[i];
     if (inQuotes) {
-      if (ch === '"') {
+      if (ch === '"' && input[i + 1] === '"') {
+        // a doubled quote inside a quoted field is a literal quote
+        field += '"';
+        i += 1;
+      } else if (ch === '"') {
         inQuotes = false;
       } else {
         if (ch === '\n') line += 1;

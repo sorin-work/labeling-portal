@@ -55,6 +55,18 @@ describe('batch import', () => {
     expect(tasks[2].data).toEqual({ id: 'c', text: 'fine, I guess' });
   });
 
+  it('keeps quotes that appear inside quoted csv fields', async () => {
+    const { project, cookie } = await setup();
+    const file = upload('quotes.csv', 'id,text\nq1,"The ""premium"" model broke"\n');
+    await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file } }),
+      { projectId: project.id },
+    );
+    const task = await prisma.task.findFirstOrThrow();
+    expect(task.data).toEqual({ id: 'q1', text: 'The "premium" model broke' });
+  });
+
   it('continues positions across batches', async () => {
     const { project, cookie } = await setup();
     const path = `/projects/${project.id}/batches/new`;

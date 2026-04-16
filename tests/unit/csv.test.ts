@@ -17,6 +17,20 @@ describe('parseCsv', () => {
     expect(table.rows.map((r) => r.values[1])).toEqual(['hello, there', 'two\nlines', 'after']);
   });
 
+  it('keeps doubled quotes inside quoted fields', () => {
+    const table = parseCsv('id,text\n1,"She said ""great"", then left"\n2,""""\n');
+    expect(table.rows.map((r) => r.values[1])).toEqual(['She said "great", then left', '"']);
+  });
+
+  it('reads back what toCsv writes', () => {
+    const rows = [
+      ['a "quoted" word', 'comma, here'],
+      ['line\nbreak', '""'],
+    ];
+    const table = parseCsv(toCsv(['x', 'y'], rows));
+    expect(table.rows.map((r) => r.values)).toEqual(rows);
+  });
+
   it('tracks the line each record starts on', () => {
     const records = parseCsvRecords('a\n"multi\nline"\nb\n');
     expect(records.map((r) => r.line)).toEqual([1, 2, 4]);
