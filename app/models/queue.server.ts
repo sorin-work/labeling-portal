@@ -24,29 +24,37 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
 }
 
 /**
- * Next task the annotator may work on: open, not already done or skipped by
- * them, and with fewer live claims/submissions than the project's overlap.
+ * SQL condition on task `t`: open, not part of the qualification test, not
+ * already claimed, done or skipped by this annotator, and (unless it is a gold
+ * task) with fewer live claims and submissions than `overlap`.
  */
+function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(
+    t.status = 'OPEN'
+    AND NOT t."isQualification"
+    AND NOT EXISTS (
+      SELECT 1 FROM "Assignment" mine
+      WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
+        AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
+    )
+    AND (
+      t."isGold"
+      OR (
+        SELECT count(*) FROM "Assignment" a
+        WHERE a."taskId" = t.id
+          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+      ) < ${overlap}
+    )
+  )`;
+}
+
+/** Next task the annotator may work on, in import order. */
 async function nextCandidate(project: Project, userId: string, now: Date) {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     SELECT t.id
     FROM "Task" t
     WHERE t."projectId" = ${project.id}
-      AND t.status = 'OPEN'
-      AND NOT t."isQualification"
-      AND NOT EXISTS (
-        SELECT 1 FROM "Assignment" mine
-        WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
-          AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
-      )
-      AND (
-        t."isGold"
-        OR (
-          SELECT count(*) FROM "Assignment" a
-          WHERE a."taskId" = t.id
-            AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
-        ) < ${project.overlap}
-      )
+      AND ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)}
     ORDER BY t.position
     LIMIT 1`;
   return rows[0]?.id ?? null;
@@ -76,21 +84,7 @@ export async function countAvailable(
     FROM "Task" t
     JOIN "Project" p ON p.id = t."projectId"
     WHERE t."projectId" IN (${Prisma.join(projectIds)})
-      AND t.status = 'OPEN'
-      AND NOT t."isQualification"
-      AND NOT EXISTS (
-        SELECT 1 FROM "Assignment" mine
-        WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
-          AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
-      )
-      AND (
-        t."isGold"
-        OR (
-          SELECT count(*) FROM "Assignment" a
-          WHERE a."taskId" = t.id
-            AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
-        ) < p.overlap
-      )
+      AND ${eligibleFor(userId, now, Prisma.sql`p.overlap`)}
     GROUP BY t."projectId"`;
   return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
