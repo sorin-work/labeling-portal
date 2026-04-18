@@ -46,6 +46,7 @@ export async function projectQuality(project: Project) {
 
   type Acc = AnnotatorStats & { seconds: number[]; scores: number[]; gold: number[] };
   const byUser = new Map<string, Acc>();
+  const skipReasons = new Map<string, number>();
   const ratings = new Map<string, Map<string, string>>();
   const perTask = new Map<string, string[]>();
 
@@ -75,6 +76,9 @@ export async function projectQuality(project: Project) {
 
     if (a.status === 'SKIPPED') {
       stats.skipped += 1;
+      // "Other: free text" is grouped under "Other"
+      const reason = (a.skipReason ?? 'No reason').split(':')[0];
+      skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
       continue;
     }
     stats.submitted += 1;
@@ -141,6 +145,9 @@ export async function projectQuality(project: Project) {
 
   return {
     annotators,
+    skipReasons: [...skipReasons.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count),
     agreement: {
       categorical,
       fleiss: fleiss === null ? null : round(fleiss, 3),

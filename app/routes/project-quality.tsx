@@ -32,7 +32,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
-  const { annotators, agreement } = loaderData;
+  const { annotators, agreement, skipReasons } = loaderData;
   if (annotators.length === 0) {
     return (
       <EmptyState title="No submissions yet">
@@ -110,6 +110,22 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
           </table>
         </div>
       </section>
+
+      {skipReasons.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Skip reasons
+          </h2>
+          <ul className="divide-y divide-slate-100 rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
+            {skipReasons.map((s) => (
+              <li key={s.reason} className="flex justify-between px-4 py-2">
+                <span>{s.reason}</span>
+                <span className="font-medium">{s.count}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {agreement.categorical && (
         <section>

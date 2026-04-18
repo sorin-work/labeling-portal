@@ -85,6 +85,28 @@ describe('quality stats', () => {
     expect(quality.agreement.fleiss).not.toBeNull();
   });
 
+  it('groups skip reasons', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    await createTasks(project.id, [{ text: '1' }, { text: '2' }, { text: '3' }]);
+    const { claimNextTask, skipAssignment } = await import('~/models/queue.server');
+    for (const reason of [
+      'Other: blank page',
+      'Other: in French',
+      'Content is broken or unreadable',
+    ]) {
+      const user = await createMember(org.id, 'ANNOTATOR');
+      const claim = await claimNextTask(project, user.id);
+      if (claim.ok) await skipAssignment(claim.assignment.id, user.id, reason);
+    }
+    const { projectQuality } = await import('~/models/quality.server');
+    const quality = await projectQuality(project);
+    expect(quality.skipReasons).toEqual([
+      { reason: 'Other', count: 2 },
+      { reason: 'Content is broken or unreadable', count: 1 },
+    ]);
+  });
+
   it('is not available to annotators', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id);
