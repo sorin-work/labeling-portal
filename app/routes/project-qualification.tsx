@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
+import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
 import type { Answer } from '~/domain/answers';
+import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { forbidden } from '~/lib/http';
 import { can } from '~/lib/permissions';
@@ -33,6 +35,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     schema: projectSchema(project),
     status,
     justFailed: result === 'failed',
+    instructionsHtml: renderMarkdown(project.instructions),
     // never send gold answers to the browser
     tasks: tasks.map((t) => ({ id: t.id, data: t.data as Record<string, unknown> })),
   };
@@ -59,64 +62,79 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function Qualification({ loaderData, actionData }: Route.ComponentProps) {
-  const { project, schema, status, tasks, justFailed } = loaderData;
+  const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const navigation = useNavigation();
   const answered = tasks.filter((t) => answers[t.id]).length;
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <PageHeader
-        title="Qualification test"
-        subtitle={`${project.name} · pass mark ${status.passPercent}% · ${status.attemptsLeft} attempt${status.attemptsLeft === 1 ? '' : 's'} left`}
-      />
-      {justFailed && status.lastScore !== null && (
-        <Alert>
-          You scored {status.lastScore}%, which is below the pass mark. Re-read the instructions
-          before trying again.
-        </Alert>
-      )}
-      {actionData?.error && <Alert>{actionData.error}</Alert>}
-      {status.qualified ? (
-        <Alert tone="success">
-          You are qualified for this project.{' '}
-          <Link to={`/projects/${project.id}`} className="underline">
-            Back to the project
-          </Link>
-        </Alert>
-      ) : status.attemptsLeft === 0 ? (
-        <EmptyState title="No attempts left">
-          Ask a project manager if you think you should get another try.
-        </EmptyState>
-      ) : tasks.length === 0 ? (
-        <EmptyState title="The test is not ready yet">
-          A project manager still has to add the test questions.
-        </EmptyState>
-      ) : (
-        <>
-          {tasks.map((task, i) => (
-            <Card key={task.id}>
-              <div className="mb-3 text-sm font-medium text-slate-500">
-                Question {i + 1} of {tasks.length}
-              </div>
-              <LabelingInterface
-                schema={schema}
-                data={task.data}
-                value={answers[task.id] ?? null}
-                onChange={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
-              />
-            </Card>
-          ))}
-          <Form method="post" className="flex items-center gap-3">
-            <input type="hidden" name="answers" value={JSON.stringify(answers)} />
-            <Button type="submit" disabled={answered < tasks.length || navigation.state !== 'idle'}>
-              Submit test
-            </Button>
-            <span className="text-sm text-slate-500">
-              {answered} of {tasks.length} answered
-            </span>
-          </Form>
-        </>
+    <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+      <div className="space-y-6">
+        <PageHeader
+          title="Qualification test"
+          subtitle={`${project.name} · pass mark ${status.passPercent}% · ${status.attemptsLeft} attempt${status.attemptsLeft === 1 ? '' : 's'} left`}
+        />
+        {justFailed && status.lastScore !== null && (
+          <Alert>
+            You scored {status.lastScore}%, which is below the pass mark. Re-read the instructions
+            before trying again.
+          </Alert>
+        )}
+        {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {status.qualified ? (
+          <Alert tone="success">
+            You are qualified for this project.{' '}
+            <Link to={`/projects/${project.id}`} className="underline">
+              Back to the project
+            </Link>
+          </Alert>
+        ) : status.attemptsLeft === 0 ? (
+          <EmptyState title="No attempts left">
+            Ask a project manager if you think you should get another try.
+          </EmptyState>
+        ) : tasks.length === 0 ? (
+          <EmptyState title="The test is not ready yet">
+            A project manager still has to add the test questions.
+          </EmptyState>
+        ) : (
+          <>
+            {tasks.map((task, i) => (
+              <Card key={task.id}>
+                <div className="mb-3 text-sm font-medium text-slate-500">
+                  Question {i + 1} of {tasks.length}
+                </div>
+                <LabelingInterface
+                  schema={schema}
+                  data={task.data}
+                  value={answers[task.id] ?? null}
+                  onChange={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
+                />
+              </Card>
+            ))}
+            <Form method="post" className="flex items-center gap-3">
+              <input type="hidden" name="answers" value={JSON.stringify(answers)} />
+              <Button
+                type="submit"
+                disabled={answered < tasks.length || navigation.state !== 'idle'}
+              >
+                Submit test
+              </Button>
+              <span className="text-sm text-slate-500">
+                {answered} of {tasks.length} answered
+              </span>
+            </Form>
+          </>
+        )}
+      </div>
+      {instructionsHtml && (
+        <aside>
+          <Card className="sticky top-4 max-h-[85vh] overflow-y-auto">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Instructions
+            </h2>
+            <MarkdownBody html={instructionsHtml} />
+          </Card>
+        </aside>
       )}
     </div>
   );
