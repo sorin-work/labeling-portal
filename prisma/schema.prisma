@@ -206,6 +206,8 @@ model Assignment {
   @@index([userId, status])
   @@index([taskId, status])
   @@index([projectId, reviewStatus])
+  @@index([userId, submittedAt])
+  @@index([projectId, submittedAt])
 }
 
 model Review {
