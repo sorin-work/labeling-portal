@@ -148,6 +148,33 @@ describe('batch import', () => {
     expect(statusOf(result)).toBe(403);
   });
 
+  it('searches by external id and text', async () => {
+    const { project, cookie } = await setup();
+    const file = upload('s.csv', 'id,text\nA-17,battery died\nB-02,great screen\n');
+    await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file } }),
+      {
+        projectId: project.id,
+      },
+    );
+    const batch = await prisma.batch.findFirstOrThrow();
+    const search = async (q: string) =>
+      payload<{ tasks: Array<{ externalId: string }> }>(
+        await run(
+          batchLoader,
+          makeRequest(`/projects/${project.id}/batches/${batch.id}?q=${encodeURIComponent(q)}`, {
+            cookie,
+          }),
+          { projectId: project.id, batchId: batch.id },
+        ),
+      ).tasks.map((t) => t.externalId);
+
+    expect(await search('a-17')).toEqual(['A-17']);
+    expect(await search('screen')).toEqual(['B-02']);
+    expect(await search('nothing')).toEqual([]);
+  });
+
   it('shows the tasks on a partial last page', async () => {
     const { project, cookie } = await setup();
     const rows = Array.from({ length: 30 }, (_, i) => `t${i + 1},text ${i + 1}`).join('\n');

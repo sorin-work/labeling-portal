@@ -1,8 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import { Link } from 'react-router';
+import { Form, Link } from 'react-router';
 
 import { Pagination } from '~/components/pagination';
-import { Badge, EmptyState, PageHeader } from '~/components/ui';
+import { Badge, EmptyState, Input, PageHeader } from '~/components/ui';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -30,7 +30,26 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const statusParam = url.searchParams.get('status');
   const status = STATUSES.find((s) => s === statusParam) ?? null;
-  const where: Prisma.TaskWhereInput = { batchId: batch.id, ...(status ? { status } : {}) };
+  const q = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
+  const schema = projectSchema(project);
+  const textField =
+    schema.kind === 'pairwise'
+      ? schema.promptField
+      : schema.kind === 'bbox'
+        ? schema.imageField
+        : schema.textField;
+  const where: Prisma.TaskWhereInput = {
+    batchId: batch.id,
+    ...(status ? { status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { externalId: { contains: q, mode: 'insensitive' } },
+            { data: { path: [textField], string_contains: q } },
+          ],
+        }
+      : {}),
+  };
 
   const total = await prisma.task.count({ where });
   const page = paginate(total, readPage(url));
@@ -41,12 +60,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     take: page.take,
     select: { id: true, position: true, externalId: true, status: true, data: true, isGold: true },
   });
-  const schema = projectSchema(project);
 
   return {
     projectId: project.id,
     batch: { id: batch.id, name: batch.name, format: batch.format, createdAt: batch.createdAt },
     status,
+    q,
     page,
     tasks: tasks.map((t) => ({
       id: t.id,
@@ -60,7 +79,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function BatchDetail({ loaderData }: Route.ComponentProps) {
-  const { projectId, batch, tasks, page, status } = loaderData;
+  const { projectId, batch, tasks, page, status, q } = loaderData;
   const filters = [
     { label: 'All', value: null },
     { label: 'Open', value: 'OPEN' },
@@ -73,11 +92,11 @@ export default function BatchDetail({ loaderData }: Route.ComponentProps) {
         title={batch.name}
         subtitle={`${batch.format} import · ${formatDate(batch.createdAt)} · ${page.total} tasks`}
       />
-      <div className="mb-3 flex gap-1">
+      <div className="mb-3 flex flex-wrap items-center gap-1">
         {filters.map((f) => (
           <Link
             key={f.label}
-            to={f.value ? `?status=${f.value}` : '?'}
+            to={`?${new URLSearchParams({ ...(f.value ? { status: f.value } : {}), ...(q ? { q } : {}) })}`}
             className={
               status === f.value
                 ? 'rounded-md bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700'
@@ -87,6 +106,17 @@ export default function BatchDetail({ loaderData }: Route.ComponentProps) {
             {f.label}
           </Link>
         ))}
+        <Form className="ml-auto">
+          {status && <input type="hidden" name="status" value={status} />}
+          <Input
+            type="search"
+            name="q"
+            defaultValue={q}
+            placeholder="Search id or text"
+            aria-label="Search tasks"
+            className="w-56"
+          />
+        </Form>
       </div>
       {tasks.length === 0 ? (
         <EmptyState title="No tasks match this filter" />
