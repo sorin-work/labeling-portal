@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import type { ComponentProps, InputHTMLAttributes, ReactNode } from 'react';
 
 export function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
@@ -18,7 +18,7 @@ export function Button({
   variant = 'primary',
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+}: ComponentProps<'button'> & { variant?: ButtonVariant }) {
   return (
     <button
       className={cx(

@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
@@ -123,6 +123,19 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
   const activeSeconds = useActiveTime();
+  const submitRef = useRef<HTMLButtonElement>(null);
+
+  // Ctrl/Cmd+Enter submits, even from the rationale box
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        submitRef.current?.click();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -162,7 +175,14 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={answer ? JSON.stringify(answer) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
-          <Button type="submit" name="intent" value="submit" disabled={busy || !answer}>
+          <Button
+            ref={submitRef}
+            type="submit"
+            name="intent"
+            value="submit"
+            disabled={busy || !answer}
+            title="Ctrl+Enter"
+          >
             Submit and next
           </Button>
           <Button type="button" variant="secondary" onClick={() => setSkipping((s) => !s)}>
