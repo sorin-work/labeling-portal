@@ -65,6 +65,20 @@ describe('task queue', () => {
     expect(taskIds).toEqual([tasks[0].id, tasks[0].id, tasks[1].id]);
   });
 
+  it('never gives the last slot of a task to two people claiming at once', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 1 });
+    const [task] = await createTasks(project.id, [{ text: 'only one' }]);
+    const users = [];
+    for (let i = 0; i < 6; i++) users.push(await createMember(org.id, 'ANNOTATOR'));
+
+    const results = await Promise.all(users.map((u) => claimNextTask(project, u.id)));
+
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).every((r) => !r.ok && r.reason === 'empty')).toBe(true);
+    expect(await prisma.assignment.count({ where: { taskId: task.id } })).toBe(1);
+  });
+
   it('does not hand out paused projects', async () => {
     const { project, ann } = await setup();
     const paused = await prisma.project.update({

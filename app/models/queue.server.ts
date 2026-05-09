@@ -11,6 +11,8 @@ export type ClaimResult =
   | { ok: true; assignment: Assignment; resumed: boolean }
   | { ok: false; reason: 'inactive' | 'empty' | 'unqualified' };
 
+const MAX_CLAIM_ATTEMPTS = 5;
+
 function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
@@ -106,19 +108,32 @@ export async function claimNextTask(
     if (!member?.qualifiedAt) return { ok: false, reason: 'unqualified' };
   }
 
-  const taskId = await nextCandidate(project, userId, now);
-  if (!taskId) return { ok: false, reason: 'empty' };
+  // Two people can pick the same candidate at the same moment. Lock the task
+  // row, check it is still eligible and only then claim it; if someone else
+  // got there first, look for the next candidate.
+  for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
+    const taskId = await nextCandidate(project, userId, now);
+    if (!taskId) return { ok: false, reason: 'empty' };
 
-  const assignment = await prisma.assignment.create({
-    data: {
-      projectId: project.id,
-      taskId,
-      userId,
-      claimedAt: now,
-      expiresAt: addMinutes(now, project.timeLimitMinutes),
-    },
-  });
-  return { ok: true, assignment, resumed: false };
+    const assignment = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE`;
+      const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
+        SELECT ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)} AS eligible
+        FROM "Task" t WHERE t.id = ${taskId}`;
+      if (!check?.eligible) return null;
+      return tx.assignment.create({
+        data: {
+          projectId: project.id,
+          taskId,
+          userId,
+          claimedAt: now,
+          expiresAt: addMinutes(now, project.timeLimitMinutes),
+        },
+      });
+    });
+    if (assignment) return { ok: true, assignment, resumed: false };
+  }
+  return { ok: false, reason: 'empty' };
 }
 
 export type AssignmentError = 'not_found' | 'not_active';
