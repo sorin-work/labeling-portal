@@ -18,11 +18,19 @@ export type ReviewInput = {
 };
 
 /** Submissions waiting for review in a project, oldest first. */
-export function listPendingReviews(projectId: string, take = 50) {
+export function listPendingReviews(
+  projectId: string,
+  opts: { userId?: string; take?: number } = {},
+) {
   return prisma.assignment.findMany({
-    where: { projectId, status: 'SUBMITTED', reviewStatus: 'PENDING' },
+    where: {
+      projectId,
+      status: 'SUBMITTED',
+      reviewStatus: 'PENDING',
+      ...(opts.userId ? { userId: opts.userId } : {}),
+    },
     orderBy: { submittedAt: 'asc' },
-    take,
+    take: opts.take ?? 50,
     select: {
       id: true,
       submittedAt: true,
@@ -37,6 +45,22 @@ export function countPendingReviews(projectId: string) {
   return prisma.assignment.count({
     where: { projectId, status: 'SUBMITTED', reviewStatus: 'PENDING' },
   });
+}
+
+/** Annotators with work waiting for review, with how much each has waiting. */
+export async function pendingByAnnotator(projectId: string) {
+  const groups = await prisma.assignment.groupBy({
+    by: ['userId'],
+    where: { projectId, status: 'SUBMITTED', reviewStatus: 'PENDING' },
+    _count: { _all: true },
+  });
+  const users = await prisma.user.findMany({
+    where: { id: { in: groups.map((g) => g.userId) } },
+    select: { id: true, name: true },
+  });
+  return users
+    .map((u) => ({ ...u, count: groups.find((g) => g.userId === u.id)?._count._all ?? 0 }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** The oldest pending submission the reviewer did not make themselves. */

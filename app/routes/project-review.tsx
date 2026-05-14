@@ -1,4 +1,4 @@
-import { Link, redirect } from 'react-router';
+import { Form, Link, redirect } from 'react-router';
 
 import { Alert, Button, EmptyState } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
@@ -6,7 +6,7 @@ import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { formatDateTime } from '~/lib/format';
 import { projectSchema, requireProject } from '~/models/projects.server';
-import { listPendingReviews, nextPendingReview } from '~/models/reviews.server';
+import { listPendingReviews, nextPendingReview, pendingByAnnotator } from '~/models/reviews.server';
 
 import type { Route } from './+types/project-review';
 
@@ -25,10 +25,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(`/projects/${project.id}/review?done=1`);
   }
 
-  const pending = await listPendingReviews(project.id);
+  const annotator = url.searchParams.get('annotator') ?? '';
+  const [pending, annotators] = await Promise.all([
+    listPendingReviews(project.id, { userId: annotator || undefined }),
+    pendingByAnnotator(project.id),
+  ]);
   const schema = projectSchema(project);
   return {
     done: url.searchParams.has('done'),
+    annotator,
+    annotators,
     pending: pending.map((a) => ({
       id: a.id,
       annotator: a.user.name,
@@ -41,11 +47,39 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function ProjectReview({ loaderData }: Route.ComponentProps) {
-  const { pending, done } = loaderData;
+  const { pending, done, annotator, annotators } = loaderData;
   return (
     <div className="space-y-4">
       {done && (
         <Alert tone="success">You are all caught up. Nothing else is waiting for you.</Alert>
+      )}
+      {annotators.length > 1 && (
+        <Form
+          className="flex items-center gap-2 text-sm"
+          onChange={(e) => e.currentTarget.requestSubmit()}
+        >
+          <label htmlFor="annotator" className="text-slate-600">
+            Annotator
+          </label>
+          <select
+            id="annotator"
+            name="annotator"
+            defaultValue={annotator}
+            className="rounded-md border-0 py-1.5 pl-2 pr-8 text-sm ring-1 ring-slate-300"
+          >
+            <option value="">Everyone</option>
+            {annotators.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.count})
+              </option>
+            ))}
+          </select>
+          <noscript>
+            <Button type="submit" variant="secondary">
+              Filter
+            </Button>
+          </noscript>
+        </Form>
       )}
       {pending.length === 0 ? (
         <EmptyState title="Nothing to review">New submissions will show up here.</EmptyState>
