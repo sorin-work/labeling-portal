@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { claimNextTask, clampActiveSeconds } from '~/models/queue.server';
+import { claimNextTask, clampActiveSeconds, submitAssignment } from '~/models/queue.server';
 import { action as workAction, loader as workLoader } from '~/routes/work';
 import { action as claimAction } from '~/routes/project-work';
 
@@ -241,6 +241,42 @@ describe('expired claims', () => {
     expect(claim.ok && claim.assignment.taskId).toBe(tasks[0].id);
     const old = await prisma.assignment.findFirstOrThrow({ where: { userId: ann.id } });
     expect(old.status).toBe('EXPIRED');
+  });
+
+  it('refuses a submission that arrives after the time limit', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+
+    const late = await submitAssignment(
+      id,
+      ann.id,
+      { answer: { labels: ['positive'] }, activeSeconds: 60, reviewRequired: true },
+      new Date(t0.getTime() + 31 * 60_000),
+    );
+
+    expect(late).toEqual({ ok: false, error: 'expired' });
+    const stored = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(stored).toMatchObject({ status: 'EXPIRED', answer: null });
+  });
+
+  it('sends the annotator back to the project when their time ran out', async () => {
+    const { project, ann, cookie } = await setup();
+    const claim = await claimNextTask(project, ann.id, new Date(Date.now() - 40 * 60_000));
+    const id = claim.ok ? claim.assignment.id : '';
+
+    const result = await run(
+      workAction,
+      makeRequest(`/work/${id}`, {
+        cookie,
+        form: { intent: 'submit', answer: '{"labels":["negative"]}' },
+      }),
+      { assignmentId: id },
+    );
+
+    expect(locationOf(result)).toBe(`/projects/${project.id}?queue=expired`);
+    expect(await prisma.assignment.count({ where: { status: 'SUBMITTED' } })).toBe(0);
   });
 
   it('keeps claims that are still within the limit', async () => {

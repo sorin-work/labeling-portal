@@ -108,6 +108,9 @@ export async function action({ request, params }: Route.ActionArgs) {
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
       reviewRequired: assignment.project.reviewRequired,
     });
+    if (!result.ok && result.error === 'expired') {
+      return redirect(`/projects/${assignment.projectId}?queue=expired`);
+    }
     if (!result.ok) return data({ error: 'This task is no longer yours.' }, { status: 409 });
   }
 

@@ -136,7 +136,7 @@ export async function claimNextTask(
   return { ok: false, reason: 'empty' };
 }
 
-export type AssignmentError = 'not_found' | 'not_active';
+export type AssignmentError = 'not_found' | 'not_active' | 'expired';
 
 async function ownActive(assignmentId: string, userId: string) {
   const assignment = await prisma.assignment.findFirst({ where: { id: assignmentId, userId } });
@@ -160,6 +160,11 @@ export async function submitAssignment(
 ): Promise<{ ok: true; assignment: Assignment } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
+  if (found.assignment.expiresAt <= now) {
+    // the slot may already belong to someone else
+    await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'EXPIRED' } });
+    return { ok: false, error: 'expired' };
+  }
 
   // gold tasks are scored against their known answer instead of being reviewed
   const task = await prisma.task.findUniqueOrThrow({
