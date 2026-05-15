@@ -10,7 +10,7 @@ import { parseReviewForm } from '~/domain/review-form';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime } from '~/lib/format';
-import { notFound } from '~/lib/http';
+import { forbidden, notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
 import { nextPendingReview, recordReview } from '~/models/reviews.server';
 
@@ -68,7 +68,10 @@ export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
   const assignment = await prisma.assignment.findUnique({ where: { id: params.assignmentId } });
   if (!assignment || assignment.status !== 'SUBMITTED') throw notFound('Submission not found');
-  const project = await prisma.project.findUniqueOrThrow({ where: { id: assignment.projectId } });
+  const project = await requireProject(current, assignment.projectId, 'review');
+  if (assignment.userId === current.user.id) {
+    throw forbidden('You cannot review your own submission.');
+  }
   if (assignment.reviewStatus !== 'PENDING') {
     return data({ error: 'Someone already reviewed this submission.' }, { status: 409 });
   }

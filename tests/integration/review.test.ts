@@ -176,6 +176,52 @@ describe('review', () => {
     expect(statusOf(result)).toBe(400);
   });
 
+  it('does not let annotators approve their own work by posting the form', async () => {
+    const { annCookie, submission } = await setup();
+    const result = await run(
+      reviewAction,
+      makeRequest(`/review/${submission.id}`, {
+        cookie: annCookie,
+        form: { intent: 'approve', qaScore: '5' },
+      }),
+      { assignmentId: submission.id },
+    );
+    expect(statusOf(result)).toBe(403);
+    const stored = await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(stored.reviewStatus).toBe('PENDING');
+    expect(await prisma.review.count()).toBe(0);
+  });
+
+  it('does not let reviewers from another organisation review', async () => {
+    const { submission } = await setup();
+    const otherOrg = await createOrg('Elsewhere');
+    const outsider = await createMember(otherOrg.id, 'REVIEWER');
+    const result = await run(
+      reviewAction,
+      makeRequest(`/review/${submission.id}`, {
+        cookie: await cookieFor(outsider, otherOrg.id),
+        form: { intent: 'approve' },
+      }),
+      { assignmentId: submission.id },
+    );
+    expect(statusOf(result)).toBe(404);
+  });
+
+  it('does not let an admin review a submission they made', async () => {
+    const { org, project } = await setup();
+    const admin = await createMember(org.id, 'ADMIN');
+    const own = await submitWork(project, admin.id, { labels: ['negative'] });
+    const result = await run(
+      reviewAction,
+      makeRequest(`/review/${own.id}`, {
+        cookie: await cookieFor(admin, org.id),
+        form: { intent: 'approve' },
+      }),
+      { assignmentId: own.id },
+    );
+    expect(statusOf(result)).toBe(403);
+  });
+
   it('does not show the review page to annotators', async () => {
     const { annCookie, submission } = await setup();
     const result = await run(
@@ -219,6 +265,7 @@ describe('task completion', () => {
     const a = await createMember(org.id, 'ANNOTATOR');
     const b = await createMember(org.id, 'ANNOTATOR');
     const reviewer = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, reviewer);
     const cookie = await cookieFor(reviewer, org.id);
     const first = await submitWork(project, a.id, { labels: ['positive'] });
     const second = await submitWork(project, b.id, { labels: ['positive'] });
