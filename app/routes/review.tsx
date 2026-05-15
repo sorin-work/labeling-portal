@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
+import { useHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
@@ -110,6 +111,21 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
   const [fixing, setFixing] = useState(false);
   const [corrected, setCorrected] = useState<Answer>(assignment.answer);
   const navigation = useNavigation();
+  const approveRef = useRef<HTMLButtonElement>(null);
+
+  // 1-5 sets the quality score, "a" approves; only while not editing a fix
+  useHotkeys((key) => {
+    if (fixing) return false;
+    if (/^[1-5]$/.test(key)) {
+      setScore(Number(key));
+      return true;
+    }
+    if (key === 'a') {
+      approveRef.current?.click();
+      return true;
+    }
+    return false;
+  });
   const pending = assignment.reviewStatus === 'PENDING';
 
   return (
@@ -151,7 +167,9 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
             className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
           >
             <fieldset>
-              <legend className="mb-1 text-sm font-medium">Quality score</legend>
+              <legend className="mb-1 text-sm font-medium">
+                Quality score <span className="font-normal text-slate-400">(keys 1-5)</span>
+              </legend>
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <button
@@ -196,7 +214,13 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                 </>
               ) : (
                 <>
-                  <Button name="intent" value="approve" disabled={navigation.state !== 'idle'}>
+                  <Button
+                    ref={approveRef}
+                    name="intent"
+                    value="approve"
+                    title="Shortcut: a"
+                    disabled={navigation.state !== 'idle'}
+                  >
                     Approve
                   </Button>
                   <Button
