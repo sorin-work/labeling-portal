@@ -106,6 +106,7 @@ model Project {
   name                     String
   description              String                 @default("")
   instructions             String                 @default("")
+  instructionsUpdatedAt    DateTime?
   kind                     TaskKind
   schema                   Json
   status                   ProjectStatus          @default(DRAFT)

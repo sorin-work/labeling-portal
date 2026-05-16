@@ -78,13 +78,19 @@ export async function createProject(orgId: string, input: ProjectInput) {
   });
 }
 
-export async function updateProject(projectId: string, input: ProjectInput) {
+export async function updateProject(projectId: string, input: ProjectInput, now = new Date()) {
+  const before = await prisma.project.findUniqueOrThrow({
+    where: { id: projectId },
+    select: { instructions: true },
+  });
+  const instructionsChanged = before.instructions.trim() !== input.instructions.trim();
   return prisma.project.update({
     where: { id: projectId },
     data: {
       name: input.name,
       description: input.description,
       instructions: input.instructions,
+      ...(instructionsChanged ? { instructionsUpdatedAt: now } : {}),
       overlap: input.overlap,
       timeLimitMinutes: input.timeLimitMinutes,
       reviewRequired: input.reviewRequired,

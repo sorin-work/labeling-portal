@@ -136,6 +136,27 @@ describe('projects', () => {
     expect(updated.status).toBe('ACTIVE');
   });
 
+  it('records when the instructions change, and only then', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const project = await createTestProject(org.id, { instructions: '# Guide' });
+    const cookie = await cookieFor(pm, org.id);
+    const path = `/projects/${project.id}/settings`;
+    const save = (instructions: string) =>
+      run(settingsAction, makeRequest(path, { cookie, form: { ...validForm, instructions } }), {
+        projectId: project.id,
+      });
+
+    await save('# Guide');
+    expect(
+      (await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).instructionsUpdatedAt,
+    ).toBeNull();
+    await save('# Guide\n\nNew rule: sarcasm counts as negative.');
+    expect(
+      (await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).instructionsUpdatedAt,
+    ).not.toBeNull();
+  });
+
   it('refuses to pause a draft project', async () => {
     const org = await createOrg();
     const pm = await createMember(org.id, 'ADMIN');
