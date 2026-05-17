@@ -55,7 +55,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(`/projects/${assignment.projectId}`);
   }
   const { project, task } = assignment;
+  const lastSubmission = await prisma.assignment.findFirst({
+    where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
+    orderBy: { submittedAt: 'desc' },
+    select: { submittedAt: true },
+  });
+  const instructionsChanged = Boolean(
+    project.instructionsUpdatedAt &&
+    lastSubmission?.submittedAt &&
+    project.instructionsUpdatedAt > lastSubmission.submittedAt,
+  );
   return {
+    instructionsChanged,
     assignment: {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
@@ -120,7 +131,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function Work({ loaderData, actionData }: Route.ComponentProps) {
-  const { assignment, project, schema, task, instructionsHtml } = loaderData;
+  const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [skipping, setSkipping] = useState(false);
   const navigation = useNavigation();
@@ -166,6 +177,12 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {instructionsChanged && (
+          <Alert tone="info">
+            The instructions were updated since your last submission. Please read them again before
+            you continue.
+          </Alert>
+        )}
         <Card>
           <LabelingInterface
             key={task.id}

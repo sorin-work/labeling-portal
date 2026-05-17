@@ -193,6 +193,34 @@ describe('work routes', () => {
     expect(active.taskId).toBe(tasks[1].id);
   });
 
+  it('flags instructions that changed after the last submission', async () => {
+    const { project, ann, cookie } = await setup();
+    const first = await claimNextTask(project, ann.id);
+    const firstId = first.ok ? first.assignment.id : '';
+    await run(
+      workAction,
+      makeRequest(`/work/${firstId}`, {
+        cookie,
+        form: { intent: 'submit', answer: '{"labels":["positive"]}' },
+      }),
+      { assignmentId: firstId },
+    );
+    const next = await prisma.assignment.findFirstOrThrow({ where: { status: 'ACTIVE' } });
+    const before = await run(workLoader, makeRequest(`/work/${next.id}`, { cookie }), {
+      assignmentId: next.id,
+    });
+    expect(payload<{ instructionsChanged: boolean }>(before).instructionsChanged).toBe(false);
+
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { instructionsUpdatedAt: new Date() },
+    });
+    const after = await run(workLoader, makeRequest(`/work/${next.id}`, { cookie }), {
+      assignmentId: next.id,
+    });
+    expect(payload<{ instructionsChanged: boolean }>(after).instructionsChanged).toBe(true);
+  });
+
   it('needs details when skipping for another reason', async () => {
     const { project, ann, cookie } = await setup();
     const claim = await claimNextTask(project, ann.id);
