@@ -32,4 +32,5 @@ export default [
       route('export', 'routes/project-export.tsx'),
     ]),
   ]),
+  route('*', 'routes/not-found.tsx'),
 ] satisfies RouteConfig;
