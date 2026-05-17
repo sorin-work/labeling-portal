@@ -34,6 +34,9 @@ export function cohensKappa(pairs: Array<[string, string]>): number | null {
   for (const [label, count] of countsA) {
     expected += (count / n) * ((countsB.get(label) ?? 0) / n);
   }
+  // both raters used a single, identical label for everything: kappa is
+  // undefined (0/0), but they agree perfectly
+  if (expected === 1) return 1;
   return (observed - expected) / (1 - expected);
 }
 

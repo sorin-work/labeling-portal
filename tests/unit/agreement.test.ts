@@ -31,6 +31,16 @@ describe('cohensKappa', () => {
     ).toBe(1);
   });
 
+  it('is 1, not NaN, when both raters always used the same label', () => {
+    expect(
+      cohensKappa([
+        ['pos', 'pos'],
+        ['pos', 'pos'],
+        ['pos', 'pos'],
+      ]),
+    ).toBe(1);
+  });
+
   it('can be negative', () => {
     expect(
       cohensKappa([

@@ -85,6 +85,22 @@ describe('quality stats', () => {
     expect(quality.agreement.fleiss).not.toBeNull();
   });
 
+  it('reports full agreement for a pair that always chose the same label', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2, reviewRequired: false });
+    await createTasks(project.id, [{ text: '1' }, { text: '2' }, { text: '3' }]);
+    const a = await createMember(org.id, 'ANNOTATOR');
+    const b = await createMember(org.id, 'ANNOTATOR');
+    for (let i = 0; i < 3; i++) {
+      await submitWork(project, a.id, { labels: ['positive'] });
+      await submitWork(project, b.id, { labels: ['positive'] });
+    }
+    const { projectQuality } = await import('~/models/quality.server');
+    const quality = await projectQuality(project);
+    expect(quality.agreement.pairs[0].kappa).toBe(1);
+    expect(quality.agreement.fleiss).toBe(1);
+  });
+
   it('groups skip reasons', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id);
