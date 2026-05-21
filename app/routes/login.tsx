@@ -2,6 +2,7 @@ import { data, Form, redirect, useNavigation, useSearchParams } from 'react-rout
 
 import { Alert, Button, Field, Input } from '~/components/ui';
 import { authenticate, getCurrentUser } from '~/lib/auth.server';
+import { loginLimiter } from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
 import { createUserSession } from '~/lib/session.server';
 
@@ -25,10 +26,23 @@ export async function action({ request }: Route.ActionArgs) {
   if (!email || !password) {
     return data({ error: 'Enter your email and password.', email }, { status: 400 });
   }
+  const key = email.trim().toLowerCase();
+  const limit = loginLimiter.hit(key);
+  if (!limit.allowed) {
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+    return data(
+      {
+        error: `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        email,
+      },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfterSeconds) } },
+    );
+  }
   const result = await authenticate(email, password);
   if (!result) {
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
+  loginLimiter.reset(key);
   return createUserSession(
     request,
     { userId: result.user.id, orgId: result.membership.orgId },

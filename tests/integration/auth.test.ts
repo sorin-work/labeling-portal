@@ -47,6 +47,21 @@ describe('sign in', () => {
     expect(payload<{ error: string }>(result).error).toMatch(/do not match/);
   });
 
+  it('blocks an email after too many failed attempts', async () => {
+    const org = await createOrg();
+    await createMember(org.id, 'ANNOTATOR', {
+      email: 'locked@example.test',
+      password: 'secret-pass',
+    });
+    const attempt = (password: string) =>
+      run(loginAction, makeRequest('/login', { form: { email: 'locked@example.test', password } }));
+
+    for (let i = 0; i < 10; i++) expect(statusOf(await attempt('wrong'))).toBe(401);
+    const blocked = await attempt('secret-pass');
+    expect(statusOf(blocked)).toBe(429);
+    expect(payload<{ error: string }>(blocked).error).toMatch(/Too many attempts/);
+  });
+
   it('ignores off-site redirect targets', async () => {
     const org = await createOrg();
     await createMember(org.id, 'ADMIN', { email: 'admin@example.test', password: 'secret-pass' });
