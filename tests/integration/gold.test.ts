@@ -76,3 +76,17 @@ describe('gold tasks', () => {
     expect(next.ok && next.assignment.taskId).not.toBe(gold.id);
   });
 });
+
+describe('my stats', () => {
+  beforeEach(resetDb);
+
+  it('summarises an annotator’s last 30 days', async () => {
+    const { org, project } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await submitWork(project, ann.id, { labels: ['positive'] }, { activeSeconds: 1800 });
+    await submitWork(project, ann.id, { labels: ['negative'] }, { activeSeconds: 1800 });
+    const { myStats } = await import('~/models/annotator-stats.server');
+    const stats = await myStats(ann.id);
+    expect(stats).toMatchObject({ submitted: 2, accepted: 1, goldAccuracy: 1, acceptanceRate: 1 });
+  });
+});

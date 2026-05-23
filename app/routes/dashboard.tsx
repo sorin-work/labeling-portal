@@ -5,6 +5,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
+import { myStats } from '~/models/annotator-stats.server';
 import { listProjects } from '~/models/projects.server';
 import { countAvailable } from '~/models/queue.server';
 
@@ -42,10 +43,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     }),
   ]);
 
+  const stats = canAnnotate ? await myStats(user.id, 30, now) : null;
+
   return {
     user,
     role: membership.role,
     canAnnotate,
+    stats,
     submittedToday,
     active: active.map((a) => ({ id: a.id, projectName: a.project.name })),
     projects: projects
@@ -55,7 +59,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { user, canAnnotate, submittedToday, active, projects } = loaderData;
+  const { user, canAnnotate, submittedToday, active, projects, stats } = loaderData;
+  const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
   return (
     <div className="space-y-6">
       <div>
@@ -66,6 +71,34 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           </p>
         )}
       </div>
+
+      {stats && stats.submitted > 0 && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Last 30 days
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-4">
+            {[
+              { label: 'Submitted', value: String(stats.submitted) },
+              {
+                label: 'Accepted',
+                value: pct(stats.acceptanceRate),
+                hint: `${stats.sentBack} sent back`,
+              },
+              { label: 'Gold accuracy', value: pct(stats.goldAccuracy) },
+              { label: 'Active time', value: `${stats.hours} h` },
+            ].map((s) => (
+              <Card key={s.label}>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {s.label}
+                </div>
+                <div className="mt-1 text-2xl font-semibold">{s.value}</div>
+                {s.hint && <div className="text-xs text-slate-500">{s.hint}</div>}
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
 
       {active.length > 0 && (
         <Card className="space-y-2">
