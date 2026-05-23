@@ -32,10 +32,19 @@ export type PayoutLine = {
   projects: ProjectPayout[];
 };
 
-/** What one task earns: the flat rate, or the hourly rate for the time spent on it. */
-export function taskAmountCents(mode: PayMode, rateCents: number, seconds: number): number {
-  if (mode === 'PER_TASK') return rateCents;
-  return Math.floor((rateCents * seconds) / 3600);
+/**
+ * What a block of work earns: the flat rate per task, or the hourly rate for
+ * the total time. Hourly amounts are rounded once, to the nearest cent, for the
+ * whole block rather than per task.
+ */
+export function amountCents(
+  mode: PayMode,
+  rateCents: number,
+  tasks: number,
+  seconds: number,
+): number {
+  if (mode === 'PER_TASK') return rateCents * tasks;
+  return Math.round((rateCents * seconds) / 3600);
 }
 
 /** Groups accepted work by person and project and adds up what each person is owed. */
@@ -68,13 +77,15 @@ export function computePayouts(work: PaidWork[]): { lines: PayoutLine[]; totalCe
       };
       line.projects.push(project);
     }
-    const amount = taskAmountCents(item.payMode, item.rateCents, item.activeSeconds);
     project.tasks += 1;
     project.seconds += item.activeSeconds;
-    project.amountCents += amount;
     line.tasks += 1;
     line.seconds += item.activeSeconds;
-    line.amountCents += amount;
+  }
+  for (const line of lines.values()) {
+    for (const p of line.projects)
+      p.amountCents = amountCents(p.payMode, p.rateCents, p.tasks, p.seconds);
+    line.amountCents = line.projects.reduce((s, p) => s + p.amountCents, 0);
   }
   const sorted = [...lines.values()].sort((a, b) => a.name.localeCompare(b.name));
   for (const line of sorted)

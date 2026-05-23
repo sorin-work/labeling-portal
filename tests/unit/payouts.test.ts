@@ -4,7 +4,7 @@ import {
   computePayouts,
   formatCents,
   parseMoney,
-  taskAmountCents,
+  amountCents,
   type PaidWork,
 } from '~/domain/payouts';
 
@@ -20,14 +20,14 @@ const work = (overrides: Partial<PaidWork>): PaidWork => ({
   ...overrides,
 });
 
-describe('taskAmountCents', () => {
+describe('amountCents', () => {
   it('pays the flat rate per task', () => {
-    expect(taskAmountCents('PER_TASK', 40, 9999)).toBe(40);
+    expect(amountCents('PER_TASK', 40, 3, 9999)).toBe(120);
   });
 
   it('pays hourly work by the second', () => {
-    expect(taskAmountCents('HOURLY', 1800, 3600)).toBe(1800);
-    expect(taskAmountCents('HOURLY', 1800, 1800)).toBe(900);
+    expect(amountCents('HOURLY', 1800, 1, 3600)).toBe(1800);
+    expect(amountCents('HOURLY', 1800, 2, 1800)).toBe(900);
   });
 });
 
@@ -51,6 +51,14 @@ describe('computePayouts', () => {
     ]);
     expect(lines[0].projects.map((p) => p.projectName)).toEqual(['Boxes', 'Sentiment']);
     expect(totalCents).toBe(675);
+  });
+
+  it('rounds hourly pay once for all tasks of a project', () => {
+    // 3 x 61s at $18/h = 183s = 91.5 cents; per-task flooring gave 90
+    const { lines } = computePayouts(
+      [1, 2, 3].map(() => work({ payMode: 'HOURLY', rateCents: 1800, activeSeconds: 61 })),
+    );
+    expect(lines[0].amountCents).toBe(92);
   });
 
   it('returns nothing for no work', () => {
