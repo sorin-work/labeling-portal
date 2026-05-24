@@ -46,3 +46,25 @@ export async function listBatches(projectId: string) {
     return { ...batch, total, complete };
   });
 }
+
+export type DeleteBatchResult = { ok: true; tasks: number } | { ok: false; error: string };
+
+/**
+ * Removes a batch and its tasks. Only allowed while nobody has submitted or
+ * skipped any of its tasks, so no paid or reviewed work is lost.
+ */
+export async function deleteBatch(projectId: string, batchId: string): Promise<DeleteBatchResult> {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
+    if (!batch) return { ok: false, error: 'Batch not found.' };
+    const worked = await tx.assignment.count({
+      where: { task: { batchId }, status: { in: ['SUBMITTED', 'SKIPPED'] } },
+    });
+    if (worked > 0) {
+      return { ok: false, error: 'Tasks in this batch already have work on them.' };
+    }
+    const tasks = await tx.task.count({ where: { batchId } });
+    await tx.batch.delete({ where: { id: batchId } });
+    return { ok: true, tasks };
+  });
+}
