@@ -10,14 +10,16 @@ export type PayoutRange = { from: string; to: string };
  */
 export async function payoutReport(orgId: string, range: PayoutRange) {
   const from = new Date(`${range.from}T00:00:00Z`);
-  const to = new Date(range.to);
+  // the last day counts in full: stop at midnight after it
+  const end = new Date(`${range.to}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
 
   const rows = await prisma.assignment.findMany({
     where: {
       project: { orgId },
       status: 'SUBMITTED',
       reviewStatus: { in: [...ACCEPTED_STATUSES] },
-      submittedAt: { gte: from, lte: to },
+      submittedAt: { gte: from, lt: end },
     },
     select: {
       activeSeconds: true,
@@ -41,7 +43,7 @@ export async function payoutReport(orgId: string, range: PayoutRange) {
       project: { orgId },
       status: 'SUBMITTED',
       reviewStatus: { in: ['PENDING', 'SENT_BACK'] },
-      submittedAt: { gte: from, lte: to },
+      submittedAt: { gte: from, lt: end },
     },
   });
 

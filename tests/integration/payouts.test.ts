@@ -70,6 +70,33 @@ describe('payouts', () => {
     expect(report.totalCents).toBe(70);
   });
 
+  it('includes work from the whole last day of the range', async () => {
+    const { project, ann, cookie } = await setup();
+    await submitWork(
+      project,
+      ann.id,
+      { labels: ['positive'] },
+      { now: new Date('2026-03-31T18:30:00Z') },
+    );
+    await submitWork(
+      project,
+      ann.id,
+      { labels: ['negative'] },
+      { now: new Date('2026-03-31T23:40:00Z') },
+    );
+    await submitWork(
+      project,
+      ann.id,
+      { labels: ['negative'] },
+      { now: new Date('2026-04-01T00:10:00Z') },
+    );
+
+    const report = payload<Report>(
+      await run(payoutsLoader, makeRequest('/payouts?from=2026-03-01&to=2026-03-31', { cookie })),
+    );
+    expect(report.lines[0]).toMatchObject({ tasks: 2, amountCents: 70 });
+  });
+
   it('pays hourly projects for active time', async () => {
     const { project, ann, cookie } = await setup();
     await prisma.project.update({
