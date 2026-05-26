@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { action as importAction } from '~/routes/batch-new';
-import { loader as batchLoader } from '~/routes/batch-detail';
+import { action as batchAction, loader as batchLoader } from '~/routes/batch-detail';
 import { loader as batchesLoader } from '~/routes/project-batches';
 
 import {
@@ -119,6 +119,47 @@ describe('batch import', () => {
       { projectId: project.id },
     );
     expect(await prisma.task.count()).toBe(1);
+  });
+
+  it('deletes an untouched batch but not one with work on it', async () => {
+    const { org, project, cookie } = await setup();
+    const file = upload('d.csv', 'id,text\n1,a\n2,b\n');
+    await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file } }),
+      {
+        projectId: project.id,
+      },
+    );
+    const batch = await prisma.batch.findFirstOrThrow();
+    const path = `/projects/${project.id}/batches/${batch.id}`;
+
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const { claimNextTask, skipAssignment } = await import('~/models/queue.server');
+    const claim = await claimNextTask(project, ann.id);
+    if (claim.ok) await skipAssignment(claim.assignment.id, ann.id, 'Other: test');
+
+    const refused = await run(
+      batchAction,
+      makeRequest(path, { cookie, form: { intent: 'delete' } }),
+      {
+        projectId: project.id,
+        batchId: batch.id,
+      },
+    );
+    expect(statusOf(refused)).toBe(409);
+
+    await prisma.assignment.deleteMany();
+    const deleted = await run(
+      batchAction,
+      makeRequest(path, { cookie, form: { intent: 'delete' } }),
+      {
+        projectId: project.id,
+        batchId: batch.id,
+      },
+    );
+    expect(locationOf(deleted)).toBe(`/projects/${project.id}/batches`);
+    expect(await prisma.task.count()).toBe(0);
   });
 
   it('requires a file', async () => {

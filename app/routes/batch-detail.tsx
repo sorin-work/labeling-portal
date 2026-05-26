@@ -1,14 +1,16 @@
 import type { Prisma } from '@prisma/client';
-import { Form, Link } from 'react-router';
+import { data, Form, Link } from 'react-router';
 
 import { Pagination } from '~/components/pagination';
-import { Badge, EmptyState, Input, PageHeader } from '~/components/ui';
+import { Alert, Badge, Button, EmptyState, Input, PageHeader } from '~/components/ui';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDate, titleCase } from '~/lib/format';
-import { notFound } from '~/lib/http';
+import { redirectWithFlash } from '~/lib/flash.server';
+import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
+import { deleteBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
@@ -78,7 +80,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   };
 }
 
-export default function BatchDetail({ loaderData }: Route.ComponentProps) {
+export async function action({ request, params }: Route.ActionArgs) {
+  const current = await requireUser(request);
+  const project = await requireProject(current, params.projectId, 'manageProjects');
+  const form = await request.formData();
+  if (form.get('intent') !== 'delete') throw badRequest('Unknown action');
+  const result = await deleteBatch(project.id, params.batchId);
+  if (!result.ok) return data({ error: result.error }, { status: 409 });
+  return redirectWithFlash(
+    request,
+    `/projects/${project.id}/batches`,
+    `Deleted the batch and its ${result.tasks} tasks.`,
+  );
+}
+
+export default function BatchDetail({ loaderData, actionData }: Route.ComponentProps) {
   const { projectId, batch, tasks, page, status, q } = loaderData;
   const filters = [
     { label: 'All', value: null },
@@ -91,7 +107,24 @@ export default function BatchDetail({ loaderData }: Route.ComponentProps) {
       <PageHeader
         title={batch.name}
         subtitle={`${batch.format} import · ${formatDate(batch.createdAt)} · ${page.total} tasks`}
+        actions={
+          <Form
+            method="post"
+            onSubmit={(event) => {
+              if (!confirm('Delete this batch and all of its tasks?')) event.preventDefault();
+            }}
+          >
+            <Button name="intent" value="delete" variant="ghost" className="text-rose-600">
+              Delete batch
+            </Button>
+          </Form>
+        }
       />
+      {actionData?.error && (
+        <div className="mb-4">
+          <Alert>{actionData.error}</Alert>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-1">
         {filters.map((f) => (
           <Link
