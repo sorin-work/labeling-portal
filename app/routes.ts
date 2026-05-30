@@ -6,6 +6,7 @@ export default [
   route('healthz', 'routes/healthz.ts'),
   route('payouts/export', 'routes/payouts-export.ts'),
   route('projects/:projectId/download', 'routes/project-download.ts'),
+  route('projects/:projectId/example', 'routes/project-sample.ts'),
   layout('routes/app-layout.tsx', [
     index('routes/dashboard.tsx'),
     route('projects', 'routes/projects.tsx'),

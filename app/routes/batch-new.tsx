@@ -154,6 +154,24 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
           An optional <code className="font-mono">id</code> column is kept as the task&apos;s
           external id and included in exports. Other columns are stored with the task.
         </p>
+        <p className="mt-2">
+          Add a <code className="font-mono">_gold</code> column with the correct answer to make a
+          row a gold task.
+        </p>
+        <p className="mt-3 flex gap-3">
+          <a
+            href={`/projects/${projectId}/example?format=csv`}
+            className="text-indigo-700 hover:underline"
+          >
+            Example CSV
+          </a>
+          <a
+            href={`/projects/${projectId}/example?format=jsonl`}
+            className="text-indigo-700 hover:underline"
+          >
+            Example JSONL
+          </a>
+        </p>
       </Card>
     </div>
   );
