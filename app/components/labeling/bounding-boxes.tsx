@@ -194,6 +194,47 @@ export function BoundingBoxes({
             ? 'Box selected: press a number to relabel it or Delete to remove it.'
             : 'Drag on the image to draw a box. Submit with no boxes if nothing is there.'}
       </p>
+      {boxes.length > 0 && (
+        <ul className="flex flex-wrap gap-2 text-sm">
+          {boxes.map((box, i) => (
+            <li
+              key={i}
+              className={cx(
+                'flex items-center gap-2 rounded-md bg-white px-2 py-1 ring-1',
+                selected === i ? 'ring-2 ring-slate-800' : 'ring-slate-200',
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => !readOnly && setSelected(i)}
+                className="flex items-center gap-1.5"
+              >
+                <span
+                  className="h-3 w-3 rounded-sm"
+                  style={{ backgroundColor: colorOf(box.label) }}
+                />
+                {box.label}
+                <span className="text-xs text-slate-400">
+                  {Math.round(box.w)}×{Math.round(box.h)}
+                </span>
+              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${box.label} box`}
+                  onClick={() => {
+                    emit(boxes.filter((_, j) => j !== i));
+                    setSelected(null);
+                  }}
+                  className="text-slate-400 hover:text-rose-600"
+                >
+                  ×
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
