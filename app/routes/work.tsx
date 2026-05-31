@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
+import { TaskContext } from '~/components/task-context';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
@@ -192,6 +193,7 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
             onChange={setAnswer}
           />
         </Card>
+        <TaskContext schema={schema} data={task.data} />
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={answer ? JSON.stringify(answer) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
