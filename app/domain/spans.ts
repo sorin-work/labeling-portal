@@ -2,9 +2,12 @@ import type { Span } from './answers';
 
 export type Segment = { text: string; start: number; end: number; span: Span | null };
 
-/** The text a span covers. */
+/**
+ * The text a span covers. Offsets are UTF-16 code units, the same unit the
+ * browser's Selection API and String#slice use.
+ */
 export function spanText(text: string, span: Pick<Span, 'start' | 'end'>): string {
-  return Array.from(text).slice(span.start, span.end).join('');
+  return text.slice(span.start, span.end);
 }
 
 /** Moves the edges of a selection inward past whitespace. */

@@ -44,6 +44,22 @@ describe('toJsonl', () => {
   });
 });
 
+describe('entity text after an emoji', () => {
+  it('exports the covered text', () => {
+    const text = 'Great day \u{1F600} with Maria in Lisbon';
+    const start = text.indexOf('Maria');
+    const task: ExportTask = {
+      ...base,
+      data: { text },
+      consensus: { spans: [{ start, end: start + 5, label: 'PERSON' }] },
+      annotations: [],
+    };
+    const row = JSON.parse(toJsonl(SCHEMA_TEMPLATES.ner, [task]));
+    expect(row.consensus.spans[0].text).toBe('Maria');
+    expect(toCsvExport(SCHEMA_TEMPLATES.ner, [task])).toContain('PERSON:Maria');
+  });
+});
+
 describe('toCsvExport', () => {
   it('flattens pairwise answers into rubric columns', () => {
     const task: ExportTask = {

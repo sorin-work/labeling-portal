@@ -11,6 +11,14 @@ describe('spanText', () => {
   });
 });
 
+describe('spanText with characters outside the basic plane', () => {
+  it('uses the same offsets as the browser', () => {
+    const party = '\u{1F389} Ada wrote code';
+    const start = party.indexOf('Ada');
+    expect(spanText(party, { start, end: start + 3 })).toBe('Ada');
+  });
+});
+
 describe('trimSelection', () => {
   it('drops surrounding whitespace and orders the ends', () => {
     expect(trimSelection(text, 13, 5)).toEqual([6, 12]);
