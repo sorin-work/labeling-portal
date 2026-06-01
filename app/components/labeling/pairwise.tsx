@@ -4,6 +4,7 @@ import type { PairwiseSchema } from '~/domain/task-schema';
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
+import { useHotkeys } from './use-hotkeys';
 
 // The preference starts out unset; the server rejects drafts without one.
 const EMPTY = {
@@ -67,6 +68,13 @@ export function PairwiseRubric({
   ];
   const length = draft.rationale.trim().length;
 
+  useHotkeys((key) => {
+    const pick = { a: 'A', b: 'B', t: 'tie' }[key.toLowerCase()] as Preference | undefined;
+    if (!pick || (pick === 'tie' && !schema.allowTie)) return false;
+    update({ preference: pick });
+    return true;
+  }, !readOnly);
+
   return (
     <div className="space-y-5">
       <section>
@@ -125,6 +133,11 @@ export function PairwiseRubric({
       <fieldset>
         <legend className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
           Overall preference
+          {!readOnly && (
+            <span className="ml-2 normal-case text-slate-400">
+              (keys a, b{schema.allowTie ? ', t' : ''})
+            </span>
+          )}
         </legend>
         <div className="flex flex-wrap gap-2">
           {preferences.map((p) => (
