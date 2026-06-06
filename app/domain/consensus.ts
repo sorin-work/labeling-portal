@@ -129,13 +129,29 @@ export function nerConsensus(answers: NerAnswer[]): Consensus {
   };
 }
 
-/** F1 between two box sets: a box matches when the other set has one with the same label and IoU >= 0.5. */
+/**
+ * F1 between two box sets. Boxes match one to one on label and IoU >= 0.5,
+ * taking the best-overlapping pairs first, so one box can never count for two.
+ */
 export function boxF1(a: Box[], b: Box[]): number {
   if (a.length === 0 && b.length === 0) return 1;
-  const matched = a.filter((box) =>
-    b.some((other) => other.label === box.label && iou(box, other) >= BOX_MATCH_IOU),
-  ).length;
-  return (2 * matched) / (a.length + b.length);
+  const pairs: Array<{ i: number; j: number; score: number }> = [];
+  a.forEach((box, i) =>
+    b.forEach((other, j) => {
+      if (other.label !== box.label) return;
+      const score = iou(box, other);
+      if (score >= BOX_MATCH_IOU) pairs.push({ i, j, score });
+    }),
+  );
+  pairs.sort((x, y) => y.score - x.score);
+  const usedA = new Set<number>();
+  const usedB = new Set<number>();
+  for (const { i, j } of pairs) {
+    if (usedA.has(i) || usedB.has(j)) continue;
+    usedA.add(i);
+    usedB.add(j);
+  }
+  return (2 * usedA.size) / (a.length + b.length);
 }
 
 export function bboxConsensus(answers: BboxAnswer[]): Consensus {

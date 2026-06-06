@@ -42,6 +42,19 @@ describe('scoreAgainstGold', () => {
     expect(scoreAgainstGold(SCHEMA_TEMPLATES.pairwise, vote('B'), vote('A'))).toBe(0);
   });
 
+  it('never scores above 1 when gold boxes overlap', () => {
+    const img = { imageWidth: 200, imageHeight: 200 };
+    const gold = {
+      ...img,
+      boxes: [
+        { x: 10, y: 10, w: 60, h: 40, label: 'car' },
+        { x: 20, y: 10, w: 60, h: 40, label: 'car' },
+      ],
+    };
+    const one = { ...img, boxes: [{ x: 15, y: 10, w: 60, h: 40, label: 'car' }] };
+    expect(scoreAgainstGold(SCHEMA_TEMPLATES.bbox, one, gold)).toBe(0.6667);
+  });
+
   it('scores boxes with box f1', () => {
     const img = { imageWidth: 200, imageHeight: 200 };
     const gold = {
