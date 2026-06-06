@@ -99,6 +99,20 @@ describe('projects', () => {
     expect(names).toEqual(['Mine']);
   });
 
+  it('hides archived projects unless asked', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    await createTestProject(org.id, { name: 'Live' });
+    await createTestProject(org.id, { name: 'Old', status: 'ARCHIVED' });
+    const cookie = await cookieFor(pm, org.id);
+    const names = async (path: string) =>
+      payload<{ projects: Array<{ name: string }> }>(
+        await run(projectsLoader, makeRequest(path, { cookie })),
+      ).projects.map((p) => p.name);
+    expect(await names('/projects')).toEqual(['Live']);
+    expect((await names('/projects?archived=1')).sort()).toEqual(['Live', 'Old']);
+  });
+
   it('hides projects from other organisations', async () => {
     const org = await createOrg('One');
     const other = await createOrg('Two');

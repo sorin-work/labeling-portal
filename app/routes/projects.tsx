@@ -14,12 +14,19 @@ export function meta() {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const current = await requireUser(request);
-  const projects = await listProjects(current);
-  return { projects, canManage: can(current.membership.role, 'manageProjects') };
+  const all = await listProjects(current);
+  const showArchived = new URL(request.url).searchParams.get('archived') === '1';
+  const archived = all.filter((p) => p.status === 'ARCHIVED').length;
+  return {
+    projects: showArchived ? all : all.filter((p) => p.status !== 'ARCHIVED'),
+    archived,
+    showArchived,
+    canManage: can(current.membership.role, 'manageProjects'),
+  };
 }
 
 export default function Projects({ loaderData }: Route.ComponentProps) {
-  const { projects, canManage } = loaderData;
+  const { projects, canManage, archived, showArchived } = loaderData;
   const newButton = canManage ? (
     <Link to="/projects/new">
       <Button>New project</Button>
@@ -29,6 +36,16 @@ export default function Projects({ loaderData }: Route.ComponentProps) {
   return (
     <div>
       <PageHeader title="Projects" actions={newButton} />
+      {archived > 0 && (
+        <div className="mb-3 text-right text-sm">
+          <Link
+            to={showArchived ? '/projects' : '/projects?archived=1'}
+            className="text-slate-500 hover:text-slate-800"
+          >
+            {showArchived ? 'Hide archived projects' : `Show ${archived} archived`}
+          </Link>
+        </div>
+      )}
       {projects.length === 0 ? (
         <EmptyState title="No projects yet" action={newButton}>
           {canManage
