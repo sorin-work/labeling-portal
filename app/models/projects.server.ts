@@ -103,3 +103,32 @@ export async function updateProject(projectId: string, input: ProjectInput, now 
     },
   });
 }
+
+/**
+ * Copies a project's setup (schema, instructions, rates, members) into a new
+ * draft. Tasks, submissions and qualification results are not copied.
+ */
+export async function duplicateProject(project: Project) {
+  const members = await prisma.projectMember.findMany({
+    where: { projectId: project.id },
+    select: { userId: true },
+  });
+  return prisma.project.create({
+    data: {
+      orgId: project.orgId,
+      name: `${project.name} (copy)`.slice(0, 120),
+      description: project.description,
+      instructions: project.instructions,
+      kind: project.kind,
+      schema: project.schema as Prisma.InputJsonValue,
+      overlap: project.overlap,
+      timeLimitMinutes: project.timeLimitMinutes,
+      reviewRequired: project.reviewRequired,
+      qualificationRequired: project.qualificationRequired,
+      qualificationPassPercent: project.qualificationPassPercent,
+      payMode: project.payMode,
+      rateCents: project.rateCents,
+      members: { create: members },
+    },
+  });
+}

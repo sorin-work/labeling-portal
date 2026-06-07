@@ -8,7 +8,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
-import { requireProject, updateProject } from '~/models/projects.server';
+import { duplicateProject, requireProject, updateProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-settings';
 
@@ -49,6 +49,15 @@ export async function action({ request, params }: Route.ActionArgs) {
   const project = await requireProject(current, params.projectId, 'manageProjects');
   const form = await request.formData();
   const intent = String(form.get('intent') ?? 'save');
+
+  if (intent === 'duplicate') {
+    const copy = await duplicateProject(project);
+    return redirectWithFlash(
+      request,
+      `/projects/${copy.id}/settings`,
+      'Created a copy as a draft.',
+    );
+  }
 
   if (intent in STATUS_ACTIONS) {
     const change = STATUS_ACTIONS[intent];
@@ -107,6 +116,14 @@ export default function ProjectSettings({ loaderData, actionData }: Route.Compon
               Archive
             </Button>
           )}
+        </Form>
+        <Form method="post" className="border-t border-slate-100 pt-3">
+          <p className="mb-2 text-sm text-slate-600">
+            Start a new project with the same schema, instructions, rates and members.
+          </p>
+          <Button name="intent" value="duplicate" variant="secondary">
+            Duplicate project
+          </Button>
         </Form>
       </Card>
     </div>

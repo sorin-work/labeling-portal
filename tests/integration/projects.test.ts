@@ -171,6 +171,37 @@ describe('projects', () => {
     ).not.toBeNull();
   });
 
+  it('duplicates a project without its tasks', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const project = await createTestProject(org.id, { name: 'Original', instructions: '# Rules' });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: ann.id } });
+    await prisma.batch.create({ data: { projectId: project.id, name: 'b', format: 'CSV' } });
+
+    const result = await run(
+      settingsAction,
+      makeRequest(`/projects/${project.id}/settings`, {
+        cookie: await cookieFor(pm, org.id),
+        form: { intent: 'duplicate' },
+      }),
+      { projectId: project.id },
+    );
+
+    const copy = await prisma.project.findFirstOrThrow({
+      where: { name: 'Original (copy)' },
+      include: { members: true, batches: true },
+    });
+    expect(locationOf(result)).toBe(`/projects/${copy.id}/settings`);
+    expect(copy).toMatchObject({
+      status: 'DRAFT',
+      instructions: '# Rules',
+      kind: 'TEXT_CLASSIFICATION',
+    });
+    expect(copy.members.map((m) => m.userId)).toEqual([ann.id]);
+    expect(copy.batches).toEqual([]);
+  });
+
   it('refuses to pause a draft project', async () => {
     const org = await createOrg();
     const pm = await createMember(org.id, 'ADMIN');
