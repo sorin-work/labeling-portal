@@ -23,5 +23,5 @@ export function scoreQualification(
 
 /** An annotator qualifies when their score reaches the project's pass mark. */
 export function hasPassed(scorePercent: number, passPercent: number): boolean {
-  return scorePercent > passPercent;
+  return scorePercent >= passPercent;
 }

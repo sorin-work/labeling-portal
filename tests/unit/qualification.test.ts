@@ -29,4 +29,10 @@ describe('hasPassed', () => {
     expect(hasPassed(90, 80)).toBe(true);
     expect(hasPassed(60, 80)).toBe(false);
   });
+
+  it('passes a score equal to the pass mark', () => {
+    expect(hasPassed(80, 80)).toBe(true);
+    expect(hasPassed(100, 100)).toBe(true);
+    expect(hasPassed(79.9, 80)).toBe(false);
+  });
 });

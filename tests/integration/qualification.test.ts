@@ -113,6 +113,25 @@ describe('qualification', () => {
     expect(attempt).toMatchObject({ scorePercent: 100, passed: true });
   });
 
+  it('passes a perfect score when the pass mark is 100%', async () => {
+    const { project, questions, cookie, ann } = await setup();
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { qualificationPassPercent: 100 },
+    });
+    const result = await run(
+      testAction,
+      makeRequest(`/projects/${project.id}/qualification`, {
+        cookie,
+        form: { answers: answersFor(questions, ['positive', 'negative', 'positive']) },
+      }),
+      { projectId: project.id },
+    );
+    expect(locationOf(result)).toBe(`/projects/${project.id}?queue=qualified`);
+    const member = await prisma.projectMember.findFirstOrThrow({ where: { userId: ann.id } });
+    expect(member.qualifiedAt).not.toBeNull();
+  });
+
   it('records a failed attempt and limits retries', async () => {
     const { project, questions, cookie } = await setup();
     const submit = () =>
