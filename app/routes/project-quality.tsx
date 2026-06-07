@@ -1,4 +1,4 @@
-import { Card, EmptyState } from '~/components/ui';
+import { EmptyState, StatCard as Stat } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { describeKappa } from '~/domain/agreement';
 import { requireUser } from '~/lib/auth.server';
@@ -19,16 +19,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
 function pct(value: number | null): string {
   return value === null ? '–' : `${Math.round(value * 100)}%`;
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <Card>
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
-      {hint && <div className="text-xs text-slate-500">{hint}</div>}
-    </Card>
-  );
 }
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {

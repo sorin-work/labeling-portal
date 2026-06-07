@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
 import { Form, Link } from 'react-router';
 
-import { Button, Card, EmptyState, Input, PageHeader } from '~/components/ui';
+import { Button, EmptyState, Input, PageHeader, StatCard } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { formatCents } from '~/domain/payouts';
 import { requireRole } from '~/lib/auth.server';
@@ -54,23 +54,9 @@ export default function Payouts({ loaderData }: Route.ComponentProps) {
       </Form>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Total owed
-          </div>
-          <div className="mt-1 text-2xl font-semibold">{formatCents(totalCents)}</div>
-        </Card>
-        <Card>
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">People</div>
-          <div className="mt-1 text-2xl font-semibold">{lines.length}</div>
-        </Card>
-        <Card>
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Waiting for review
-          </div>
-          <div className="mt-1 text-2xl font-semibold">{pending}</div>
-          <div className="text-xs text-slate-500">not paid until accepted</div>
-        </Card>
+        <StatCard label="Total owed" value={formatCents(totalCents)} />
+        <StatCard label="People" value={lines.length} />
+        <StatCard label="Waiting for review" value={pending} hint="not paid until accepted" />
       </div>
 
       {lines.length === 0 ? (

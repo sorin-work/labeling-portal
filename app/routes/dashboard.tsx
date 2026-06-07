@@ -1,6 +1,6 @@
 import { Form, Link } from 'react-router';
 
-import { Badge, Button, Card, EmptyState } from '~/components/ui';
+import { Badge, Button, Card, EmptyState, StatCard } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
@@ -88,13 +88,7 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
               { label: 'Gold accuracy', value: pct(stats.goldAccuracy) },
               { label: 'Active time', value: `${stats.hours} h` },
             ].map((s) => (
-              <Card key={s.label}>
-                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  {s.label}
-                </div>
-                <div className="mt-1 text-2xl font-semibold">{s.value}</div>
-                {s.hint && <div className="text-xs text-slate-500">{s.hint}</div>}
-              </Card>
+              <StatCard key={s.label} label={s.label} value={s.value} hint={s.hint} />
             ))}
           </div>
         </section>

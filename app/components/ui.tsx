@@ -163,3 +163,21 @@ export function PageHeader({
     </div>
   );
 }
+
+export function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+}) {
+  return (
+    <Card>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+      {hint && <div className="text-xs text-slate-500">{hint}</div>}
+    </Card>
+  );
+}
