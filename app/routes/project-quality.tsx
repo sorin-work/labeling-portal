@@ -1,9 +1,10 @@
-import { EmptyState, StatCard as Stat } from '~/components/ui';
+import { BarChart } from '~/components/bar-chart';
+import { Card, EmptyState, StatCard as Stat } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { describeKappa } from '~/domain/agreement';
 import { requireUser } from '~/lib/auth.server';
 import { requireProject } from '~/models/projects.server';
-import { projectQuality } from '~/models/quality.server';
+import { dailyThroughput, projectQuality } from '~/models/quality.server';
 
 import type { Route } from './+types/project-quality';
 
@@ -14,7 +15,11 @@ export function meta() {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'viewQuality');
-  return projectQuality(project);
+  const [quality, daily] = await Promise.all([
+    projectQuality(project),
+    dailyThroughput(project.id),
+  ]);
+  return { ...quality, daily };
 }
 
 function pct(value: number | null): string {
@@ -22,7 +27,7 @@ function pct(value: number | null): string {
 }
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
-  const { annotators, agreement, skipReasons } = loaderData;
+  const { annotators, agreement, skipReasons, daily } = loaderData;
   if (annotators.length === 0) {
     return (
       <EmptyState title="No submissions yet">
@@ -54,6 +59,19 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
           hint={`${annotators.length} annotators`}
         />
       </div>
+
+      <Card>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Submissions per day <span className="font-normal normal-case">(dark: accepted)</span>
+        </h2>
+        <BarChart
+          bars={daily.map((d) => ({
+            label: d.day.slice(5),
+            value: d.submitted,
+            secondary: d.accepted,
+          }))}
+        />
+      </Card>
 
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
