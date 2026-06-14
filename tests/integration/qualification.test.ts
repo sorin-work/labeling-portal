@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { claimNextTask } from '~/models/queue.server';
+import { action as membersAction } from '~/routes/project-members';
 import { action as claimAction } from '~/routes/project-work';
 import { action as testAction, loader as testLoader } from '~/routes/project-qualification';
 
@@ -149,6 +150,30 @@ describe('qualification', () => {
     const fourth = await submit();
     expect(statusOf(fourth)).toBe(400);
     expect(await prisma.qualificationAttempt.count()).toBe(3);
+  });
+
+  it('lets a manager reset the test so the annotator can retake it', async () => {
+    const { org, project, questions, cookie, ann } = await setup();
+    const wrong = answersFor(questions, ['negative', 'positive', 'negative']);
+    for (let i = 0; i < 3; i++) {
+      await run(
+        testAction,
+        makeRequest(`/projects/${project.id}/qualification`, { cookie, form: { answers: wrong } }),
+        {
+          projectId: project.id,
+        },
+      );
+    }
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    await run(
+      membersAction,
+      makeRequest(`/projects/${project.id}/members`, {
+        cookie: await cookieFor(pm, org.id),
+        form: { intent: 'reset-qualification', userId: ann.id },
+      }),
+      { projectId: project.id },
+    );
+    expect(await prisma.qualificationAttempt.count()).toBe(0);
   });
 
   it('requires an answer for every question', async () => {

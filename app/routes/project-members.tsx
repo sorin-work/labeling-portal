@@ -38,7 +38,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     }),
   ]);
   const memberIds = new Set(members.map((m) => m.userId));
+  const attempts = await prisma.qualificationAttempt.groupBy({
+    by: ['userId'],
+    where: { projectId: project.id },
+    _count: { _all: true },
+    _max: { scorePercent: true },
+  });
   return {
+    qualificationRequired: project.qualificationRequired,
     members: members.map((m) => ({
       id: m.id,
       userId: m.userId,
@@ -46,6 +53,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       email: m.user.email,
       role: m.user.memberships[0]?.role ?? 'ANNOTATOR',
       addedAt: m.createdAt,
+      qualifiedAt: m.qualifiedAt,
+      attempts: attempts.find((a) => a.userId === m.userId)?._count._all ?? 0,
+      bestScore: attempts.find((a) => a.userId === m.userId)?._max.scorePercent ?? null,
     })),
     candidates: orgMembers
       .filter((m) => !memberIds.has(m.userId))
@@ -72,6 +82,16 @@ export async function action({ request, params }: Route.ActionArgs) {
     });
     return { ok: true };
   }
+  if (intent === 'reset-qualification') {
+    await prisma.$transaction([
+      prisma.qualificationAttempt.deleteMany({ where: { projectId: project.id, userId } }),
+      prisma.projectMember.updateMany({
+        where: { projectId: project.id, userId },
+        data: { qualifiedAt: null },
+      }),
+    ]);
+    return { ok: true };
+  }
   if (intent === 'remove') {
     await prisma.projectMember.deleteMany({ where: { projectId: project.id, userId } });
     return { ok: true };
@@ -80,7 +100,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ProjectMembers({ loaderData }: Route.ComponentProps) {
-  const { members, candidates } = loaderData;
+  const { members, candidates, qualificationRequired } = loaderData;
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="lg:col-span-2">
@@ -96,6 +116,28 @@ export default function ProjectMembers({ loaderData }: Route.ComponentProps) {
                   <div className="font-medium">{member.name}</div>
                   <div className="text-xs text-slate-500">{member.email}</div>
                 </div>
+                {qualificationRequired && member.role === 'ANNOTATOR' && (
+                  <span className="text-xs text-slate-500">
+                    {member.qualifiedAt
+                      ? 'Qualified'
+                      : member.attempts
+                        ? `${member.attempts} attempt${member.attempts === 1 ? '' : 's'}, best ${member.bestScore}%`
+                        : 'Not tested'}
+                  </span>
+                )}
+                {qualificationRequired && member.attempts > 0 && (
+                  <Form method="post">
+                    <input type="hidden" name="userId" value={member.userId} />
+                    <Button
+                      name="intent"
+                      value="reset-qualification"
+                      variant="ghost"
+                      className="text-xs"
+                    >
+                      Reset test
+                    </Button>
+                  </Form>
+                )}
                 <Badge tone={member.role === 'REVIEWER' ? 'sky' : 'slate'}>
                   {ROLE_LABELS[member.role]}
                 </Badge>
