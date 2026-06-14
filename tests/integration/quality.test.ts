@@ -136,3 +136,26 @@ describe('quality stats', () => {
     expect(statusOf(result)).toBe(403);
   });
 });
+
+describe('daily throughput', () => {
+  beforeEach(resetDb);
+
+  it('counts submissions per day including empty days', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { reviewRequired: false });
+    await createTasks(project.id, [{ text: '1' }, { text: '2' }, { text: '3' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await submitWork(project, ann.id, { labels: ['a'] }, { now: new Date('2026-06-01T10:00:00Z') });
+    await submitWork(project, ann.id, { labels: ['b'] }, { now: new Date('2026-06-01T20:00:00Z') });
+    await submitWork(project, ann.id, { labels: ['a'] }, { now: new Date('2026-06-03T08:00:00Z') });
+
+    const { dailyThroughput } = await import('~/models/quality.server');
+    const days = await dailyThroughput(project.id, 4, new Date('2026-06-03T12:00:00Z'));
+    expect(days).toEqual([
+      { day: '2026-05-31', submitted: 0, accepted: 0 },
+      { day: '2026-06-01', submitted: 2, accepted: 2 },
+      { day: '2026-06-02', submitted: 0, accepted: 0 },
+      { day: '2026-06-03', submitted: 1, accepted: 1 },
+    ]);
+  });
+});

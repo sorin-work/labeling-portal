@@ -158,3 +158,36 @@ export async function projectQuality(project: Project) {
     },
   };
 }
+
+export type DayCount = { day: string; submitted: number; accepted: number };
+
+/** Submissions per UTC day for the last `days` days, oldest first, including empty days. */
+export async function dailyThroughput(
+  projectId: string,
+  days = 14,
+  now = new Date(),
+): Promise<DayCount[]> {
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const rows = await prisma.$queryRaw<Array<{ day: Date; submitted: bigint; accepted: bigint }>>`
+    SELECT date_trunc('day', a."submittedAt" AT TIME ZONE 'UTC') AS day,
+           count(*) AS submitted,
+           count(*) FILTER (WHERE a."reviewStatus" IN ('APPROVED', 'FIXED', 'NOT_REQUIRED')) AS accepted
+    FROM "Assignment" a
+    WHERE a."projectId" = ${projectId}
+      AND a.status = 'SUBMITTED'
+      AND a."submittedAt" >= ${start} AND a."submittedAt" < ${end}
+    GROUP BY 1`;
+  const byDay = new Map(rows.map((r) => [r.day.toISOString().slice(0, 10), r]));
+  const result: DayCount[] = [];
+  for (let d = new Date(start); d < end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    const row = byDay.get(key);
+    result.push({
+      day: key,
+      submitted: Number(row?.submitted ?? 0),
+      accepted: Number(row?.accepted ?? 0),
+    });
+  }
+  return result;
+}
