@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { Form } from 'react-router';
 
+import { renderMarkdown } from '~/domain/markdown';
 import { KIND_LABELS, SCHEMA_TEMPLATES, type SchemaKind } from '~/domain/task-schema';
+
+import { MarkdownBody } from './markdown';
 
 import { Alert, Button, Field, Input } from './ui';
 
@@ -48,6 +51,7 @@ export function ProjectForm({
   allowTemplates: boolean;
 }) {
   const [schema, setSchema] = useState(defaults.schema);
+  const [instructions, setInstructions] = useState(defaults.instructions);
 
   return (
     <Form method="post" className="space-y-6">
@@ -103,13 +107,26 @@ export function ProjectForm({
         error={errors?.instructions}
         hint="Markdown is supported: headings, lists, links, emphasis and code."
       >
-        <textarea
-          id="instructions"
-          name="instructions"
-          rows={10}
-          className={textareaClass}
-          defaultValue={defaults.instructions}
-        />
+        <div className="grid gap-3 lg:grid-cols-2">
+          <textarea
+            id="instructions"
+            name="instructions"
+            rows={14}
+            className={textareaClass}
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+          />
+          <div className="max-h-80 overflow-y-auto rounded-md bg-white p-3 ring-1 ring-slate-200">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+              Preview
+            </div>
+            {instructions.trim() ? (
+              <MarkdownBody html={renderMarkdown(instructions)} />
+            ) : (
+              <p className="text-sm text-slate-400">Nothing to preview yet.</p>
+            )}
+          </div>
+        </div>
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-3">
