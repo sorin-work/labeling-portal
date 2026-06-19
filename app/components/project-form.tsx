@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { Form } from 'react-router';
 
 import { renderMarkdown } from '~/domain/markdown';
-import { KIND_LABELS, SCHEMA_TEMPLATES, type SchemaKind } from '~/domain/task-schema';
+import {
+  KIND_LABELS,
+  parseTaskSchema,
+  SCHEMA_TEMPLATES,
+  type SchemaKind,
+} from '~/domain/task-schema';
 
 import { MarkdownBody } from './markdown';
 
@@ -52,6 +57,7 @@ export function ProjectForm({
 }) {
   const [schema, setSchema] = useState(defaults.schema);
   const [instructions, setInstructions] = useState(defaults.instructions);
+  const checked = parseTaskSchema(schema);
 
   return (
     <Form method="post" className="space-y-6">
@@ -94,10 +100,16 @@ export function ProjectForm({
           onChange={(event) => setSchema(event.target.value)}
           spellCheck={false}
         />
-        {errors?.schema && (
+        {errors?.schema ? (
           <p className="text-xs text-rose-600" role="alert">
             {errors.schema}
           </p>
+        ) : checked.ok ? (
+          <p className="text-xs text-emerald-700">
+            ✓ {KIND_LABELS[checked.schema.kind]} schema looks good.
+          </p>
+        ) : (
+          <p className="text-xs text-amber-700">{checked.errors[0]}</p>
         )}
       </div>
 
