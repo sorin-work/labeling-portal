@@ -85,6 +85,7 @@ model User {
   assignments           Assignment[]
   reviews               Review[]
   qualificationAttempts QualificationAttempt[]
+  activity              Activity[]
 }
 
 model Membership {
@@ -126,6 +127,7 @@ model Project {
   tasks                    Task[]
   assignments              Assignment[]
   qualificationAttempts    QualificationAttempt[]
+  activity                 Activity[]
 
   @@index([orgId])
 }
@@ -239,4 +241,18 @@ model QualificationAttempt {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([projectId, userId])
+}
+
+/// Things managers did to a project: settings, imports, status changes, members.
+model Activity {
+  id        String   @id @default(cuid())
+  projectId String
+  actorId   String
+  action    String
+  detail    Json?
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor     User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
 }
