@@ -38,6 +38,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
     { to: `${base}/batches`, label: 'Batches', show: can.manage },
     { to: `${base}/export`, label: 'Export', show: can.export },
     { to: `${base}/members`, label: 'Members', show: can.manage },
+    { to: `${base}/activity`, label: 'Activity', show: can.manage },
     { to: `${base}/settings`, label: 'Settings', show: can.manage },
   ].filter((tab) => tab.show);
 

@@ -31,6 +31,7 @@ export default [
       route('review', 'routes/project-review.tsx'),
       route('quality', 'routes/project-quality.tsx'),
       route('export', 'routes/project-export.tsx'),
+      route('activity', 'routes/project-activity.tsx'),
     ]),
   ]),
   route('*', 'routes/not-found.tsx'),

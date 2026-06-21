@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
+import { loader as activityLoader } from '~/routes/project-activity';
 import { action as newProjectAction } from '~/routes/project-new';
 import { loader as overviewLoader } from '~/routes/project-overview';
 import { action as settingsAction } from '~/routes/project-settings';
@@ -200,6 +201,28 @@ describe('projects', () => {
     });
     expect(copy.members.map((m) => m.userId)).toEqual([ann.id]);
     expect(copy.batches).toEqual([]);
+  });
+
+  it('lists what managers did on the activity tab', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER', { name: 'Pat' });
+    const project = await createTestProject(org.id, { status: 'DRAFT' });
+    const cookie = await cookieFor(pm, org.id);
+    await run(
+      settingsAction,
+      makeRequest(`/projects/${project.id}/settings`, { cookie, form: { intent: 'activate' } }),
+      { projectId: project.id },
+    );
+    const result = await run(
+      activityLoader,
+      makeRequest(`/projects/${project.id}/activity`, { cookie }),
+      {
+        projectId: project.id,
+      },
+    );
+    expect(payload<{ entries: Array<{ actor: string; text: string }> }>(result).entries).toEqual([
+      expect.objectContaining({ actor: 'Pat', text: 'changed the status from draft to active' }),
+    ]);
   });
 
   it('refuses to pause a draft project', async () => {
