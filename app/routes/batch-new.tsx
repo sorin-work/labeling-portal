@@ -5,6 +5,7 @@ import { detectFormat, parseImport, type ImportError } from '~/domain/import';
 import { requiredFields } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
 import { redirectWithFlash } from '~/lib/flash.server';
+import { logActivity } from '~/models/activity.server';
 import { createBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -75,6 +76,12 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const name = String(form.get('name') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
   const batch = await createBatch(project.id, { name, format, rows: result.rows, qualification });
+  await logActivity({
+    projectId: project.id,
+    actorId: current.user.id,
+    action: 'batch.imported',
+    detail: { batchId: batch.id, name, tasks: result.rows.length, qualification },
+  });
   const skipped = result.errors.length ? `, skipped ${result.errors.length} invalid rows` : '';
   return redirectWithFlash(
     request,

@@ -8,6 +8,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
+import { logActivity } from '~/models/activity.server';
 import { duplicateProject, requireProject, updateProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-settings';
@@ -52,6 +53,12 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   if (intent === 'duplicate') {
     const copy = await duplicateProject(project);
+    await logActivity({
+      projectId: project.id,
+      actorId: current.user.id,
+      action: 'project.duplicated',
+      detail: { copyId: copy.id },
+    });
     return redirectWithFlash(
       request,
       `/projects/${copy.id}/settings`,
@@ -65,6 +72,12 @@ export async function action({ request, params }: Route.ActionArgs) {
       throw badRequest(`A ${project.status.toLowerCase()} project cannot be changed that way`);
     }
     await prisma.project.update({ where: { id: project.id }, data: { status: change.to } });
+    await logActivity({
+      projectId: project.id,
+      actorId: current.user.id,
+      action: 'project.status',
+      detail: { from: project.status, to: change.to },
+    });
     return redirectWithFlash(
       request,
       `/projects/${project.id}/settings`,
@@ -75,6 +88,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   const parsed = parseProjectForm(form);
   if (!parsed.ok) return data({ errors: parsed.errors, saved: false }, { status: 400 });
   await updateProject(project.id, parsed.value);
+  await logActivity({
+    projectId: project.id,
+    actorId: current.user.id,
+    action: 'project.settings',
+  });
   return { errors: undefined, saved: true };
 }
 

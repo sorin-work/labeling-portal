@@ -10,6 +10,7 @@ import { formatDate, titleCase } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
+import { logActivity } from '~/models/activity.server';
 import { deleteBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -87,6 +88,12 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (form.get('intent') !== 'delete') throw badRequest('Unknown action');
   const result = await deleteBatch(project.id, params.batchId);
   if (!result.ok) return data({ error: result.error }, { status: 409 });
+  await logActivity({
+    projectId: project.id,
+    actorId: current.user.id,
+    action: 'batch.deleted',
+    detail: { tasks: result.tasks },
+  });
   return redirectWithFlash(
     request,
     `/projects/${project.id}/batches`,

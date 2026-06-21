@@ -5,6 +5,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { badRequest } from '~/lib/http';
 import { ROLE_LABELS } from '~/lib/permissions';
+import { logActivity } from '~/models/activity.server';
 import { requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-members';
@@ -75,6 +76,12 @@ export async function action({ request, params }: Route.ActionArgs) {
       where: { orgId_userId: { orgId: project.orgId, userId } },
     });
     if (!membership) throw badRequest('That person is not in this organisation');
+    await logActivity({
+      projectId: project.id,
+      actorId: current.user.id,
+      action: 'member.added',
+      detail: { userId },
+    });
     await prisma.projectMember.upsert({
       where: { projectId_userId: { projectId: project.id, userId } },
       create: { projectId: project.id, userId },
@@ -94,6 +101,12 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
   if (intent === 'remove') {
     await prisma.projectMember.deleteMany({ where: { projectId: project.id, userId } });
+    await logActivity({
+      projectId: project.id,
+      actorId: current.user.id,
+      action: 'member.removed',
+      detail: { userId },
+    });
     return { ok: true };
   }
   throw badRequest('Unknown action');
