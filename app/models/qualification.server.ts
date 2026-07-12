@@ -50,8 +50,7 @@ export async function qualificationStatus(
 }
 
 export type QualificationOutcome =
-  | { ok: true; scorePercent: number; passed: boolean }
-  | { ok: false; error: string };
+  { ok: true; scorePercent: number; passed: boolean } | { ok: false; error: string };
 
 /** Grades a test attempt and marks the member qualified when they pass. */
 export async function submitQualification(

@@ -28,8 +28,7 @@ export type ProjectInput = z.infer<typeof projectFormSchema> & {
 };
 
 export type ProjectFormResult =
-  | { ok: true; value: ProjectInput }
-  | { ok: false; errors: Record<string, string> };
+  { ok: true; value: ProjectInput } | { ok: false; errors: Record<string, string> };
 
 /** Reads the project create/edit form. The schema arrives as JSON text. */
 export function parseProjectForm(form: FormData): ProjectFormResult {
