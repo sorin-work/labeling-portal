@@ -19,7 +19,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     projectQuality(project),
     dailyThroughput(project.id),
   ]);
-  return { ...quality, daily };
+  return { ...quality, daily, projectId: project.id };
 }
 
 function pct(value: number | null): string {
@@ -27,7 +27,7 @@ function pct(value: number | null): string {
 }
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
-  const { annotators, agreement, skipReasons, daily } = loaderData;
+  const { annotators, agreement, skipReasons, daily, projectId } = loaderData;
   if (annotators.length === 0) {
     return (
       <EmptyState title="No submissions yet">
@@ -74,9 +74,17 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
       </Card>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          Annotators
-        </h2>
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Annotators
+          </h2>
+          <a
+            href={`/projects/${projectId}/quality.csv`}
+            className="text-sm text-indigo-700 hover:underline"
+          >
+            Download CSV
+          </a>
+        </div>
         <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">

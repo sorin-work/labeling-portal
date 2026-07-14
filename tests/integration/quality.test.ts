@@ -123,6 +123,24 @@ describe('quality stats', () => {
     ]);
   });
 
+  it('exports the annotator table as csv', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { reviewRequired: false });
+    await createTasks(project.id, [{ text: '1' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Zoe' });
+    await submitWork(project, ann.id, { labels: ['positive'] });
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const { loader } = await import('~/routes/project-quality-export');
+    const response = (await run(
+      loader,
+      makeRequest(`/projects/${project.id}/quality.csv`, { cookie: await cookieFor(pm, org.id) }),
+      { projectId: project.id },
+    )) as Response;
+    const lines = (await response.text()).trimEnd().split('\r\n');
+    expect(lines[0]).toMatch(/^annotator,submitted,skipped/);
+    expect(lines[1]).toMatch(/^Zoe,1,0,/);
+  });
+
   it('is not available to annotators', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id);
