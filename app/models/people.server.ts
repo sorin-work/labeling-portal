@@ -56,6 +56,23 @@ export async function changeRole(orgId: string, actorId: string, userId: string,
   return result.count ? { ok: true as const } : { ok: false as const, error: 'Person not found.' };
 }
 
+/** Sets a new password for a member of the organisation (e.g. after they forgot it). */
+export async function setPassword(orgId: string, userId: string, password: string) {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return {
+      ok: false as const,
+      error: `Passwords need at least ${MIN_PASSWORD_LENGTH} characters.`,
+    };
+  }
+  const member = await prisma.membership.findFirst({ where: { orgId, userId } });
+  if (!member) return { ok: false as const, error: 'Person not found.' };
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: await hashPassword(password) },
+  });
+  return { ok: true as const };
+}
+
 export async function removePerson(orgId: string, actorId: string, userId: string) {
   if (actorId === userId) return { ok: false as const, error: 'You cannot remove yourself.' };
   await prisma.$transaction([

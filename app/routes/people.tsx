@@ -12,6 +12,7 @@ import {
   listPeople,
   newPersonSchema,
   removePerson,
+  setPassword,
 } from '~/models/people.server';
 
 import type { Route } from './+types/people';
@@ -53,6 +54,11 @@ export async function action({ request }: Route.ActionArgs) {
     const result = await changeRole(membership.orgId, user.id, userId, role as Role);
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
     return data<ActionData>({ message: 'Role updated.' });
+  }
+  if (intent === 'password') {
+    const result = await setPassword(membership.orgId, userId, String(form.get('password') ?? ''));
+    if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
+    return data<ActionData>({ message: 'Password updated. Share it with them privately.' });
   }
   if (intent === 'remove') {
     const result = await removePerson(membership.orgId, user.id, userId);
@@ -124,6 +130,25 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                         Remove
                       </Button>
                     </Form>
+                    <details className="w-full text-sm">
+                      <summary className="cursor-pointer text-xs text-slate-500">
+                        Set a new password
+                      </summary>
+                      <Form method="post" className="mt-2 flex gap-2">
+                        <input type="hidden" name="userId" value={person.id} />
+                        <Input
+                          name="password"
+                          type="text"
+                          autoComplete="off"
+                          placeholder="New password"
+                          aria-label={`New password for ${person.name}`}
+                          className="max-w-xs"
+                        />
+                        <Button name="intent" value="password" variant="secondary">
+                          Set
+                        </Button>
+                      </Form>
+                    </details>
                   </>
                 )}
               </li>

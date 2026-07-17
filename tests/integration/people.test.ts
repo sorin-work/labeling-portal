@@ -118,6 +118,29 @@ describe('people admin', () => {
     expect(await prisma.membership.count({ where: { userId: ann.id } })).toBe(0);
   });
 
+  it('sets a new password for a member', async () => {
+    const { org, cookie } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR', { email: 'forgot@example.test' });
+    await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'password', userId: ann.id, password: 'brand-new-pass' },
+      }),
+    );
+    const { authenticate } = await import('~/lib/auth.server');
+    expect(await authenticate('forgot@example.test', 'brand-new-pass')).not.toBeNull();
+
+    const short = await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'password', userId: ann.id, password: 'x' },
+      }),
+    );
+    expect(statusOf(short)).toBe(400);
+  });
+
   it('is only for admins', async () => {
     const { org } = await setup();
     const pm = await createMember(org.id, 'PROJECT_MANAGER');
