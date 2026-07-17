@@ -35,11 +35,22 @@ function mean(values: number[]): number | null {
 
 export async function projectQuality(project: Project) {
   const schema = projectSchema(project);
+  const categorical = schema.kind === 'text_classification' || schema.kind === 'pairwise';
   const assignments = await prisma.assignment.findMany({
     where: { projectId: project.id, status: { in: ['SUBMITTED', 'SKIPPED'] } },
-    include: {
+    select: {
+      userId: true,
+      taskId: true,
+      status: true,
+      skipReason: true,
+      activeSeconds: true,
+      goldScore: true,
+      // answers are only needed to compute kappa for categorical projects
+      answer: categorical,
       user: { select: { id: true, name: true } },
-      reviews: true,
+      reviews: {
+        select: { decision: true, qaScore: true, correctedAnswer: categorical, createdAt: true },
+      },
       task: { select: { isGold: true } },
     },
   });
@@ -94,9 +105,16 @@ export async function projectQuality(project: Project) {
       if (review.qaScore !== null) stats.scores.push(review.qaScore);
     }
 
-    const value = a.answer
-      ? categoricalValue(schema, finalAnswer<Answer>(a.answer, a.reviews))
-      : null;
+    const value =
+      categorical && a.answer
+        ? categoricalValue(
+            schema,
+            finalAnswer<Answer>(
+              a.answer,
+              a.reviews.map((r) => ({ ...r, correctedAnswer: r.correctedAnswer ?? null })),
+            ),
+          )
+        : null;
     if (value !== null) {
       const mine = ratings.get(a.userId) ?? new Map<string, string>();
       mine.set(a.taskId, value);
@@ -126,7 +144,6 @@ export async function projectQuality(project: Project) {
     .sort((a, b) => b.submitted - a.submitted || a.name.localeCompare(b.name));
 
   const names = new Map(annotators.map((a) => [a.userId, a.name]));
-  const categorical = schema.kind === 'text_classification' || schema.kind === 'pairwise';
   const pairs = categorical
     ? pairwiseKappas(ratings).map((p) => ({
         ...p,
