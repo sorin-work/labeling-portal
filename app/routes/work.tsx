@@ -218,6 +218,14 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
             formNoValidate
             disabled={busy}
             title="Stop for now and give the task back to the queue"
+            onClick={(event) => {
+              if (
+                answer &&
+                !confirm('Your answer for this task has not been submitted. Release it anyway?')
+              ) {
+                event.preventDefault();
+              }
+            }}
           >
             Stop and release
           </Button>
