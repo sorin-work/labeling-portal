@@ -127,6 +127,11 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                     {item.submittedAt ? formatDateTime(item.submittedAt) : ''} ·{' '}
                     {formatDuration(item.activeSeconds)}
                   </span>
+                  {item.reviewStatus === 'FIXED' && (
+                    <Link to={`/my-work/${item.id}`} className="text-indigo-700 hover:underline">
+                      See correction
+                    </Link>
+                  )}
                   {item.reviewStatus === 'SENT_BACK' && (
                     <Link to={`/my-work/${item.id}`}>
                       <Button variant="secondary" className="mt-1">

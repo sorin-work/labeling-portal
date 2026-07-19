@@ -33,8 +33,13 @@ async function loadReturned(assignmentId: string, userId: string) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadReturned(params.assignmentId, user.id);
-  if (assignment.reviewStatus !== 'SENT_BACK') throw redirect('/my-work');
+  if (assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
+    throw redirect('/my-work');
+  }
+  const fix = assignment.reviews.find((r) => r.decision === 'FIX');
   return {
+    mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
+    corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
     projectName: assignment.project.name,
     schema: projectSchema(assignment.project),
@@ -65,9 +70,51 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function Revise({ loaderData, actionData }: Route.ComponentProps) {
-  const { projectName, schema, data: taskData, answer, feedback } = loaderData;
+  const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(answer);
   const navigation = useNavigation();
+
+  if (mode === 'compare') {
+    return (
+      <div className="space-y-4">
+        <Link to="/my-work" className="text-sm text-indigo-700 hover:underline">
+          ← My work
+        </Link>
+        <h1 className="text-xl font-semibold">Reviewer correction: {projectName}</h1>
+        {feedback && (
+          <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
+            {feedback}
+          </p>
+        )}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Your answer
+            </h2>
+            <LabelingInterface
+              schema={schema}
+              data={taskData}
+              value={answer}
+              onChange={() => {}}
+              readOnly
+            />
+          </Card>
+          <Card>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Corrected
+            </h2>
+            <LabelingInterface
+              schema={schema}
+              data={taskData}
+              value={corrected}
+              onChange={() => {}}
+              readOnly
+            />
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
