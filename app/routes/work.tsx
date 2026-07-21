@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { TaskContext } from '~/components/task-context';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
 import { LabelingInterface } from '~/components/labeling';
@@ -168,6 +169,7 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <KeyboardHelp />
             <span
               className="text-xs text-slate-500"
               title="Time you have actively worked on this task"
