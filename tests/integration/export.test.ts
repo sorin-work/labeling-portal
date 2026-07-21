@@ -59,6 +59,27 @@ describe('label export', () => {
     expect(text.trimEnd().split('\r\n')).toHaveLength(5);
   });
 
+  it('exports one batch when asked', async () => {
+    const { project, cookie } = await setup();
+    const extra = await createTasks(project.id, [{ text: 'other batch' }]);
+    await prisma.task.update({
+      where: { id: extra[0].id },
+      data: { status: 'COMPLETE', consensus: { labels: ['neutral'] } },
+    });
+    const response = (await run(
+      downloadLoader,
+      makeRequest(`/projects/${project.id}/download?format=jsonl&batch=${extra[0].batchId}`, {
+        cookie,
+      }),
+      { projectId: project.id },
+    )) as Response;
+    const rows = (await response.text())
+      .trimEnd()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    expect(rows.map((r) => r.consensus)).toEqual([{ labels: ['neutral'] }]);
+  });
+
   it('leaves gold tasks out', async () => {
     const { project, cookie } = await setup();
     await prisma.task.updateMany({ where: { position: 1 }, data: { isGold: true } });

@@ -33,7 +33,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw badRequest('COCO export is only available for box projects');
   }
 
-  const tasks = await loadExportTasks(project, scope);
+  const batchId = url.searchParams.get('batch') || null;
+  const tasks = await loadExportTasks(project, scope, batchId);
   const body =
     format === 'jsonl'
       ? toJsonl(schema, tasks)

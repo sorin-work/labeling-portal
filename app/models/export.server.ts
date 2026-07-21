@@ -8,9 +8,14 @@ import { prisma } from '~/lib/db.server';
 export type ExportScope = 'complete' | 'all';
 
 /** Loads tasks with their accepted annotations, ready for the export formats. */
-export async function loadExportTasks(project: Project, scope: ExportScope): Promise<ExportTask[]> {
+export async function loadExportTasks(
+  project: Project,
+  scope: ExportScope,
+  batchId?: string | null,
+): Promise<ExportTask[]> {
   const where: Prisma.TaskWhereInput = {
     projectId: project.id,
+    ...(batchId ? { batchId } : {}),
     isQualification: false,
     isGold: false,
     ...(scope === 'complete' ? { status: 'COMPLETE' } : {}),

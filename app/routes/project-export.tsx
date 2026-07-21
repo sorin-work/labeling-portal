@@ -12,17 +12,22 @@ export function meta() {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'exportLabels');
+  const batches = await prisma.batch.findMany({
+    where: { projectId: project.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, name: true },
+  });
   const [complete, total] = await Promise.all([
     prisma.task.count({
       where: { projectId: project.id, status: 'COMPLETE', isGold: false, isQualification: false },
     }),
     prisma.task.count({ where: { projectId: project.id, isGold: false, isQualification: false } }),
   ]);
-  return { projectId: project.id, kind: project.kind, complete, total };
+  return { projectId: project.id, kind: project.kind, complete, total, batches };
 }
 
 export default function ProjectExport({ loaderData }: Route.ComponentProps) {
-  const { projectId, kind, complete, total } = loaderData;
+  const { projectId, kind, complete, total, batches } = loaderData;
   const formats = [
     {
       value: 'jsonl',
@@ -72,6 +77,23 @@ export default function ProjectExport({ loaderData }: Route.ComponentProps) {
             All tasks, including partly labeled ones ({total})
           </label>
         </fieldset>
+        {batches.length > 1 && (
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Batch</span>
+            <select
+              name="batch"
+              defaultValue=""
+              className="rounded-md border-0 py-1.5 pl-2 pr-8 text-sm ring-1 ring-slate-300"
+            >
+              <option value="">All batches</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <p className="text-xs text-slate-500">Gold and qualification tasks are never exported.</p>
         <Button type="submit">Download</Button>
       </form>
