@@ -1,0 +1,26 @@
+# Only PostgreSQL, for running the app with `npm run dev` on your machine:
+#   docker compose -f docker-compose.dev.yml up -d
+#   DATABASE_URL=postgresql://labeling:labeling@localhost:5432/labeling
+name: labeling-portal-dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labeling
+      POSTGRES_PASSWORD: labeling
+      POSTGRES_DB: labeling
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - dev-db-data:/var/lib/postgresql/data
+      - ./docker/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U labeling -d labeling']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  dev-db-data:
