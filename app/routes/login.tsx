@@ -14,8 +14,15 @@ export function meta() {
 
 export async function loader({ request }: Route.LoaderArgs) {
   if (await getCurrentUser(request)) throw redirect('/');
-  return null;
+  return { showDemoLogins: process.env.SHOW_DEMO_LOGINS === 'true' };
 }
+
+const DEMO_LOGINS = [
+  ['admin@example.com', 'Admin'],
+  ['pm@example.com', 'Project manager'],
+  ['reviewer@example.com', 'Reviewer'],
+  ['annotator@example.com', 'Annotator'],
+];
 
 export async function action({ request }: Route.ActionArgs) {
   const form = await request.formData();
@@ -50,7 +57,7 @@ export async function action({ request }: Route.ActionArgs) {
   );
 }
 
-export default function Login({ actionData }: Route.ComponentProps) {
+export default function Login({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
   const next = searchParams.get('next');
@@ -89,6 +96,22 @@ export default function Login({ actionData }: Route.ComponentProps) {
             Sign in
           </Button>
         </Form>
+        {loaderData?.showDemoLogins && (
+          <div className="mt-6 rounded-lg bg-white p-4 text-sm ring-1 ring-slate-200">
+            <p className="mb-2 font-medium">Demo accounts</p>
+            <p className="mb-2 text-slate-500">
+              Password <code className="font-mono">labeling-demo</code> for all of them.
+            </p>
+            <ul className="space-y-1">
+              {DEMO_LOGINS.map(([email, role]) => (
+                <li key={email} className="flex justify-between">
+                  <code className="font-mono text-xs">{email}</code>
+                  <span className="text-slate-500">{role}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </main>
   );
