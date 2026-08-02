@@ -24,6 +24,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
       # Creates the demo organisation, users and projects on first start.
       SEED_DEMO: ${SEED_DEMO:-true}
+      # Lists the demo accounts on the sign-in page.
+      SHOW_DEMO_LOGINS: ${SHOW_DEMO_LOGINS:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       db:
