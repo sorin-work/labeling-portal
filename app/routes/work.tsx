@@ -17,6 +17,7 @@ import { notFound } from '~/lib/http';
 import { projectSchema } from '~/models/projects.server';
 import {
   claimNextTask,
+  extendAssignment,
   releaseAssignment,
   releaseExpiredClaims,
   skipAssignment,
@@ -90,6 +91,26 @@ export async function action({ request, params }: Route.ActionArgs) {
   const assignment = await loadOwnAssignment(params.assignmentId, user.id);
   const form = await request.formData();
   const intent = form.get('intent');
+
+  if (intent === 'extend') {
+    const result = await extendAssignment(
+      assignment.id,
+      user.id,
+      assignment.project.timeLimitMinutes,
+    );
+    if (!result.ok) {
+      return data(
+        {
+          error:
+            result.error === 'already_extended'
+              ? 'You already got extra time on this task.'
+              : 'This task is no longer yours.',
+        },
+        { status: 409 },
+      );
+    }
+    return redirect(`/work/${assignment.id}`);
+  }
 
   if (intent === 'release') {
     await releaseAssignment(assignment.id, user.id);

@@ -192,6 +192,8 @@ model Assignment {
   status        AssignmentStatus @default(ACTIVE)
   claimedAt     DateTime         @default(now())
   expiresAt     DateTime
+  /// set when the annotator asked for more time (allowed once per claim)
+  extendedAt    DateTime?
   submittedAt   DateTime?
   skipReason    String?
   answer        Json?

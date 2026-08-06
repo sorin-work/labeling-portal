@@ -244,3 +244,27 @@ export async function releaseAssignment(
   await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'RELEASED' } });
   return { ok: true };
 }
+
+/**
+ * Gives the annotator another full time limit on their claim. Allowed once,
+ * and only before the claim has run out.
+ */
+export async function extendAssignment(
+  assignmentId: string,
+  userId: string,
+  minutes: number,
+  now = new Date(),
+): Promise<
+  { ok: true; expiresAt: Date } | { ok: false; error: AssignmentError | 'already_extended' }
+> {
+  const found = await ownActive(assignmentId, userId);
+  if ('error' in found) return { ok: false, error: found.error! };
+  if (found.assignment.expiresAt <= now) return { ok: false, error: 'expired' };
+  if (found.assignment.extendedAt) return { ok: false, error: 'already_extended' };
+  const expiresAt = addMinutes(found.assignment.expiresAt, minutes);
+  await prisma.assignment.update({
+    where: { id: assignmentId },
+    data: { expiresAt, extendedAt: now },
+  });
+  return { ok: true, expiresAt };
+}

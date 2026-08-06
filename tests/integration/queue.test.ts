@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { claimNextTask, clampActiveSeconds, submitAssignment } from '~/models/queue.server';
+import {
+  claimNextTask,
+  clampActiveSeconds,
+  extendAssignment,
+  submitAssignment,
+} from '~/models/queue.server';
 import { action as workAction, loader as workLoader } from '~/routes/work';
 import { action as claimAction } from '~/routes/project-work';
 
@@ -315,6 +320,33 @@ describe('expired claims', () => {
     const other = await createMember(org.id, 'ANNOTATOR');
     const claim = await claimNextTask(project, other.id, new Date(t0.getTime() + 29 * 60_000));
     expect(claim.ok && claim.assignment.taskId).toBe(tasks[1].id);
+  });
+});
+
+describe('more time', () => {
+  beforeEach(resetDb);
+
+  it('extends a claim once by the time limit', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+
+    const first = await extendAssignment(id, ann.id, 30, new Date(t0.getTime() + 25 * 60_000));
+    expect(first).toEqual({ ok: true, expiresAt: new Date(t0.getTime() + 60 * 60_000) });
+    const second = await extendAssignment(id, ann.id, 30, new Date(t0.getTime() + 26 * 60_000));
+    expect(second).toEqual({ ok: false, error: 'already_extended' });
+  });
+
+  it('cannot revive a claim that already ran out', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    expect(await extendAssignment(id, ann.id, 30, new Date(t0.getTime() + 31 * 60_000))).toEqual({
+      ok: false,
+      error: 'expired',
+    });
   });
 });
 
