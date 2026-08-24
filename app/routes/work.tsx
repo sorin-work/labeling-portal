@@ -5,6 +5,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 import { Countdown } from '~/components/countdown';
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { TaskContext } from '~/components/task-context';
+import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
@@ -74,6 +75,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
+      canExtend: assignment.extendedAt === null,
     },
     project: { id: project.id, name: project.name },
     instructionsHtml: renderMarkdown(project.instructions),
@@ -201,6 +203,11 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        <TimeWarning
+          key={assignment.expiresAt}
+          expiresAt={assignment.expiresAt}
+          canExtend={assignment.canExtend}
+        />
         {instructionsChanged && (
           <Alert tone="info">
             The instructions were updated since your last submission. Please read them again before
