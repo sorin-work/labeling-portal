@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { BarChart } from '~/components/bar-chart';
 import { Card, EmptyState, StatCard as Stat } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
@@ -26,8 +28,46 @@ function pct(value: number | null): string {
   return value === null ? '–' : `${Math.round(value * 100)}%`;
 }
 
+type SortKey =
+  | 'name'
+  | 'submitted'
+  | 'skipped'
+  | 'approvalRate'
+  | 'sentBack'
+  | 'avgQaScore'
+  | 'goldAccuracy'
+  | 'avgSeconds'
+  | 'tasksPerHour';
+
+const COLUMNS: Array<{ key: SortKey; label: string }> = [
+  { key: 'name', label: 'Name' },
+  { key: 'submitted', label: 'Submitted' },
+  { key: 'skipped', label: 'Skipped' },
+  { key: 'approvalRate', label: 'Approval' },
+  { key: 'sentBack', label: 'Sent back' },
+  { key: 'avgQaScore', label: 'QA score' },
+  { key: 'goldAccuracy', label: 'Gold' },
+  { key: 'avgSeconds', label: 'Avg time' },
+  { key: 'tasksPerHour', label: 'Tasks / hour' },
+];
+
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
   const { annotators, agreement, skipReasons, daily, projectId } = loaderData;
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: 'submitted',
+    desc: true,
+  });
+  const toggleSort = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: key !== 'name' }));
+  const sorted = [...annotators].sort((a, b) => {
+    const x = a[sort.key];
+    const y = b[sort.key];
+    // empty values always go last
+    if (x === null) return 1;
+    if (y === null) return -1;
+    const cmp = typeof x === 'string' ? x.localeCompare(String(y)) : Number(x) - Number(y);
+    return sort.desc ? -cmp : cmp;
+  });
   if (annotators.length === 0) {
     return (
       <EmptyState title="No submissions yet">
@@ -89,19 +129,28 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-4 py-2">Name</th>
-                <th className="px-4 py-2 text-right">Submitted</th>
-                <th className="px-4 py-2 text-right">Skipped</th>
-                <th className="px-4 py-2 text-right">Approval</th>
-                <th className="px-4 py-2 text-right">Sent back</th>
-                <th className="px-4 py-2 text-right">QA score</th>
-                <th className="px-4 py-2 text-right">Gold</th>
-                <th className="px-4 py-2 text-right">Avg time</th>
-                <th className="px-4 py-2 text-right">Tasks / hour</th>
+                {COLUMNS.map((col) => (
+                  <th
+                    key={col.key}
+                    className={`px-4 py-2 ${col.key === 'name' ? '' : 'text-right'}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      className="uppercase hover:text-slate-800"
+                      aria-sort={
+                        sort.key === col.key ? (sort.desc ? 'descending' : 'ascending') : undefined
+                      }
+                    >
+                      {col.label}
+                      {sort.key === col.key ? (sort.desc ? ' ↓' : ' ↑') : ''}
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {annotators.map((a) => (
+              {sorted.map((a) => (
                 <tr key={a.userId}>
                   <td className="px-4 py-2 font-medium">{a.name}</td>
                   <td className="px-4 py-2 text-right">{a.submitted}</td>
