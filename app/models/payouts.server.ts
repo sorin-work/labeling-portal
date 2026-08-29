@@ -8,7 +8,7 @@ export type PayoutRange = { from: string; to: string };
  * Accepted work submitted within the range (both days inclusive, UTC) across
  * all of the organisation's projects, grouped per annotator.
  */
-export async function payoutReport(orgId: string, range: PayoutRange) {
+export async function payoutReport(orgId: string, range: PayoutRange, projectId?: string | null) {
   const from = new Date(`${range.from}T00:00:00Z`);
   // the last day counts in full: stop at midnight after it
   const end = new Date(`${range.to}T00:00:00Z`);
@@ -17,6 +17,7 @@ export async function payoutReport(orgId: string, range: PayoutRange) {
   const rows = await prisma.assignment.findMany({
     where: {
       project: { orgId },
+      ...(projectId ? { projectId } : {}),
       status: 'SUBMITTED',
       reviewStatus: { in: [...ACCEPTED_STATUSES] },
       submittedAt: { gte: from, lt: end },
@@ -41,6 +42,7 @@ export async function payoutReport(orgId: string, range: PayoutRange) {
   const pending = await prisma.assignment.count({
     where: {
       project: { orgId },
+      ...(projectId ? { projectId } : {}),
       status: 'SUBMITTED',
       reviewStatus: { in: ['PENDING', 'SENT_BACK'] },
       submittedAt: { gte: from, lt: end },

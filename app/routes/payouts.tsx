@@ -5,6 +5,7 @@ import { Button, EmptyState, Input, PageHeader, StatCard } from '~/components/ui
 import { formatDuration } from '~/components/use-active-time';
 import { formatCents } from '~/domain/payouts';
 import { requireRole } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
 import { readRange } from '~/lib/dates';
 import { payoutReport } from '~/models/payouts.server';
 
@@ -17,13 +18,24 @@ export function meta() {
 export async function loader({ request }: Route.LoaderArgs) {
   const { membership } = await requireRole(request, ['ADMIN', 'PROJECT_MANAGER']);
   const range = readRange(new URL(request.url));
-  const report = await payoutReport(membership.orgId, range);
-  return { range, ...report };
+  const projectId = new URL(request.url).searchParams.get('project') || null;
+  const [report, projects] = await Promise.all([
+    payoutReport(membership.orgId, range, projectId),
+    prisma.project.findMany({
+      where: { orgId: membership.orgId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
+  ]);
+  return { range, projectId, projects, ...report };
 }
 
 export default function Payouts({ loaderData }: Route.ComponentProps) {
-  const { range, lines, totalCents, pending } = loaderData;
-  const query = new URLSearchParams(range).toString();
+  const { range, lines, totalCents, pending, projects, projectId } = loaderData;
+  const query = new URLSearchParams({
+    ...range,
+    ...(projectId ? { project: projectId } : {}),
+  }).toString();
 
   return (
     <div className="space-y-6">
@@ -44,6 +56,21 @@ export default function Payouts({ loaderData }: Route.ComponentProps) {
         <label className="text-sm">
           <span className="mb-1 block text-slate-600">To</span>
           <Input type="date" name="to" defaultValue={range.to} />
+        </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-600">Project</span>
+          <select
+            name="project"
+            defaultValue={projectId ?? ''}
+            className="block rounded-md border-0 py-2 pl-2 pr-8 text-sm ring-1 ring-slate-300"
+          >
+            <option value="">All projects</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </label>
         <Button type="submit" variant="secondary">
           Update

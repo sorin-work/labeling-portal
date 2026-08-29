@@ -97,6 +97,28 @@ describe('payouts', () => {
     expect(report.lines[0]).toMatchObject({ tasks: 2, amountCents: 70 });
   });
 
+  it('can be limited to one project', async () => {
+    const { org, project, ann, cookie } = await setup();
+    const other = await createTestProject(org.id, { name: 'Other', reviewRequired: false });
+    await prisma.project.update({ where: { id: other.id }, data: { rateCents: 100 } });
+    await createTasks(other.id, [{ text: 'x' }]);
+    const now = new Date('2026-03-10T09:00:00Z');
+    await submitWork(project, ann.id, { labels: ['positive'] }, { now });
+    await submitWork(other, ann.id, { labels: ['positive'] }, { now });
+
+    const all = payload<Report>(
+      await run(payoutsLoader, makeRequest('/payouts?from=2026-03-01&to=2026-03-31', { cookie })),
+    );
+    expect(all.totalCents).toBe(135);
+    const one = payload<Report>(
+      await run(
+        payoutsLoader,
+        makeRequest(`/payouts?from=2026-03-01&to=2026-03-31&project=${other.id}`, { cookie }),
+      ),
+    );
+    expect(one.totalCents).toBe(100);
+  });
+
   it('pays hourly projects for active time', async () => {
     const { project, ann, cookie } = await setup();
     await prisma.project.update({

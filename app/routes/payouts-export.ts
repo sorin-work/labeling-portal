@@ -9,7 +9,8 @@ import type { Route } from './+types/payouts-export';
 export async function loader({ request }: Route.LoaderArgs) {
   const { membership } = await requireRole(request, ['ADMIN', 'PROJECT_MANAGER']);
   const range = readRange(new URL(request.url));
-  const { lines } = await payoutReport(membership.orgId, range);
+  const projectId = new URL(request.url).searchParams.get('project') || null;
+  const { lines } = await payoutReport(membership.orgId, range, projectId);
 
   const rows = lines.flatMap((line) =>
     line.projects.map((p) => [
