@@ -20,7 +20,7 @@ export type ReviewInput = {
 /** Submissions waiting for review in a project, oldest first. */
 export function listPendingReviews(
   projectId: string,
-  opts: { userId?: string; take?: number } = {},
+  opts: { userId?: string; take?: number; skip?: number } = {},
 ) {
   return prisma.assignment.findMany({
     where: {
@@ -31,6 +31,7 @@ export function listPendingReviews(
     },
     orderBy: { submittedAt: 'asc' },
     take: opts.take ?? 50,
+    skip: opts.skip ?? 0,
     select: {
       id: true,
       submittedAt: true,

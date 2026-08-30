@@ -3,7 +3,9 @@ import { Form, Link, redirect } from 'react-router';
 import { Alert, Button, EmptyState } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { taskPreview } from '~/domain/preview';
+import { Pagination } from '~/components/pagination';
 import { requireUser } from '~/lib/auth.server';
+import { paginate, readPage } from '~/lib/pagination';
 import { formatDateTime } from '~/lib/format';
 import { projectSchema, requireProject } from '~/models/projects.server';
 import { listPendingReviews, nextPendingReview, pendingByAnnotator } from '~/models/reviews.server';
@@ -26,13 +28,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
 
   const annotator = url.searchParams.get('annotator') ?? '';
-  const [pending, annotators] = await Promise.all([
-    listPendingReviews(project.id, { userId: annotator || undefined }),
-    pendingByAnnotator(project.id),
-  ]);
+  const annotators = await pendingByAnnotator(project.id);
+  const total = annotators
+    .filter((a) => !annotator || a.id === annotator)
+    .reduce((s, a) => s + a.count, 0);
+  const page = paginate(total, readPage(url));
+  const pending = await listPendingReviews(project.id, {
+    userId: annotator || undefined,
+    skip: page.skip,
+    take: page.take,
+  });
   const schema = projectSchema(project);
   return {
     done: url.searchParams.has('done'),
+    page,
     annotator,
     annotators,
     pending: pending.map((a) => ({
@@ -47,7 +56,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function ProjectReview({ loaderData }: Route.ComponentProps) {
-  const { pending, done, annotator, annotators } = loaderData;
+  const { pending, done, annotator, annotators, page } = loaderData;
   return (
     <div className="space-y-4">
       {done && (
@@ -87,7 +96,7 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
         <>
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-600">
-              {pending.length} submission{pending.length === 1 ? '' : 's'} waiting, oldest first.
+              {page.total} submission{page.total === 1 ? '' : 's'} waiting, oldest first.
             </p>
             <Link to="?next=1">
               <Button>Start reviewing</Button>
@@ -127,6 +136,7 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
               ))}
             </tbody>
           </table>
+          <Pagination info={page} />
         </>
       )}
     </div>
