@@ -42,7 +42,7 @@ export function meta() {
 async function loadOwnAssignment(assignmentId: string, userId: string) {
   const assignment = await prisma.assignment.findFirst({
     where: { id: assignmentId, userId },
-    include: { task: true, project: true },
+    include: { task: { include: { batch: { select: { name: true } } } }, project: true },
   });
   if (!assignment) throw notFound('Task not found');
   return assignment;
@@ -83,8 +83,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     task: {
       id: task.id,
       externalId: task.externalId,
+      batch: task.batch.name,
       data: task.data as Record<string, unknown>,
     },
+    doneToday: await prisma.assignment.count({
+      where: {
+        projectId: project.id,
+        userId: user.id,
+        status: 'SUBMITTED',
+        submittedAt: { gte: new Date(new Date().setUTCHours(0, 0, 0, 0)) },
+      },
+    }),
   };
 }
 
@@ -187,9 +196,11 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
             >
               {project.name}
             </Link>
+            <span className="ml-2 text-xs text-slate-400">{task.batch}</span>
             {task.externalId && (
               <span className="ml-2 font-mono text-xs text-slate-400">{task.externalId}</span>
             )}
+            <span className="ml-3 text-xs text-slate-500">{loaderData.doneToday} done today</span>
           </div>
           <div className="flex items-center gap-3">
             <KeyboardHelp />
