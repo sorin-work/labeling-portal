@@ -6,6 +6,7 @@ import { prisma } from '~/lib/db.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
 import { myStats } from '~/models/annotator-stats.server';
+import { needsAttention } from '~/models/attention.server';
 import { listProjects } from '~/models/projects.server';
 import { countAvailable } from '~/models/queue.server';
 
@@ -44,12 +45,16 @@ export async function loader({ request }: Route.LoaderArgs) {
   ]);
 
   const stats = canAnnotate ? await myStats(user.id, 30, now) : null;
+  const attention = can(membership.role, 'manageProjects')
+    ? await needsAttention(membership.orgId, now)
+    : null;
 
   return {
     user,
     role: membership.role,
     canAnnotate,
     stats,
+    attention,
     submittedToday,
     active: active.map((a) => ({ id: a.id, projectName: a.project.name })),
     projects: projects
@@ -59,7 +64,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { user, canAnnotate, submittedToday, active, projects, stats } = loaderData;
+  const { user, canAnnotate, submittedToday, active, projects, stats, attention } = loaderData;
   const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
   return (
     <div className="space-y-6">
@@ -92,6 +97,47 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
             ))}
           </div>
         </section>
+      )}
+
+      {attention && (
+        <Card>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Needs attention
+          </h2>
+          {attention.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Nothing right now. Reviews are on time and gold scores look fine.
+            </p>
+          ) : (
+            <ul className="space-y-1.5 text-sm">
+              {attention.map((item) =>
+                item.kind === 'stale-reviews' ? (
+                  <li key={`s-${item.projectId}`}>
+                    <Link
+                      to={`/projects/${item.projectId}/review`}
+                      className="text-indigo-700 hover:underline"
+                    >
+                      {item.projectName}
+                    </Link>
+                    : {item.count} submission{item.count === 1 ? '' : 's'} waiting for review for
+                    more than a day
+                  </li>
+                ) : (
+                  <li key={`g-${item.projectId}-${item.userName}`}>
+                    <Link
+                      to={`/projects/${item.projectId}/quality`}
+                      className="text-indigo-700 hover:underline"
+                    >
+                      {item.projectName}
+                    </Link>
+                    : {item.userName} matches gold answers {Math.round(item.accuracy * 100)}% of the
+                    time ({item.attempts} gold tasks)
+                  </li>
+                ),
+              )}
+            </ul>
+          )}
+        </Card>
       )}
 
       {active.length > 0 && (
