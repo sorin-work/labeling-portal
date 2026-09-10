@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 
 import { BarChart } from '~/components/bar-chart';
 import { Card, EmptyState, StatCard as Stat } from '~/components/ui';
@@ -152,7 +153,14 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
             <tbody className="divide-y divide-slate-100">
               {sorted.map((a) => (
                 <tr key={a.userId}>
-                  <td className="px-4 py-2 font-medium">{a.name}</td>
+                  <td className="px-4 py-2 font-medium">
+                    <Link
+                      to={`/projects/${projectId}/annotators/${a.userId}`}
+                      className="hover:text-indigo-700"
+                    >
+                      {a.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-2 text-right">{a.submitted}</td>
                   <td className="px-4 py-2 text-right">{a.skipped}</td>
                   <td className="px-4 py-2 text-right">{pct(a.approvalRate)}</td>

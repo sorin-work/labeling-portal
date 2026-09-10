@@ -31,6 +31,7 @@ export default [
       route('qualification', 'routes/project-qualification.tsx'),
       route('review', 'routes/project-review.tsx'),
       route('quality', 'routes/project-quality.tsx'),
+      route('annotators/:userId', 'routes/project-annotator.tsx'),
       route('export', 'routes/project-export.tsx'),
       route('activity', 'routes/project-activity.tsx'),
     ]),
