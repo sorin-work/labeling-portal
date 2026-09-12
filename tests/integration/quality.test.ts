@@ -177,3 +177,55 @@ describe('daily throughput', () => {
     ]);
   });
 });
+
+describe('annotator page', () => {
+  beforeEach(resetDb);
+
+  it('shows an annotator’s work to reviewers but not to other annotators', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    await createTasks(project.id, [{ text: 'one' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Ann' });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, ann, reviewer);
+    await submitWork(project, ann.id, { labels: ['positive'] });
+    const { loader } = await import('~/routes/project-annotator');
+    const path = `/projects/${project.id}/annotators/${ann.id}`;
+    const params = { projectId: project.id, userId: ann.id };
+
+    const seen = await run(
+      loader,
+      makeRequest(path, { cookie: await cookieFor(reviewer, org.id) }),
+      params,
+    );
+    expect(payload<{ work: Array<{ reviewStatus: string }> }>(seen).work).toEqual([
+      expect.objectContaining({ reviewStatus: 'PENDING' }),
+    ]);
+
+    const other = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, other);
+    const denied = await run(
+      loader,
+      makeRequest(path, { cookie: await cookieFor(other, org.id) }),
+      params,
+    );
+    expect(statusOf(denied)).toBe(403);
+  });
+
+  it('does not show people from another organisation', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const elsewhere = await createOrg('Elsewhere');
+    const stranger = await createMember(elsewhere.id, 'ANNOTATOR');
+    const { loader } = await import('~/routes/project-annotator');
+    const result = await run(
+      loader,
+      makeRequest(`/projects/${project.id}/annotators/${stranger.id}`, {
+        cookie: await cookieFor(pm, org.id),
+      }),
+      { projectId: project.id, userId: stranger.id },
+    );
+    expect(statusOf(result)).toBe(404);
+  });
+});
