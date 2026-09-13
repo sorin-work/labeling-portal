@@ -109,6 +109,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
   const { project, schema, assignment, task, history, ownWork } = loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
+  const [feedback, setFeedback] = useState('');
   const [corrected, setCorrected] = useState<Answer>(assignment.answer);
   const navigation = useNavigation();
   const approveRef = useRef<HTMLButtonElement>(null);
@@ -198,9 +199,15 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
               <textarea
                 name="feedback"
                 rows={4}
+                maxLength={2000}
+                value={feedback}
+                onChange={(event) => setFeedback(event.target.value)}
                 className="mt-1 block w-full rounded-md px-3 py-2 text-sm font-normal ring-1 ring-slate-300"
                 placeholder="Required when sending work back"
               />
+              <span className="mt-0.5 block text-right text-xs font-normal text-slate-400">
+                {feedback.length} / 2000
+              </span>
             </label>
             <div className="flex flex-wrap gap-2">
               {fixing ? (
