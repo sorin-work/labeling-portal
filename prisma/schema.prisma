@@ -181,6 +181,7 @@ model Task {
 
   @@index([projectId, status, position])
   @@index([batchId, position])
+  @@index([batchId, status])
 }
 
 /// One annotator's claim on a task, and later their answer.
