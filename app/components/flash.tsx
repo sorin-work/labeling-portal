@@ -15,6 +15,7 @@ export function Flash({ message }: { message: string | null }) {
   return (
     <div
       role="status"
+      aria-live="polite"
       className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg bg-slate-900 px-4 py-3 text-sm text-white shadow-lg"
     >
       {message}

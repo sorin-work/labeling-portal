@@ -35,6 +35,12 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="min-h-screen">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:shadow"
+      >
+        Skip to content
+      </a>
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:gap-6">
           <details className="relative sm:hidden">
@@ -61,7 +67,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             <div className="text-sm font-semibold text-indigo-700">Labeling Portal</div>
             <div className="text-xs text-slate-500">{orgName}</div>
           </div>
-          <nav className="hidden flex-1 gap-1 sm:flex">
+          <nav className="hidden flex-1 gap-1 sm:flex" aria-label="Main">
             {links.map((link) => (
               <NavLink
                 key={link.to}
@@ -87,7 +93,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           </Form>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">
+      <main id="main" className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />
       </main>
       <Flash message={flash} />

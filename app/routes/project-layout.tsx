@@ -50,7 +50,10 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
           <Badge tone={STATUS_TONES[project.status]}>{titleCase(project.status)}</Badge>
           <Badge tone="indigo">{KIND_NAMES[project.kind]}</Badge>
         </div>
-        <nav className="mt-4 flex gap-1 overflow-x-auto border-b border-slate-200">
+        <nav
+          className="mt-4 flex gap-1 overflow-x-auto border-b border-slate-200"
+          aria-label="Project"
+        >
           {tabs.map((tab) => (
             <NavLink
               key={tab.to}

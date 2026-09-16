@@ -8,3 +8,9 @@ html,
 body {
   @apply bg-slate-50 text-slate-900;
 }
+
+/* keyboard users should always see where they are */
+:focus-visible {
+  outline: 2px solid var(--color-indigo-600);
+  outline-offset: 2px;
+}
