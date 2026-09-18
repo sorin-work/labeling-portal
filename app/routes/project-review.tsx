@@ -102,40 +102,44 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
               <Button>Start reviewing</Button>
             </Link>
           </div>
-          <table className="w-full overflow-hidden rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-2">Task</th>
-                <th className="px-4 py-2">Annotator</th>
-                <th className="px-4 py-2">Time</th>
-                <th className="px-4 py-2">Submitted</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {pending.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-50">
-                  <td className="max-w-0 px-4 py-2">
-                    <Link
-                      to={`/review/${item.id}`}
-                      className="block truncate hover:text-indigo-700"
-                    >
-                      {item.externalId && (
-                        <span className="mr-2 font-mono text-xs text-slate-400">
-                          {item.externalId}
-                        </span>
-                      )}
-                      {item.preview}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">{item.annotator}</td>
-                  <td className="px-4 py-2 text-slate-500">{formatDuration(item.activeSeconds)}</td>
-                  <td className="px-4 py-2 text-slate-500">
-                    {item.submittedAt ? formatDateTime(item.submittedAt) : ''}
-                  </td>
+          <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+            <table className="w-full min-w-[36rem] text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-2">Task</th>
+                  <th className="px-4 py-2">Annotator</th>
+                  <th className="px-4 py-2">Time</th>
+                  <th className="px-4 py-2">Submitted</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pending.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="max-w-0 px-4 py-2">
+                      <Link
+                        to={`/review/${item.id}`}
+                        className="block truncate hover:text-indigo-700"
+                      >
+                        {item.externalId && (
+                          <span className="mr-2 font-mono text-xs text-slate-400">
+                            {item.externalId}
+                          </span>
+                        )}
+                        {item.preview}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">{item.annotator}</td>
+                    <td className="px-4 py-2 text-slate-500">
+                      {formatDuration(item.activeSeconds)}
+                    </td>
+                    <td className="px-4 py-2 text-slate-500">
+                      {item.submittedAt ? formatDateTime(item.submittedAt) : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Pagination info={page} />
         </>
       )}

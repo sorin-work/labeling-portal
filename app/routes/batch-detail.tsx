@@ -161,44 +161,46 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
       {tasks.length === 0 ? (
         <EmptyState title="No tasks match this filter" />
       ) : (
-        <table className="w-full overflow-hidden rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="w-16 px-4 py-2">#</th>
-              <th className="px-4 py-2">Task</th>
-              <th className="w-28 px-4 py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {tasks.map((task) => (
-              <tr key={task.id} className="hover:bg-slate-50">
-                <td className="px-4 py-2 text-slate-400">{task.position}</td>
-                <td className="max-w-0 px-4 py-2">
-                  <Link
-                    to={`/projects/${projectId}/tasks/${task.id}`}
-                    className="block truncate hover:text-indigo-700"
-                  >
-                    {task.externalId && (
-                      <span className="mr-2 font-mono text-xs text-slate-400">
-                        {task.externalId}
-                      </span>
-                    )}
-                    {task.preview}
-                  </Link>
-                </td>
-                <td className="px-4 py-2">
-                  {task.isGold ? (
-                    <Badge tone="amber">Gold</Badge>
-                  ) : (
-                    <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
-                      {titleCase(task.status)}
-                    </Badge>
-                  )}
-                </td>
+        <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+          <table className="w-full min-w-[36rem] text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="w-16 px-4 py-2">#</th>
+                <th className="px-4 py-2">Task</th>
+                <th className="w-28 px-4 py-2">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {tasks.map((task) => (
+                <tr key={task.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2 text-slate-400">{task.position}</td>
+                  <td className="max-w-0 px-4 py-2">
+                    <Link
+                      to={`/projects/${projectId}/tasks/${task.id}`}
+                      className="block truncate hover:text-indigo-700"
+                    >
+                      {task.externalId && (
+                        <span className="mr-2 font-mono text-xs text-slate-400">
+                          {task.externalId}
+                        </span>
+                      )}
+                      {task.preview}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2">
+                    {task.isGold ? (
+                      <Badge tone="amber">Gold</Badge>
+                    ) : (
+                      <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
+                        {titleCase(task.status)}
+                      </Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       <Pagination info={page} />
     </div>
