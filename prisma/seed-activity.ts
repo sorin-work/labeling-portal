@@ -266,3 +266,90 @@ export async function seedPairwiseActivity(
     if (answers.length >= project.overlap) await complete(prisma, task.id, project.schema, answers);
   }
 }
+
+const NEWS_ENTITIES: Array<[string, string]> = [
+  ['Maria Okonkwo', 'PERSON'],
+  ['Brightwater Energy', 'ORG'],
+  ['Lagos', 'LOCATION'],
+  ['Porto', 'LOCATION'],
+  ['João Ferreira', 'PERSON'],
+  ['University of Uppsala', 'ORG'],
+  ['Nordlys Robotics', 'ORG'],
+  ['Tomás Herrera', 'PERSON'],
+  ['Atlético Riverside', 'ORG'],
+  ['Harbour City', 'ORG'],
+  ['Valencia', 'LOCATION'],
+];
+
+/** Entities: the first few news sentences labelled, reviewed and complete. */
+export async function seedNerActivity(prisma: PrismaClient, projectId: string, ids: Ids) {
+  const tasks = await prisma.task.findMany({
+    where: { projectId },
+    orderBy: { position: 'asc' },
+    take: 4,
+  });
+  const ana = ids.annotators[0];
+  for (const [i, task] of tasks.entries()) {
+    const text = String((task.data as Record<string, unknown>).text ?? '');
+    const spans = NEWS_ENTITIES.flatMap(([name, label]) => {
+      const start = text.indexOf(name);
+      return start >= 0 ? [{ start, end: start + name.length, label }] : [];
+    }).sort((a, b) => a.start - b.start);
+    const answer = { spans };
+    const a = await submit(prisma, {
+      projectId,
+      taskId: task.id,
+      userId: ana,
+      answer,
+      submittedAt: at(9 - i, 19),
+      seconds: 60 + Math.floor(rand() * 60),
+      reviewStatus: 'APPROVED',
+    });
+    await prisma.review.create({
+      data: {
+        assignmentId: a.id,
+        reviewerId: ids.reviewer,
+        decision: 'APPROVE',
+        qaScore: 5,
+        createdAt: at(8 - i, 20),
+      },
+    });
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { status: 'COMPLETE', completedAt: new Date(), consensus: answer, agreement: 1 },
+    });
+  }
+}
+
+/** Boxes: two street scenes labelled without review so the COCO export has data. */
+export async function seedBoxActivity(prisma: PrismaClient, projectId: string, ids: Ids) {
+  const tasks = await prisma.task.findMany({
+    where: { projectId },
+    orderBy: { position: 'asc' },
+    take: 2,
+  });
+  const chen = ids.annotators[2];
+  for (const [i, task] of tasks.entries()) {
+    const answer = {
+      imageWidth: 640,
+      imageHeight: 400,
+      boxes: [
+        { x: 40 + i * 30, y: 270, w: 112, h: 52, label: 'car' },
+        { x: 400 - i * 50, y: 195, w: 22, h: 70, label: 'person' },
+      ],
+    };
+    await submit(prisma, {
+      projectId,
+      taskId: task.id,
+      userId: chen,
+      answer,
+      submittedAt: at(6 - i, 21),
+      seconds: 90,
+      reviewStatus: 'NOT_REQUIRED',
+    });
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { status: 'COMPLETE', completedAt: new Date(), consensus: answer, agreement: 1 },
+    });
+  }
+}

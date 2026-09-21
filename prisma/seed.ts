@@ -7,7 +7,12 @@
 import { PrismaClient, type Prisma, type Role, type TaskKind } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
-import { seedPairwiseActivity, seedSentimentActivity } from './seed-activity';
+import {
+  seedBoxActivity,
+  seedNerActivity,
+  seedPairwiseActivity,
+  seedSentimentActivity,
+} from './seed-activity';
 import { INSTRUCTIONS, newsRows, pairwiseRows, reviewRows, streetRows } from './seed-data';
 
 const prisma = new PrismaClient();
@@ -176,6 +181,8 @@ async function main() {
     };
     if (spec.kind === 'TEXT_CLASSIFICATION') await seedSentimentActivity(prisma, project.id, ids);
     if (spec.kind === 'PAIRWISE') await seedPairwiseActivity(prisma, project.id, batch.id, ids);
+    if (spec.kind === 'NER') await seedNerActivity(prisma, project.id, ids);
+    if (spec.kind === 'BBOX') await seedBoxActivity(prisma, project.id, ids);
   }
 
   console.log(
