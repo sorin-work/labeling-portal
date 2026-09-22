@@ -7,7 +7,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDateTime, REVIEW_BADGES } from '~/lib/format';
+import { formatRelative, REVIEW_BADGES } from '~/lib/format';
 import { paginate, readPage } from '~/lib/pagination';
 import { projectSchema } from '~/models/projects.server';
 
@@ -124,7 +124,7 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                   {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                   {item.qaScore !== null && <span>Quality {item.qaScore}/5</span>}
                   <span>
-                    {item.submittedAt ? formatDateTime(item.submittedAt) : ''} ·{' '}
+                    {item.submittedAt ? formatRelative(item.submittedAt) : ''} ·{' '}
                     {formatDuration(item.activeSeconds)}
                   </span>
                   {item.reviewStatus === 'FIXED' && (

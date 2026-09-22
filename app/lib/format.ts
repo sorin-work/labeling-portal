@@ -51,3 +51,16 @@ export const REVIEW_BADGES: Record<
   FIXED: { label: 'Corrected by reviewer', tone: 'sky' },
   NOT_REQUIRED: { label: 'Accepted', tone: 'emerald' },
 };
+
+const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+/** "3 hours ago", "yesterday", "in 5 minutes". Falls back to a date after a week. */
+export function formatRelative(value: Date | string, now = new Date()): string {
+  const seconds = Math.round((new Date(value).getTime() - now.getTime()) / 1000);
+  const abs = Math.abs(seconds);
+  if (abs < 45) return 'just now';
+  if (abs < 45 * 60) return relative.format(Math.round(seconds / 60), 'minute');
+  if (abs < 22 * 3600) return relative.format(Math.round(seconds / 3600), 'hour');
+  if (abs < 7 * 86400) return relative.format(Math.round(seconds / 86400), 'day');
+  return formatDate(value);
+}

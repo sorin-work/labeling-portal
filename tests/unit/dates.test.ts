@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { currentMonth, parseDay, readRange, toDay } from '~/lib/dates';
-import { formatDate, formatDateTime, titleCase } from '~/lib/format';
+import { formatDate, formatDateTime, formatRelative, titleCase } from '~/lib/format';
 
 describe('parseDay', () => {
   it('accepts real calendar days', () => {
@@ -54,5 +54,20 @@ describe('formatting', () => {
   it('turns enum values into words', () => {
     expect(titleCase('SENT_BACK')).toBe('Sent back');
     expect(titleCase('ACTIVE')).toBe('Active');
+  });
+});
+
+describe('formatRelative', () => {
+  const now = new Date('2026-09-22T12:00:00Z');
+  it('uses words for recent times', () => {
+    expect(formatRelative('2026-09-22T11:59:40Z', now)).toBe('just now');
+    expect(formatRelative('2026-09-22T11:50:00Z', now)).toBe('10 minutes ago');
+    expect(formatRelative('2026-09-22T09:00:00Z', now)).toBe('3 hours ago');
+    expect(formatRelative('2026-09-21T10:00:00Z', now)).toBe('yesterday');
+    expect(formatRelative('2026-09-22T12:05:00Z', now)).toBe('in 5 minutes');
+  });
+
+  it('falls back to a date after a week', () => {
+    expect(formatRelative('2026-09-01T12:00:00Z', now)).toBe('1 Sept 2026');
   });
 });

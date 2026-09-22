@@ -10,7 +10,7 @@ import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { parseReviewForm } from '~/domain/review-form';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDateTime } from '~/lib/format';
+import { formatDateTime, formatRelative } from '~/lib/format';
 import { forbidden, notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
 import { nextPendingReview, recordReview } from '~/models/reviews.server';
@@ -268,7 +268,13 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                   {h.feedback && (
                     <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{h.feedback}</p>
                   )}
-                  <div className="text-xs text-slate-400">{formatDateTime(h.createdAt)}</div>
+                  <div
+                    className="text-xs text-slate-400"
+                    title={formatDateTime(h.createdAt)}
+                    suppressHydrationWarning
+                  >
+                    {formatRelative(h.createdAt)}
+                  </div>
                 </li>
               ))}
             </ul>
