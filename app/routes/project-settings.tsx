@@ -5,6 +5,7 @@ import { ProjectForm } from '~/components/project-form';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseProjectForm } from '~/domain/project-form';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
@@ -19,8 +20,8 @@ const STATUS_ACTIONS: Record<string, { to: ProjectStatus; from: ProjectStatus[] 
   archive: { to: 'ARCHIVED', from: ['DRAFT', 'ACTIVE', 'PAUSED'] },
 };
 
-export function meta() {
-  return [{ title: 'Project settings · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Settings');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {

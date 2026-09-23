@@ -5,6 +5,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { taskPreview } from '~/domain/preview';
 import { Pagination } from '~/components/pagination';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { paginate, readPage } from '~/lib/pagination';
 import { formatDateTime } from '~/lib/format';
 import { projectSchema, requireProject } from '~/models/projects.server';
@@ -12,8 +13,8 @@ import { listPendingReviews, nextPendingReview, pendingByAnnotator } from '~/mod
 
 import type { Route } from './+types/project-review';
 
-export function meta() {
-  return [{ title: 'Review · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Review');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {

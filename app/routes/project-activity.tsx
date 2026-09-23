@@ -1,5 +1,6 @@
 import { EmptyState } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime } from '~/lib/format';
 import { listActivity } from '~/models/activity.server';
@@ -7,8 +8,8 @@ import { requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-activity';
 
-export function meta() {
-  return [{ title: 'Activity · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Activity');
 }
 
 type Detail = Record<string, unknown> | null;

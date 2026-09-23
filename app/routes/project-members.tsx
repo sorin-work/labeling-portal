@@ -2,6 +2,7 @@ import { Form } from 'react-router';
 
 import { Badge, Button, Card, EmptyState } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
 import { badRequest } from '~/lib/http';
 import { ROLE_LABELS } from '~/lib/permissions';
@@ -10,8 +11,8 @@ import { requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-members';
 
-export function meta() {
-  return [{ title: 'Members · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Members');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {

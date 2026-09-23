@@ -1,12 +1,13 @@
 import { Button, Card } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
 import { requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-export';
 
-export function meta() {
-  return [{ title: 'Export · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Export');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {

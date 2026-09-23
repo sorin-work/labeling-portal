@@ -2,14 +2,15 @@ import { Link } from 'react-router';
 
 import { Button, EmptyState } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { formatDate } from '~/lib/format';
 import { listBatches } from '~/models/batches.server';
 import { requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-batches';
 
-export function meta() {
-  return [{ title: 'Batches · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Batches');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {

@@ -6,13 +6,14 @@ import { Card, EmptyState, StatCard as Stat } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { describeKappa } from '~/domain/agreement';
 import { requireUser } from '~/lib/auth.server';
+import { projectTitle } from '~/lib/meta';
 import { requireProject } from '~/models/projects.server';
 import { dailyThroughput, projectQuality } from '~/models/quality.server';
 
 import type { Route } from './+types/project-quality';
 
-export function meta() {
-  return [{ title: 'Quality · Labeling Portal' }];
+export function meta({ matches }: Route.MetaArgs) {
+  return projectTitle(matches, 'Quality');
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {
