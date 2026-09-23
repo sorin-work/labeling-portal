@@ -3,9 +3,26 @@ import { Form, Link } from 'react-router';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState } from '~/components/ui';
 import { renderMarkdown } from '~/domain/markdown';
+import type { TaskSchema } from '~/domain/task-schema';
+
+function schemaChoices(schema: TaskSchema): { title: string; items: string[] } {
+  switch (schema.kind) {
+    case 'text_classification':
+      return {
+        title: schema.multiple ? 'Labels (pick any)' : 'Labels (pick one)',
+        items: schema.labels,
+      };
+    case 'ner':
+      return { title: 'Entity types', items: schema.entities.map((e) => e.name) };
+    case 'pairwise':
+      return { title: 'Rubric', items: schema.dimensions.map((d) => d.label) };
+    case 'bbox':
+      return { title: 'Box labels', items: schema.labels };
+  }
+}
 import { requireUser } from '~/lib/auth.server';
 import { can } from '~/lib/permissions';
-import { requireProject } from '~/models/projects.server';
+import { projectSchema, requireProject } from '~/models/projects.server';
 import { projectProgress } from '~/models/progress.server';
 import { qualificationStatus } from '~/models/qualification.server';
 import { findActiveAssignment } from '~/models/queue.server';
@@ -51,6 +68,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       reviewRequired: project.reviewRequired,
     },
     instructionsHtml: renderMarkdown(project.instructions),
+    choices: schemaChoices(projectSchema(project)),
   };
 }
 
@@ -63,6 +81,7 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
     queueMessage,
     needsQualification,
     progress,
+    choices,
   } = loaderData;
   const pct =
     progress && progress.tasks ? Math.round((progress.complete / progress.tasks) * 100) : 0;
@@ -167,6 +186,16 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
               </dd>
             </div>
           </dl>
+          <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {choices.title}
+          </h3>
+          <ul className="flex flex-wrap gap-1.5">
+            {choices.items.map((item) => (
+              <li key={item} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                {item}
+              </li>
+            ))}
+          </ul>
         </Card>
       </div>
     </div>
