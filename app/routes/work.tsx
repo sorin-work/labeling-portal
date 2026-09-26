@@ -168,6 +168,17 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const skipForm = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (!skipping) return;
+    skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSkipping(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [skipping]);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
   const activeSeconds = useActiveTime();
@@ -272,7 +283,11 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
           </Button>
         </Form>
         {skipping && (
-          <Form method="post" className="space-y-3 rounded-lg bg-white p-4 ring-1 ring-slate-200">
+          <Form
+            ref={skipForm}
+            method="post"
+            className="space-y-3 rounded-lg bg-white p-4 ring-1 ring-slate-200"
+          >
             <fieldset className="space-y-1">
               <legend className="mb-1 text-sm font-medium">Why are you skipping this task?</legend>
               {SKIP_REASONS.map((reason, i) => (
