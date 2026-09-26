@@ -45,6 +45,13 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   const text = await file.text();
+  // xlsx, zip and other binary files decode with NUL bytes or replacement chars
+  if (text.includes('\u0000') || text.slice(0, 2000).includes('\uFFFD')) {
+    return data<ActionResult>(
+      { error: 'That does not look like a CSV or JSONL file. Export spreadsheets as CSV first.' },
+      { status: 400 },
+    );
+  }
   const format = detectFormat(file.name, text);
   const result = parseImport(text, format, projectSchema(project));
   const skipInvalid = form.get('skipInvalid') === 'on';

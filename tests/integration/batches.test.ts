@@ -162,6 +162,21 @@ describe('batch import', () => {
     expect(await prisma.task.count()).toBe(0);
   });
 
+  it('refuses binary files such as spreadsheets', async () => {
+    const { project, cookie } = await setup();
+    const xlsx = new File(
+      [new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0xff, 0xfe])],
+      'tasks.xlsx',
+    );
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file: xlsx } }),
+      { projectId: project.id },
+    );
+    expect(statusOf(result)).toBe(400);
+    expect(payload<{ error: string }>(result).error).toMatch(/Export spreadsheets as CSV/);
+  });
+
   it('requires a file', async () => {
     const { project, cookie } = await setup();
     const result = await run(
