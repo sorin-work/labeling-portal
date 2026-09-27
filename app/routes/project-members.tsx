@@ -4,6 +4,7 @@ import { Badge, Button, Card, EmptyState } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
+import { formatRelative } from '~/lib/format';
 import { badRequest } from '~/lib/http';
 import { ROLE_LABELS } from '~/lib/permissions';
 import { logActivity } from '~/models/activity.server';
@@ -40,6 +41,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     }),
   ]);
   const memberIds = new Set(members.map((m) => m.userId));
+  const lastWork = await prisma.assignment.groupBy({
+    by: ['userId'],
+    where: { projectId: project.id, status: 'SUBMITTED' },
+    _max: { submittedAt: true },
+  });
   const attempts = await prisma.qualificationAttempt.groupBy({
     by: ['userId'],
     where: { projectId: project.id },
@@ -56,6 +62,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       role: m.user.memberships[0]?.role ?? 'ANNOTATOR',
       addedAt: m.createdAt,
       qualifiedAt: m.qualifiedAt,
+      lastSubmittedAt: lastWork.find((w) => w.userId === m.userId)?._max.submittedAt ?? null,
       attempts: attempts.find((a) => a.userId === m.userId)?._count._all ?? 0,
       bestScore: attempts.find((a) => a.userId === m.userId)?._max.scorePercent ?? null,
     })),
@@ -128,7 +135,15 @@ export default function ProjectMembers({ loaderData }: Route.ComponentProps) {
               <li key={member.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{member.name}</div>
-                  <div className="text-xs text-slate-500">{member.email}</div>
+                  <div className="text-xs text-slate-500">
+                    {member.email}
+                    {member.lastSubmittedAt && (
+                      <span suppressHydrationWarning>
+                        {' '}
+                        · last submission {formatRelative(member.lastSubmittedAt)}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {qualificationRequired && member.role === 'ANNOTATOR' && (
                   <span className="text-xs text-slate-500">
