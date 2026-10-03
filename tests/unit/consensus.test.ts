@@ -136,3 +136,44 @@ describe('consensus', () => {
     expect(result.answer).toEqual({ labels: ['neutral'] });
   });
 });
+
+describe('consensus edge cases', () => {
+  it('returns nothing without answers', () => {
+    expect(classificationConsensus([], false)).toEqual({
+      answer: null,
+      agreement: 0,
+      annotators: 0,
+    });
+    expect(nerConsensus([])).toEqual({ answer: null, agreement: 0, annotators: 0 });
+    expect(bboxConsensus([]).answer).toBeNull();
+  });
+
+  it('keeps a single annotator’s answer as is', () => {
+    const spans = [{ start: 2, end: 6, label: 'ORG' }];
+    expect(nerConsensus([{ spans }])).toEqual({ answer: { spans }, agreement: 1, annotators: 1 });
+  });
+
+  it('treats a tie vote as a preference of its own', () => {
+    const vote = (preference: 'A' | 'B' | 'tie'): PairwiseAnswer => ({
+      preference,
+      scores: { a: { h: 3 }, b: { h: 3 } },
+      rationale: '',
+    });
+    const result = pairwiseConsensus([vote('tie'), vote('tie'), vote('A')]);
+    expect(result.answer).toMatchObject({ preference: 'tie' });
+    expect(result.agreement).toBeCloseTo(0.6667);
+  });
+
+  it('allows an empty multi-label consensus when nobody agrees', () => {
+    const result = classificationConsensus(
+      [{ labels: ['a'] }, { labels: ['b'] }, { labels: ['c'] }],
+      true,
+    );
+    expect(result.answer).toEqual({ labels: [] });
+  });
+
+  it('agrees fully when nobody drew a box', () => {
+    const empty = { boxes: [], imageWidth: 10, imageHeight: 10 };
+    expect(bboxConsensus([empty, empty]).agreement).toBe(1);
+  });
+});
