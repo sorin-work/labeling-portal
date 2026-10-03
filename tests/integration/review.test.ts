@@ -255,6 +255,29 @@ describe('review', () => {
   });
 });
 
+describe('reviewer stats', () => {
+  beforeEach(resetDb);
+
+  it('counts the decisions of the last week', async () => {
+    const { reviewer, reviewerCookie, submission } = await setup();
+    await run(
+      reviewAction,
+      makeRequest(`/review/${submission.id}`, {
+        cookie: reviewerCookie,
+        form: { intent: 'send_back', qaScore: '2', feedback: 'Check the label' },
+      }),
+      { assignmentId: submission.id },
+    );
+    const { reviewerStats } = await import('~/models/annotator-stats.server');
+    expect(await reviewerStats(reviewer.id)).toEqual({
+      reviews: 1,
+      sentBack: 1,
+      fixed: 0,
+      avgScore: 2,
+    });
+  });
+});
+
 describe('task completion', () => {
   beforeEach(resetDb);
 

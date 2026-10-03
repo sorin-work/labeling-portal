@@ -5,7 +5,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
-import { myStats } from '~/models/annotator-stats.server';
+import { myStats, reviewerStats } from '~/models/annotator-stats.server';
 import { needsAttention } from '~/models/attention.server';
 import { listProjects } from '~/models/projects.server';
 import { countAvailable } from '~/models/queue.server';
@@ -45,6 +45,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   ]);
 
   const stats = canAnnotate ? await myStats(user.id, 30, now) : null;
+  const reviewing = membership.role === 'REVIEWER' ? await reviewerStats(user.id, 7, now) : null;
   const attention = can(membership.role, 'manageProjects')
     ? await needsAttention(membership.orgId, now)
     : null;
@@ -55,6 +56,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     canAnnotate,
     stats,
     attention,
+    reviewing,
     submittedToday,
     active: active.map((a) => ({ id: a.id, projectName: a.project.name })),
     projects: projects
@@ -64,7 +66,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { user, canAnnotate, submittedToday, active, projects, stats, attention } = loaderData;
+  const { user, canAnnotate, submittedToday, active, projects, stats, attention, reviewing } =
+    loaderData;
   const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
   return (
     <div className="space-y-6">
@@ -95,6 +98,20 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
             ].map((s) => (
               <StatCard key={s.label} label={s.label} value={s.value} hint={s.hint} />
             ))}
+          </div>
+        </section>
+      )}
+
+      {reviewing && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Your reviews, last 7 days
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-4">
+            <StatCard label="Reviewed" value={reviewing.reviews} />
+            <StatCard label="Sent back" value={reviewing.sentBack} />
+            <StatCard label="Fixed" value={reviewing.fixed} />
+            <StatCard label="Average score given" value={reviewing.avgScore ?? '–'} />
           </div>
         </section>
       )}

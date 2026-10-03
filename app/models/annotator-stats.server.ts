@@ -41,3 +41,35 @@ export async function myStats(userId: string, days = 30, now = new Date()): Prom
     hours: round((time._sum.activeSeconds ?? 0) / 3600, 1),
   };
 }
+
+export type ReviewerStats = {
+  reviews: number;
+  sentBack: number;
+  fixed: number;
+  avgScore: number | null;
+};
+
+/** What a reviewer did in the last `days` days. */
+export async function reviewerStats(
+  userId: string,
+  days = 7,
+  now = new Date(),
+): Promise<ReviewerStats> {
+  const since = new Date(now.getTime() - days * DAY);
+  const groups = await prisma.review.groupBy({
+    by: ['decision'],
+    where: { reviewerId: userId, createdAt: { gte: since } },
+    _count: { _all: true },
+  });
+  const scores = await prisma.review.aggregate({
+    where: { reviewerId: userId, createdAt: { gte: since }, qaScore: { not: null } },
+    _avg: { qaScore: true },
+  });
+  const count = (d: string) => groups.find((g) => g.decision === d)?._count._all ?? 0;
+  return {
+    reviews: groups.reduce((s, g) => s + g._count._all, 0),
+    sentBack: count('SEND_BACK'),
+    fixed: count('FIX'),
+    avgScore: scores._avg.qaScore === null ? null : round(scores._avg.qaScore, 1),
+  };
+}
