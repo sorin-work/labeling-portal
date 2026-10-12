@@ -107,6 +107,40 @@ describe('label export', () => {
     expect(statusOf(xml)).toBe(400);
   });
 
+  it('downloads a coco dataset for a box project', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const project = await createTestProject(org.id, {
+      name: 'Streets',
+      reviewRequired: false,
+      schema: { kind: 'bbox', imageField: 'image_url', labels: ['car', 'person'] },
+    });
+    await createTasks(project.id, [{ image_url: '/demo/street-1.svg', width: 640, height: 400 }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await submitWork(project, ann.id, {
+      imageWidth: 640,
+      imageHeight: 400,
+      boxes: [{ x: 10, y: 20, w: 100, h: 50, label: 'person' }],
+    });
+
+    const response = (await run(
+      downloadLoader,
+      makeRequest(`/projects/${project.id}/download?format=coco`, {
+        cookie: await cookieFor(pm, org.id),
+      }),
+      { projectId: project.id },
+    )) as Response;
+    expect(response.headers.get('Content-Disposition')).toContain('streets-complete.coco.json');
+    const coco = await response.json();
+    expect(coco.categories).toEqual([
+      { id: 1, name: 'car' },
+      { id: 2, name: 'person' },
+    ]);
+    expect(coco.annotations).toEqual([
+      expect.objectContaining({ image_id: 1, category_id: 2, bbox: [10, 20, 100, 50], area: 5000 }),
+    ]);
+  });
+
   it('is not available to reviewers', async () => {
     const { org, project } = await setup();
     const reviewer = await createMember(org.id, 'REVIEWER');
