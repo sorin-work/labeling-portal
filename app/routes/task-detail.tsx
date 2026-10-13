@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 
+import { CopyButton } from '~/components/copy-button';
 import { LabelingInterface } from '~/components/labeling';
 import { Badge, Card, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
@@ -91,6 +92,9 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
             {task.externalId && (
               <span className="ml-2 font-mono text-base text-slate-400">{task.externalId}</span>
             )}
+            <span className="ml-2 align-middle">
+              <CopyButton value={task.externalId ?? task.id} label="Copy id" />
+            </span>
           </span>
         }
         subtitle={
