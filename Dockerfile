@@ -9,13 +9,17 @@ RUN npm ci --no-audit --no-fund
 
 FROM deps AS build
 COPY . .
-RUN npm run build && npm prune --omit=dev --no-audit --no-fund
+RUN npm run build \
+    && npm prune --omit=dev --no-audit --no-fund \
+    && npm cache clean --force
 
 FROM node:22-alpine AS runtime
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl \
+    && rm -rf /usr/local/lib/node_modules/npm/docs /usr/local/lib/node_modules/npm/man
 WORKDIR /app
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
