@@ -22,6 +22,7 @@ function schemaChoices(schema: TaskSchema): { title: string; items: string[] } {
 }
 import { requireUser } from '~/lib/auth.server';
 import { can } from '~/lib/permissions';
+import { queueMessage } from '~/lib/queue-messages';
 import { projectSchema, requireProject } from '~/models/projects.server';
 import { projectProgress } from '~/models/progress.server';
 import { qualificationStatus } from '~/models/qualification.server';
@@ -46,16 +47,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     canAnnotate,
     activeAssignmentId: active?.id ?? null,
-    queueMessage:
-      queue === 'empty'
-        ? 'There are no more tasks for you in this project right now.'
-        : queue === 'inactive'
-          ? 'This project is not taking work at the moment.'
-          : queue === 'expired'
-            ? 'Your time on that task ran out, so it went back to the queue.'
-            : queue === 'qualified'
-              ? 'You passed the qualification test. Welcome aboard!'
-              : null,
+    queueMessage: queueMessage(queue),
     needsQualification: qualification ? !qualification.qualified : false,
     progress,
     project: {
