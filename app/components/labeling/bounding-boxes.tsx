@@ -7,6 +7,7 @@ import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
 import { useHotkeys } from './use-hotkeys';
+import { useRemembered } from './use-remembered';
 
 const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899'];
 
@@ -24,7 +25,11 @@ export function BoundingBoxes({
   const [size, setSize] = useState<{ w: number; h: number } | null>(
     value ? { w: value.imageWidth, h: value.imageHeight } : null,
   );
-  const [active, setActive] = useState(schema.labels[0]);
+  const [active, setActive] = useRemembered(
+    'labeling-portal:box-label',
+    schema.labels[0],
+    schema.labels,
+  );
   const [start, setStart] = useState<Point | null>(null);
   const [cursor, setCursor] = useState<Point | null>(null);
   const [selected, setSelected] = useState<number | null>(null);

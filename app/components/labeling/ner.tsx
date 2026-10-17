@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 
 import type { NerAnswer } from '~/domain/answers';
 import { addSpan, removeSpan, segmentText, spanText, trimSelection } from '~/domain/spans';
@@ -8,6 +8,7 @@ import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
 import { useHotkeys } from './use-hotkeys';
+import { useRemembered } from './use-remembered';
 
 const FALLBACK_COLORS = ['#f59e0b', '#6366f1', '#10b981', '#ef4444', '#0ea5e9', '#a855f7'];
 
@@ -33,7 +34,11 @@ export function NerSpans({
 }: LabelingProps<NerSchema, NerAnswer>) {
   const text = String(data[schema.textField] ?? '');
   const spans = value?.spans ?? [];
-  const [active, setActive] = useState(schema.entities[0]?.name ?? '');
+  const [active, setActive] = useRemembered(
+    'labeling-portal:entity',
+    schema.entities[0]?.name ?? '',
+    schema.entities.map((e) => e.name),
+  );
   const container = useRef<HTMLDivElement>(null);
 
   useHotkeys((key) => {
