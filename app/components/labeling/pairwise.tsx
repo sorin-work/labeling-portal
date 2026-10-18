@@ -84,16 +84,25 @@ export function PairwiseRubric({
         </p>
       </section>
       <div className="grid gap-4 md:grid-cols-2">
-        {(['A', 'B'] as const).map((side) => (
-          <section key={side} className="rounded-md ring-1 ring-slate-200">
-            <h3 className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold">
-              Response {side}
-            </h3>
-            <p className="max-h-96 overflow-y-auto whitespace-pre-wrap p-3 text-sm leading-6">
-              {String(data[side === 'A' ? schema.responseAField : schema.responseBField] ?? '')}
-            </p>
-          </section>
-        ))}
+        {(['A', 'B'] as const).map((side) => {
+          const text = String(
+            data[side === 'A' ? schema.responseAField : schema.responseBField] ?? '',
+          );
+          const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+          return (
+            <section key={side} className="rounded-md ring-1 ring-slate-200">
+              <h3 className="flex justify-between border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold">
+                Response {side}
+                <span className="font-normal text-slate-400">
+                  {words} word{words === 1 ? '' : 's'}
+                </span>
+              </h3>
+              <p className="max-h-96 overflow-y-auto whitespace-pre-wrap p-3 text-sm leading-6">
+                {text}
+              </p>
+            </section>
+          );
+        })}
       </div>
       <table className="w-full text-sm">
         <thead>
