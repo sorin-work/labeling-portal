@@ -61,7 +61,9 @@ function readRecords(text: string, format: ImportFormat, errors: ImportError[]) 
     return records;
   }
 
-  text.split(/\r?\n/).forEach((raw, index) => {
+  // editors on Windows like to start UTF-8 files with a byte order mark
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  body.split(/\r?\n/).forEach((raw, index) => {
     const line = index + 1;
     if (!raw.trim()) return;
     try {

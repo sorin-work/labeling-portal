@@ -127,3 +127,33 @@ describe('gold answers', () => {
     expect(result.rows[0].gold).toMatchObject({ imageWidth: 100, imageHeight: 80 });
   });
 });
+
+describe('import edge cases', () => {
+  it('handles jsonl with windows line endings and a byte order mark', () => {
+    const result = parseImport('﻿{"text":"a"}\r\n{"text":"b"}\r\n', 'JSONL', classification);
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((r) => r.data.text)).toEqual(['a', 'b']);
+  });
+
+  it('keeps numbers and booleans from jsonl as they are', () => {
+    const result = parseImport('{"text":"x","stars":4,"verified":true}', 'JSONL', classification);
+    expect(result.rows[0].data).toEqual({ text: 'x', stars: 4, verified: true });
+  });
+
+  it('treats whitespace-only text as missing', () => {
+    const result = parseImport('text\n"   "\n', 'CSV', classification);
+    expect(result.errors).toEqual([{ line: 2, message: 'Missing text' }]);
+  });
+
+  it('trims header names', () => {
+    const result = parseImport(' id , text \n1,hello\n', 'CSV', classification);
+    expect(result.rows[0]).toMatchObject({ externalId: '1', data: { text: 'hello' } });
+  });
+
+  it('refuses files with more rows than a batch can hold', () => {
+    const rows = Array.from({ length: 5001 }, (_, i) => `{"text":"${i}"}`).join('\n');
+    const result = parseImport(rows, 'JSONL', classification);
+    expect(result.rows).toEqual([]);
+    expect(result.errors[0].message).toMatch(/at most 5000/);
+  });
+});
