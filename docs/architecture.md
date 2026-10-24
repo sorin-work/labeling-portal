@@ -29,6 +29,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
+| `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
 ## Task lifecycle
 
@@ -36,8 +37,10 @@ tests/integration/  loaders and actions against a real PostgreSQL
    then picks the first open task (by import position) that the annotator has
    not done or skipped and that has fewer live claims and submissions than the
    project's overlap. The task row is locked while the claim is created.
-2. The claim expires after the project's time limit. Expired claims are
-   released lazily the next time anyone asks for work in that project.
+2. The claim expires after the project's time limit. In the last two minutes
+   the annotator can ask for more time once, which adds another full limit.
+   Expired claims are released lazily the next time anyone asks for work in
+   that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. Gold tasks are scored
    immediately; other work goes to review (or is accepted straight away when
    the project does not require review).
@@ -53,6 +56,16 @@ tests/integration/  loaders and actions against a real PostgreSQL
   the project for categorical answers (labels, preferences); span and box F1
   for entities and bounding boxes.
 - **Qualification**: a project can require a passed test before claiming work.
+
+## Keeping an eye on things
+
+- The dashboard shows managers a **needs attention** list: submissions waiting
+  for review for more than a day and annotators whose gold accuracy is below
+  80% after at least three gold tasks.
+- Every project has an **activity** tab with settings changes, imports, batch
+  deletions, status changes and membership changes.
+- Sign-in attempts are rate limited per email (ten failures per fifteen
+  minutes, in memory).
 
 ## Pay
 
