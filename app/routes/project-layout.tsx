@@ -5,6 +5,7 @@ import { requireUser } from '~/lib/auth.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
 import { requireProject } from '~/models/projects.server';
+import { countPendingReviews } from '~/models/reviews.server';
 
 import type { Route } from './+types/project-layout';
 
@@ -12,7 +13,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId);
   const role = current.membership.role;
+  const pendingReviews = can(role, 'review') ? await countPendingReviews(project.id) : 0;
   return {
+    pendingReviews,
     project: {
       id: project.id,
       name: project.name,
@@ -33,7 +36,7 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
   const base = `/projects/${project.id}`;
   const tabs = [
     { to: base, label: 'Overview', show: true },
-    { to: `${base}/review`, label: 'Review', show: can.review },
+    { to: `${base}/review`, label: 'Review', show: can.review, count: loaderData.pendingReviews },
     { to: `${base}/quality`, label: 'Quality', show: can.quality },
     { to: `${base}/batches`, label: 'Batches', show: can.manage },
     { to: `${base}/export`, label: 'Export', show: can.export },
@@ -69,6 +72,11 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
               }
             >
               {tab.label}
+              {'count' in tab && tab.count ? (
+                <span className="ml-1.5 rounded-full bg-indigo-100 px-1.5 text-xs text-indigo-700">
+                  {tab.count}
+                </span>
+              ) : null}
             </NavLink>
           ))}
         </nav>
