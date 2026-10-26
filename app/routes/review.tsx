@@ -136,6 +136,12 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
           <Link to={`/projects/${project.id}/review`} className="text-indigo-700 hover:underline">
             ← {project.name} review queue
           </Link>
+          <Link
+            to={`/projects/${project.id}/tasks/${task.id}`}
+            className="text-slate-500 hover:text-slate-800"
+          >
+            All submissions for this task
+          </Link>
           <span className="text-slate-500">
             {assignment.annotator} · {formatDuration(assignment.activeSeconds)} ·{' '}
             {assignment.submittedAt ? formatDateTime(assignment.submittedAt) : ''}
