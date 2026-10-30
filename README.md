@@ -120,6 +120,24 @@ More detail: [architecture](docs/architecture.md),
 [import and export formats](docs/import-export.md),
 [quality metrics](docs/quality.md).
 
+## Troubleshooting
+
+- **Signed out right after signing in on plain http**: production builds use
+  secure cookies. Set `COOKIE_SECURE=false` when you serve the app without
+  HTTPS (the compose file already does).
+- **"SESSION_SECRET must be set"** on start: production refuses the built-in
+  development secret. Set `SESSION_SECRET` to 16 or more random characters.
+- **Integration tests fail with "database does not exist"**: create the test
+  database (`createdb labeling_test`) or use `docker-compose.dev.yml`, which
+  creates it on first start, and point `TEST_DATABASE_URL` at it.
+- **"Too many attempts" on sign-in**: ten failed attempts lock an email for
+  fifteen minutes. Restarting the app clears the counter.
+- **A task is stuck as claimed**: claims expire after the project's time limit
+  and are released the next time anyone asks for work in that project.
+- **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
+  and skips itself if the demo organisation already exists. Remove the volume
+  with `docker compose down -v` to start over.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
