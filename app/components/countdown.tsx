@@ -15,9 +15,13 @@ export function Countdown({ expiresAt }: { expiresAt: string }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= end) window.clearInterval(timer);
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [end]);
 
   const left = end - now;
   return (
