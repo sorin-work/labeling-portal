@@ -72,3 +72,28 @@ tests/integration/  loaders and actions against a real PostgreSQL
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
 at the time since the claim.
+
+## Adding a labeling kind
+
+Everything kind-specific goes through a `switch (schema.kind)`, so TypeScript
+points at every place that needs a new branch once the kind is added to the
+schema union:
+
+1. `app/domain/task-schema.ts`: the zod schema, `requiredFields`, a template.
+2. `app/domain/answers.ts`: the answer type and its validator.
+3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
+   how they are scored against gold, and whether they are categorical.
+4. `app/domain/export.ts` and `template.ts`: export columns and example rows.
+5. `app/components/labeling/`: the interface, wired up in `index.tsx`.
+6. A `TaskKind` enum value and a migration.
+
+## Conventions
+
+- Domain code in `app/domain` is pure and has unit tests; it never imports
+  Prisma.
+- Data access lives in `app/models/*.server.ts`. Route modules call models and
+  never build Prisma queries for other areas themselves.
+- Every loader and action starts with `requireUser`/`requireRole` and, for
+  project pages, `requireProject(current, id, capability)`, which also hides
+  other organisations' projects.
+- Dates are stored in UTC and shown in UTC.
