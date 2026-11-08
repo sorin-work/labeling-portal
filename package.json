@@ -1,6 +1,6 @@
 {
   "name": "labeling-portal",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Work portal for data-labeling teams: projects, task queues, review, quality and payouts.",
   "license": "MIT",
