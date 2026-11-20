@@ -21,6 +21,12 @@ export type LabelingProps<S extends TaskSchema = TaskSchema, A = Answer> = {
   readOnly?: boolean;
   /** Box projects: called when the image has loaded and its size is known. */
   onImageSize?: (size: ImageSize) => void;
+  /**
+   * Box projects: a name for this picture (the assignment's id), under which
+   * zoom and position are kept for the session. They are never part of the
+   * answer.
+   */
+  viewKey?: string;
 };
 
 /** Picks the interface for the project's labeling kind. */

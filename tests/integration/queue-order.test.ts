@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { goldGapRange } from '~/domain/queue-order';
 import {
   claimNextTask,
   countAvailable,
   pickNextTask,
+  queueSecretFor,
   releaseAssignment,
   skipAssignment,
   submitAssignment,
@@ -162,8 +162,13 @@ describe('queue order', () => {
     const picks = [];
     for (let i = 0; i < 2; i++) {
       picks.push(
-        await prisma.$transaction((tx) =>
-          pickNextTask(tx, { project: shuffled, userId: ann.id, now: new Date() }),
+        await prisma.$transaction(async (tx) =>
+          pickNextTask(tx, {
+            project: shuffled,
+            userId: ann.id,
+            now: new Date(),
+            secret: await queueSecretFor(tx, project.id),
+          }),
         ),
       );
     }
@@ -206,15 +211,47 @@ describe('queue order', () => {
       data: { queueOrder: 'SHUFFLED', goldEvery: 3 },
     });
     const tasks = await createTasks(project.id, rows(4));
+    const gold = await createTasks(project.id, rows(2, 'gold'));
+    await makeGold(gold.map((t) => t.id));
     const users = await annotators(org.id, project.id, 10);
     const fresh = await reload(project.id);
 
     const results = await Promise.all(users.map((u) => claimNextTask(fresh, u.id)));
 
-    expect(results.filter((r) => r.ok)).toHaveLength(8);
+    // nobody has worked yet, so everyone wants a regular task first; the eight
+    // regular slots go to eight people and the other two get gold
+    expect(results.filter((r) => r.ok)).toHaveLength(10);
     for (const task of tasks) {
       expect(await prisma.assignment.count({ where: { taskId: task.id } })).toBe(2);
     }
+    expect(await prisma.assignment.count({ where: { task: { isGold: true } } })).toBe(2);
+  });
+
+  it('passes over a task another claim has locked instead of waiting for it', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    const tasks = await createTasks(project.id, rows(2));
+    const [ann] = await annotators(org.id, project.id, 1);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${tasks[0].id} FOR UPDATE`;
+        locked();
+        await held;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    const claim = await Promise.race([
+      claimNextTask(project, ann.id),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 3000)),
+    ]);
+    release();
+    await holder;
+    expect(claim !== 'blocked' && claim.ok && claim.assignment.taskId).toBe(tasks[1].id);
   });
 });
 
@@ -233,8 +270,8 @@ describe('gold spacing', () => {
   }
 
   it('serves about one gold task in every N, at uneven intervals, never twice', async () => {
-    const goldEvery = 4;
-    const { org, project } = await spaced(goldEvery, 60, 12);
+    const goldEvery = 3;
+    const { org, project } = await spaced(goldEvery, 90, 40);
     const [ann] = await annotators(org.id, project.id, 1);
     const start = Date.now() - 24 * 3600_000;
 
@@ -247,65 +284,96 @@ describe('gold spacing', () => {
       seen.add(task.id);
       kinds.push(task.isGold);
     }
-    expect(kinds).toHaveLength(72);
+    expect(kinds).toHaveLength(130);
     expect(kinds[0]).toBe(false);
 
-    // the regular tasks between two gold tasks, while both kinds are left
-    const firstOnlyGold = kinds.lastIndexOf(false) + 1;
+    // while both kinds are left, about one in three is gold, and not on a beat
+    const both = kinds.slice(0, Math.min(kinds.lastIndexOf(false), kinds.lastIndexOf(true)));
+    const share = both.filter(Boolean).length / both.length;
+    expect(share).toBeGreaterThan(0.15);
+    expect(share).toBeLessThan(0.55);
     const gaps: number[] = [];
     let run = 0;
-    kinds.slice(0, firstOnlyGold).forEach((gold) => {
+    for (const gold of both) {
       if (gold) {
         gaps.push(run);
         run = 0;
       } else run++;
-    });
-    const { lo, hi } = goldGapRange(goldEvery);
-    expect(gaps.length).toBeGreaterThanOrEqual(10);
-    expect(gaps.every((g) => g >= lo && g <= hi)).toBe(true);
-    expect(new Set(gaps).size).toBeGreaterThan(1);
+    }
+    expect(new Set(gaps).size).toBeGreaterThan(2);
+    // a gold task can follow a gold task: nothing after one is certain
+    expect(gaps).toContain(0);
   });
 
   it('spaces gold for each annotator on their own', async () => {
-    const { org, project } = await spaced(3, 30, 10);
+    const { org, project } = await spaced(2, 40, 20);
     const [ann, ben] = await annotators(org.id, project.id, 2);
     const start = Date.now() - 24 * 3600_000;
-    const history = new Map<string, boolean[]>([
+    const kinds = new Map<string, boolean[]>([
       [ann.id, []],
       [ben.id, []],
     ]);
-    // ann works through ten tasks before ben starts; ben's first is not gold
-    for (let i = 0; i < 10; i++) {
-      history
-        .get(ann.id)!
-        .push((await work(project.id, ann.id, new Date(start + i * 60_000)))!.isGold);
+    // the two work at the same time; each gets a sequence of their own
+    for (let i = 0; i < 12; i++) {
+      for (const user of [ann, ben]) {
+        const task = await work(project.id, user.id, new Date(start + i * 60_000));
+        kinds.get(user.id)!.push(task!.isGold);
+      }
     }
-    for (let i = 0; i < 4; i++) {
-      history
-        .get(ben.id)!
-        .push((await work(project.id, ben.id, new Date(start + (20 + i) * 60_000)))!.isGold);
-    }
-    expect(history.get(ann.id)!.filter(Boolean).length).toBeGreaterThanOrEqual(2);
-    expect(history.get(ben.id)![0]).toBe(false);
+    expect(kinds.get(ann.id)![0]).toBe(false);
+    expect(kinds.get(ben.id)![0]).toBe(false);
+    expect(kinds.get(ann.id)).not.toEqual(kinds.get(ben.id));
   });
 
-  it('does not make the first task of a session gold, even when one is due', async () => {
-    const org = await createOrg();
-    const project = await createTestProject(org.id, { reviewRequired: false });
-    await createTasks(project.id, rows(3, 'before'));
-    const gold = await createTasks(project.id, rows(1, 'gold'));
-    await makeGold(gold.map((t) => t.id));
-    await createTasks(project.id, rows(3, 'after'));
+  it('never makes the first task of a session gold, and does not force the second', async () => {
+    const { org, project } = await spaced(2, 30, 30);
     const [ann] = await annotators(org.id, project.id, 1);
-    const start = Date.now() - 24 * 3600_000;
-    // three regular tasks with spacing off, then "one in every two" is overdue
-    for (let i = 0; i < 3; i++) await work(project.id, ann.id, new Date(start + i * 60_000));
-    await prisma.project.update({ where: { id: project.id }, data: { goldEvery: 2 } });
+    const start = Date.now() - 7 * 24 * 3600_000;
+    const second: boolean[] = [];
+    for (let session = 0; session < 15; session++) {
+      const at = start + session * 3 * 3600_000;
+      expect((await work(project.id, ann.id, new Date(at)))?.isGold).toBe(false);
+      second.push((await work(project.id, ann.id, new Date(at + 60_000)))!.isGold);
+    }
+    expect(second).toContain(true);
+    expect(second).toContain(false);
+  });
 
-    const later = await work(project.id, ann.id, new Date(start + 3 * 3600_000));
-    expect(later?.isGold).toBe(false);
-    const soon = await work(project.id, ann.id, new Date(start + 3 * 3600_000 + 60_000));
-    expect(soon?.isGold).toBe(true);
+  it('decides gold timing with the secret, not with anything an annotator sees', async () => {
+    const { org, project } = await spaced(2, 10, 10);
+    const [ann] = await annotators(org.id, project.id, 1);
+    const at = Date.now() - 3600_000;
+    // one regular task, so the next claim is a draw (not the first of a session)
+    await work(project.id, ann.id, new Date(at));
+    const fresh = await reload(project.id);
+    // the same annotator, the same ids, the same times: only the secret differs
+    const kinds = new Set<boolean>();
+    for (let i = 0; i < 20; i++) {
+      const picked = await prisma.$transaction((tx) =>
+        pickNextTask(tx, {
+          project: fresh,
+          userId: ann.id,
+          now: new Date(at + 60_000),
+          secret: `other secret ${i}`,
+        }),
+      );
+      const task = await prisma.task.findUniqueOrThrow({ where: { id: picked! } });
+      kinds.add(task.isGold);
+    }
+    expect(kinds).toEqual(new Set([true, false]));
+
+    // and the secret, like the annotator's id, never reaches the work page
+    const secret = await prisma.$transaction((tx) => queueSecretFor(tx, project.id));
+    const claim = await claimNextTask(fresh, ann.id, new Date(at + 60_000));
+    const id = claim.ok ? claim.assignment.id : '';
+    const page = await run(
+      workLoader,
+      makeRequest(`/work/${id}`, { cookie: await cookieFor(ann, org.id) }),
+      { assignmentId: id },
+    );
+    const text = JSON.stringify(payload(page));
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain(ann.id);
   });
 
   it('still serves what is left when only gold or no gold remains', async () => {

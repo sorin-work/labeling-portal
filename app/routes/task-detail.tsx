@@ -481,6 +481,7 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
             value={task.consensus}
             onChange={() => {}}
             readOnly
+            viewKey={`${task.id}:consensus`}
           />
         </Card>
       )}
@@ -516,6 +517,7 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 value={a.answer}
                 onChange={() => {}}
                 readOnly
+                viewKey={a.id}
               />
               {a.reviews.length > 0 && (
                 <ul className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-sm text-slate-600">
