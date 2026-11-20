@@ -264,6 +264,8 @@ model Task {
   goldSourceId    String?
   /// annotators added over the project's overlap because the answers agreed too little
   extraSlots      Int            @default(0)
+  /// claims and submissions on the task (ACTIVE or SUBMITTED), kept by a trigger on Assignment
+  takenSlots      Int            @default(0)
   /// when the task went to adjudication
   escalatedAt     DateTime?
   /// while it waits there: what a majority of the answers says, if anything; not a result

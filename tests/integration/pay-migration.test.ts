@@ -23,15 +23,33 @@ const MIGRATIONS = join(process.cwd(), 'prisma', 'migrations');
 const name = `labeling_pay_upgrade_${process.pid}_${Date.now()}`;
 let scratch: PrismaClient;
 
-/** The statements of a migration file. These files hold plain DDL and updates, nothing with a body. */
+/**
+ * The statements of a migration file, split on the semicolons that end a
+ * line. A function body between dollar quotes is kept in one piece.
+ */
 function statements(folder: string): string[] {
-  return readFileSync(join(MIGRATIONS, folder, 'migration.sql'), 'utf8')
+  const text = readFileSync(join(MIGRATIONS, folder, 'migration.sql'), 'utf8')
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('--'))
-    .join('\n')
-    .split(/;\s*(?:\n|$)/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
+    .join('\n');
+  const quote = '$' + '$';
+  const out: string[] = [];
+  let current = '';
+  text.split(quote).forEach((part, i) => {
+    if (i % 2 === 1) {
+      // inside a body: no splitting
+      current += quote + part + quote;
+      return;
+    }
+    const pieces = part.split(/;\s*(?:\n|$)/);
+    current += pieces[0];
+    for (const piece of pieces.slice(1)) {
+      out.push(current);
+      current = piece;
+    }
+  });
+  out.push(current);
+  return out.map((statement) => statement.trim()).filter(Boolean);
 }
 
 async function apply(folders: string[]) {
