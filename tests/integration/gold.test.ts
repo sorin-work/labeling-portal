@@ -323,7 +323,8 @@ describe('changing a gold answer', () => {
       payload<{ entries: Array<{ text: string }> }>(activity).entries.map((e) => e.text),
     ).toEqual([
       'rescored gold task #1: 2 scores changed for 2 annotators (1 newly flagged, 1 no longer flagged)',
-      'changed the expected answer of gold task #1 from “positive” to “negative”: The text is clearly negative.',
+      // the answers are in the gold task's history, not in the log
+      'changed the expected answer of gold task #1: The text is clearly negative.',
     ]);
   });
 

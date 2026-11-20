@@ -2,6 +2,8 @@ import type { Role } from '@prisma/client';
 
 export type Capability =
   | 'manageUsers'
+  /** the organisation's audit trail at /audit */
+  | 'viewAudit'
   | 'manageProjects'
   | 'viewPayouts'
   | 'viewQuality'
@@ -12,6 +14,7 @@ export type Capability =
 const CAPABILITIES: Record<Role, readonly Capability[]> = {
   ADMIN: [
     'manageUsers',
+    'viewAudit',
     'manageProjects',
     'viewPayouts',
     'viewQuality',

@@ -24,32 +24,27 @@ const name = `labeling_pay_upgrade_${process.pid}_${Date.now()}`;
 let scratch: PrismaClient;
 
 /**
- * The statements of a migration file, split on the semicolons that end a
- * line. A function body between dollar quotes is kept in one piece.
+ * The statements of a migration file: split at a semicolon that ends a line,
+ * except inside a `$$` body (a function), whose own semicolons stay in it.
  */
 function statements(folder: string): string[] {
-  const text = readFileSync(join(MIGRATIONS, folder, 'migration.sql'), 'utf8')
+  const lines = readFileSync(join(MIGRATIONS, folder, 'migration.sql'), 'utf8')
     .split('\n')
-    .filter((line) => !line.trimStart().startsWith('--'))
-    .join('\n');
-  const quote = '$' + '$';
-  const out: string[] = [];
-  let current = '';
-  text.split(quote).forEach((part, i) => {
-    if (i % 2 === 1) {
-      // inside a body: no splitting
-      current += quote + part + quote;
-      return;
+    .filter((line) => !line.trimStart().startsWith('--'));
+  const result: string[] = [];
+  let current: string[] = [];
+  let inBody = false;
+  for (const line of lines) {
+    current.push(line);
+    if ((line.match(/\$\$/g) ?? []).length % 2 === 1) inBody = !inBody;
+    if (!inBody && /;\s*$/.test(line)) {
+      result.push(current.join('\n').trim().replace(/;$/, ''));
+      current = [];
     }
-    const pieces = part.split(/;\s*(?:\n|$)/);
-    current += pieces[0];
-    for (const piece of pieces.slice(1)) {
-      out.push(current);
-      current = piece;
-    }
-  });
-  out.push(current);
-  return out.map((statement) => statement.trim()).filter(Boolean);
+  }
+  const rest = current.join('\n').trim();
+  if (rest) result.push(rest);
+  return result.filter(Boolean);
 }
 
 async function apply(folders: string[]) {

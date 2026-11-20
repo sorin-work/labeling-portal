@@ -7,7 +7,13 @@ describe('RateLimiter', () => {
     const limiter = new RateLimiter(2, 1000);
     expect(limiter.hit('a', 0).allowed).toBe(true);
     expect(limiter.hit('a', 10).allowed).toBe(true);
-    expect(limiter.hit('a', 20)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+    expect(limiter.hit('a', 20)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 1,
+      justLocked: true,
+    });
+    // the lockout is new only once
+    expect(limiter.hit('a', 30).justLocked).toBe(false);
     expect(limiter.hit('b', 20).allowed).toBe(true);
   });
 

@@ -17,6 +17,7 @@ import { taskPreview } from '~/domain/preview';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
+import { logActivity } from './activity.server';
 import { projectSchema } from './projects.server';
 
 type Tx = Prisma.TransactionClient;
@@ -109,20 +110,17 @@ export async function editGoldAnswer(
         createdAt: now,
       },
     });
-    await tx.activity.create({
-      data: {
-        projectId: project.id,
-        actorId,
-        action: 'gold.edited',
-        detail: {
-          taskId,
-          position: task.position,
-          from: describeGoldAnswer(schema, task.goldAnswer),
-          to: describeGoldAnswer(schema, parsed.answer),
-          reason: input.reason,
-        },
-        createdAt: now,
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: 'gold.edited',
+      detail: {
+        taskId,
+        position: task.position,
+        reason: input.reason,
       },
+      createdAt: now,
     });
     return { ok: true };
   });
@@ -178,14 +176,13 @@ export async function setGoldRetired(
         createdAt: now,
       },
     });
-    await tx.activity.create({
-      data: {
-        projectId: project.id,
-        actorId,
-        action: input.retired ? 'gold.retired' : 'gold.restored',
-        detail: { taskId, position: changed[0].position, reason: input.reason },
-        createdAt: now,
-      },
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: input.retired ? 'gold.retired' : 'gold.restored',
+      detail: { taskId, position: changed[0].position, reason: input.reason },
+      createdAt: now,
     });
     return { ok: true };
   });
@@ -333,21 +330,20 @@ export async function applyRescore(
     }
     if (plan.changes.length > 0) {
       const task = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
-      await tx.activity.create({
-        data: {
-          projectId: project.id,
-          actorId,
-          action: 'gold.rescored',
-          detail: {
-            taskId,
-            position: task.position,
-            scores: plan.changes.length,
-            annotators: plan.impact.moved.length,
-            newlyFlagged: plan.impact.newlyFlagged,
-            noLongerFlagged: plan.impact.noLongerFlagged,
-          },
-          createdAt: now,
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId,
+        action: 'gold.rescored',
+        detail: {
+          taskId,
+          position: task.position,
+          scores: plan.changes.length,
+          annotators: plan.impact.moved.length,
+          newlyFlagged: plan.impact.newlyFlagged,
+          noLongerFlagged: plan.impact.noLongerFlagged,
         },
+        createdAt: now,
       });
     }
     return { ok: true, plan };
@@ -506,14 +502,13 @@ export async function promoteToGold(
       outcome.created.push(copy.id);
     }
     if (outcome.created.length > 0) {
-      await tx.activity.create({
-        data: {
-          projectId: project.id,
-          actorId,
-          action: 'gold.created',
-          detail: { tasks: outcome.created.length, batch: batch.name },
-          createdAt: now,
-        },
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId,
+        action: 'gold.created',
+        detail: { tasks: outcome.created.length, batch: batch.name },
+        createdAt: now,
       });
     }
     return outcome;

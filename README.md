@@ -66,7 +66,15 @@ or fix the work.
 - **Export** of finished labels as JSON Lines or CSV (both can be imported
   again), COCO, YOLO or Pascal VOC for boxes and CoNLL tags for entities,
   with pseudonyms in place of annotator addresses
-- Activity log, needs-attention list for managers, demo data
+- **Audit trail**: every change managers, reviewers and admins make to
+  projects, pay, schema, members, people, gold tasks, reviews and disputes,
+  plus sign-ins, lockouts and downloads, on a project's activity tab and on
+  `/audit` for admins with filters, pages and a CSV download. Entries are
+  never changed or removed, and hold no passwords or answers
+- **JSON API** under `/api/v1/` with tokens made on the account page:
+  projects, batch upload with an `Idempotency-Key`, label export and task
+  lookup. See [docs/api.md](docs/api.md)
+- Needs-attention list for managers, demo data
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 

@@ -48,8 +48,8 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 12  | Queue order, batch priority and gold spacing | Shipped | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Shipped | labeling      | M    | -          |
 | 14  | Image classification                         | Later   | labeling      | M    | -          |
-| 15  | Audit trail                                  | Later   | ops           | M    | -          |
-| 16  | API tokens and a JSON API                    | Later   | api           | L    | -          |
+| 15  | Audit trail                                  | Shipped | ops           | M    | -          |
+| 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
 | 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
@@ -108,117 +108,6 @@ text field.
   imports, labels, completes and exports an image project, and one in
   `tests/integration/quality.test.ts` that the quality page reports kappa for
   it.
-
-### 15. Audit trail
-
-The activity tab records what managers did to one project, and only part of
-it. Nothing is recorded outside projects: who changed a role, who set whose
-password, who downloaded the labels or the pay report. A "settings" entry does
-not say what changed. Resetting someone's qualification is not logged at all
-(the `reset-qualification` branch in `routes/project-members.tsx`), and
-neither is creating a project. The tab shows the latest 100 entries
-(`listActivity`) and older ones cannot be reached.
-
-- Data: `Activity` gets a required `orgId` (filled from the project in the
-  migration) and `projectId` becomes optional. `logActivity` in
-  `models/activity.server.ts` takes the organisation; every caller has it.
-- New events: project created (`routes/project-new.tsx`), qualification reset,
-  person added, role changed (from, to), password set by an admin, person
-  removed (the actions in `routes/people.tsx`), own password changed
-  (`routes/account.tsx`), sign-in and lockout (`routes/login.tsx`), and the
-  three downloads (`routes/project-download.ts`,
-  `routes/project-quality-export.ts`, `routes/payouts-export.ts`).
-- Settings changes say what changed, in one shape shared with item 2: the
-  `detail` of a `project.settings` entry holds `changes`, a map from field
-  name to `[before, after]`, for example `changes: { rateCents: [8, 10] }`.
-  `schema` holds the two schemas as JSON; item 2 writes that key, and if it
-  has not landed, write it here the same way. `instructions` holds the two
-  lengths of the text, not the text. `updateProject` already reads the project
-  before saving, for the instructions check; read the other fields there too
-  and compare.
-- A page `/audit` for admins (`requireRole`, a link in
-  `routes/app-layout.tsx`) with filters for person, action, project and date
-  (`readRange`), pages (`paginate`) and a CSV download (`toCsv`). The project
-  tab gets pages too.
-- `describe()` in `routes/project-activity.tsx` turns an action into a
-  sentence and falls back to the raw action name. Move it somewhere both pages
-  can use it and cover every action.
-- Tricky: never store secrets. A password event records who and whose,
-  nothing else.
-- Tricky: `actor` is required and deleted with the user (`onDelete: Cascade`).
-  An audit row should outlive the account: make it optional with `SetNull` and
-  keep the actor's name on the row.
-- Tricky: `member.added` is written before the upsert, also when the person
-  was already a member. Log after, and only when something changed.
-- Tricky: a failed sign-in for an unknown email has no user and no
-  organisation. Log lockouts for known accounts only, or the table becomes a
-  place anyone can write to.
-- Review decisions and submissions are rows already (`Review`, `Assignment`).
-  Do not copy them into the log.
-- Undecided: how long to keep entries. I lean towards for ever, until size is
-  a problem.
-- Tests: `tests/integration/projects.test.ts` has "lists what managers did on
-  the activity tab" to extend; `tests/integration/people.test.ts` for the
-  organisation events; a new test file for the page, its filters and the
-  admin-only rule.
-
-### 16. API tokens and a JSON API
-
-Everything goes through the browser. `docs/routes.md` says it plainly: there
-is no separate JSON API. A pipeline that wants to push tomorrow's tasks or
-fetch finished labels has to log in with a password, keep a session cookie and
-post forms. I want tokens that I create and revoke on the account page, and a
-small versioned API for the things a script needs.
-
-- Data: `ApiToken`: `userId`, `orgId`, `name`, `tokenHash` (SHA-256, unique),
-  `prefix` (to recognise it in the list), `readOnly`, `createdAt`,
-  `lastUsedAt`, `expiresAt`, `revokedAt`. The token is random bytes behind a
-  fixed prefix such as `lp_` and is shown once.
-- `requireApiUser(request)` in `lib/auth.server.ts` reads the
-  `Authorization: Bearer` header, looks the hash up and returns the same
-  `CurrentUser` shape as `requireUser`, so
-  `requireProject(current, id, capability)` and `can()` work unchanged. The
-  token has its user's current role; the membership is read on every request,
-  as `getCurrentUser` does.
-- Routes are listed by hand in `routes.ts`. New resource routes under
-  `api/v1/`, like `routes/healthz.ts`:
-  - `GET /api/v1/projects` and `/api/v1/projects/:id`, with the numbers from
-    `projectProgress`;
-  - `POST /api/v1/projects/:id/batches`: the body is a CSV or JSONL file. It
-    goes through `parseImport`, `createBatch` and `logActivity` like the form,
-    with the same limits, and answers with the same `{ line, message }`
-    errors;
-  - `GET /api/v1/projects/:id/export`: the same output as the download route.
-    Move the body of the loader in `routes/project-download.ts` into a
-    function both call;
-  - `GET /api/v1/projects/:id/tasks?externalId=`: status, consensus and
-    agreement of one task.
-- Tokens are managed on `/account`. `routes/account.tsx` has one form and no
-  `intent` today; it gets create, list and revoke.
-- `docs/api.md` with curl examples, and a corrected sentence in
-  `docs/routes.md`.
-- Tricky: errors. `requireUser` redirects to `/login`, and `requireProject`
-  throws text responses (`notFound`, `forbidden` in `lib/http.ts`). The API
-  answers JSON with 401, 403 and 404, never a redirect.
-- Tricky: keep the two ways in apart. No cookies on `/api` (a cookie there is
-  a cross-site request waiting to happen) and no tokens on pages.
-- Tricky: a retried upload doubles a batch. External ids are only unique
-  within one file (`seenIds` in `parseImport`), in the UI as well. Accept an
-  `Idempotency-Key` header, store it on `Batch` and answer a repeat with the
-  first result.
-- Tricky: writing `lastUsedAt` on every request is a write per read. Update it
-  at most once a minute.
-- Tricky: `makeRequest` in `tests/integration/helpers.ts` builds cookie and
-  form requests only. It needs headers and raw bodies. `MAX_UPLOAD_BYTES` is
-  exported from a route module (`routes/batch-new.tsx`) and should move next
-  to `MAX_IMPORT_ROWS`.
-- Rate limiting with the `RateLimiter` from `lib/rate-limit.server.ts`, keyed
-  by token. It is in memory and per process, like the login limiter.
-- Undecided: webhooks (a POST to a URL when a batch completes) so scripts need
-  not poll. I lean towards a later item. Scopes beyond `readOnly`: not yet.
-- Tests: a new `tests/integration/api.test.ts`: no token, revoked, expired,
-  read-only on a write, another organisation's project is 404, import and
-  export round trip, a repeated key creates one batch.
 
 ## Maybe
 
@@ -559,6 +448,50 @@ page until it has been zoomed with a button or a key. Still open: no pinch
 zoom on touch screens; entity spans keep their one-step undo and do not use
 the history yet; on an AZERTY keyboard `-` is on the 6 key, where the label
 wins, so zooming out there takes the number pad, the wheel or the button.
+
+### 15. Audit trail
+
+`Activity` belongs to an organisation, may be about no project and keeps the
+actor's name, so an entry outlives the account and the project. Every change
+managers, reviewers and admins make is written in the same transaction as
+the change: projects, settings (`detail.changes` maps a field to
+`[before, after]`, the instructions as two lengths), batches, members,
+qualification resets, gold tasks, review decisions, settled disputes, people,
+roles and passwords, plus sign-ins, lockouts of known accounts and the three
+downloads. `/audit` for admins has filters for person, action, project and
+days, pages and a CSV download; the project tab has pages. Different from the
+design: entries are append-only in the database too, through triggers that
+refuse UPDATE, DELETE and TRUNCATE and let only a foreign key cascade clear a
+link or remove an organisation's entries; review decisions
+and settled disputes get a short entry (whose work, which task, the decision,
+the QA score or the outcome) although their rows exist, because they change
+pay and quality and the trail should show them in one place; a gold edit no
+longer stores the old and new answer, and old entries lost that text in the
+migration; only admins see `/audit`, project managers see their projects'
+tabs. Tasks settled in adjudication and sent there by hand (item 11) are
+recorded as well. Still open: entries are kept for ever, and someone with the
+database owner's rights can still drop the trigger.
+
+### 16. API tokens and a JSON API
+
+Tokens are made, listed and revoked on the account page; a token is shown
+once, stored as its SHA-256 and a prefix, has a name, an expiry, a last-used
+time (written at most once a minute) and is read-only unless writing is asked
+for. `requireApiUser` is the only code that reads one and returns the same
+`CurrentUser` as the pages, with the role read on every request, and
+`apiRoute` marks the routes that take a token, says whether each reads or
+writes, refuses a read-only token on a write in one place and answers JSON
+errors. The routes are the five of the design, plus a JSON 404 for anything
+else under `/api`. Each token may make 120 requests a minute. Different from
+the design: the import page and the API share `importFile`, the download and
+the API share `labelExport`, and the task page and the lookup share
+`requireTaskViewer`, so no check exists twice; the lookup lists every task
+with the external id, as ids are unique only within a file; the key is kept
+with the SHA-256 of the body, and a used key with another file answers 422;
+an `/api/` path refuses the session even in a route that forgets `apiRoute`;
+making
+and revoking tokens is in the audit trail. Still open: webhooks and scopes
+beyond read-only, and the limit is per process like the sign-in limit.
 
 ### 17. Faster on large projects
 

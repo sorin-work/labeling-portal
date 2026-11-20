@@ -183,6 +183,25 @@ the period of its approval.
 
 ### Operations
 
+- A JSON API under `/api/v1/`: list and show projects, upload a batch (with
+  an `Idempotency-Key` so a retried upload does not double it), download the
+  labels in any export format and look a task up by its external id. It
+  answers JSON errors (401, 403, 404, 405, 429), never a redirect
+- API tokens on the account page: shown once and stored as a hash, read-only
+  unless writing is asked for, with an expiry, a last-used time and revoke.
+  A token has its person's current role and sees what they see. Each token
+  may make 120 requests a minute
+- Audit trail: every change managers, reviewers and admins make to projects,
+  settings, pay, schema, batches, members, qualification, gold tasks,
+  reviews, disputes, adjudication and people is recorded in the same transaction as the
+  change, and so are sign-ins, lockouts of known accounts and the three
+  downloads. A settings entry says which fields changed, from what to what;
+  the instructions as two lengths. Entries hold no passwords and no answers
+- `/audit` for admins lists the whole organisation's trail with filters for
+  person, action, project and days, in pages, with a CSV download. The
+  project's activity tab has pages too
+- Entries are never changed or removed: the database refuses it. They keep
+  the actor's name and stay when the account or the project is deleted
 - A `backup` service behind a compose profile dumps the database once a day
   into `./backups` and keeps the newest seven dumps; `backup once` takes a
   dump right away and `backup restore <file>` loads one into a new database

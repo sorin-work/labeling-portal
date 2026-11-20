@@ -23,7 +23,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
-  const { membership } = await requireRole(request, [...MANAGERS]);
+  const { membership, user } = await requireRole(request, [...MANAGERS]);
   const form = await request.formData();
   const parsed = parseProjectForm(form);
   if (!parsed.ok) {
@@ -35,7 +35,7 @@ export async function action({ request }: Route.ActionArgs) {
       { status: 400 },
     );
   }
-  const project = await createProject(membership.orgId, parsed.value);
+  const project = await createProject(membership.orgId, parsed.value, user.id);
   return redirect(`/projects/${project.id}`);
 }
 

@@ -8,14 +8,13 @@ import { parseProjectForm } from '~/domain/project-form';
 import { refusalMessage } from '~/domain/schema-diff';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
-import { prisma } from '~/lib/db.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
-import { logActivity } from '~/models/activity.server';
 import {
   duplicateProject,
   requireProject,
   schemaUsage,
+  setProjectStatus,
   updateProject,
 } from '~/models/projects.server';
 
@@ -70,13 +69,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   const intent = String(form.get('intent') ?? 'save');
 
   if (intent === 'duplicate') {
-    const copy = await duplicateProject(project);
-    await logActivity({
-      projectId: project.id,
-      actorId: current.user.id,
-      action: 'project.duplicated',
-      detail: { copyId: copy.id },
-    });
+    const copy = await duplicateProject(project, current.user.id);
     return redirectWithFlash(
       request,
       `/projects/${copy.id}/settings`,
@@ -86,16 +79,10 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   if (intent in STATUS_ACTIONS) {
     const change = STATUS_ACTIONS[intent];
-    if (!change.from.includes(project.status)) {
+    const changed = await setProjectStatus(project, current.user.id, change);
+    if (!changed.ok) {
       throw badRequest(`A ${project.status.toLowerCase()} project cannot be changed that way`);
     }
-    await prisma.project.update({ where: { id: project.id }, data: { status: change.to } });
-    await logActivity({
-      projectId: project.id,
-      actorId: current.user.id,
-      action: 'project.status',
-      detail: { from: project.status, to: change.to },
-    });
     return redirectWithFlash(
       request,
       `/projects/${project.id}/settings`,
@@ -107,19 +94,14 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (!parsed.ok) {
     return data({ errors: parsed.errors, saved: false, warnings: [] }, { status: 400 });
   }
-  const result = await updateProject(project.id, parsed.value);
+  // the save writes its entry in the audit trail itself, with what changed
+  const result = await updateProject(project.id, parsed.value, current.user.id);
   if (!result.ok) {
     return data(
       { errors: { schema: refusalMessage(result.breaking) }, saved: false, warnings: [] },
       { status: 400 },
     );
   }
-  await logActivity({
-    projectId: project.id,
-    actorId: current.user.id,
-    action: 'project.settings',
-    ...(result.schemaChange ? { detail: { changes: { schema: result.schemaChange } } } : {}),
-  });
   const warnings = result.changes.filter((c) => c.impact === 'warning').map((c) => c.reason);
   return { errors: undefined, saved: true, warnings };
 }

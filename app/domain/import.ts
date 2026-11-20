@@ -33,6 +33,11 @@ export type ImportResult = {
 
 export const MAX_IMPORT_ROWS = 5000;
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+/**
+ * The most an upload request may carry: the file and, for the form, room for
+ * its other fields and the multipart framing. The API body is the file alone.
+ */
+export const MAX_UPLOAD_BYTES = MAX_IMPORT_BYTES + 64 * 1024;
 /** How many problems a refusal lists before it only counts the rest. */
 export const MAX_REPORTED_ERRORS = 20;
 

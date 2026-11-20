@@ -34,6 +34,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     { to: '/earnings', label: 'Earnings', show: can(role, 'annotate') },
     { to: '/payouts', label: 'Payouts', show: can(role, 'viewPayouts') },
     { to: '/people', label: 'People', show: can(role, 'manageUsers') },
+    { to: '/audit', label: 'Audit', show: can(role, 'viewAudit') },
   ].filter((link) => link.show);
 
   // A new page puts focus at the start of its content, as a page load would,
