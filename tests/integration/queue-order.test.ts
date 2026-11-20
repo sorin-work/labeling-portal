@@ -405,7 +405,11 @@ describe('batch queue controls', () => {
       const user = await createMember(org.id, role);
       await addToProject(project.id, user);
       const cookie = await cookieFor(user, org.id);
-      for (const form of [{ intent: 'priority', priority: '9' }, { intent: 'pause' }]) {
+      const forms: Array<Record<string, string>> = [
+        { intent: 'priority', priority: '9' },
+        { intent: 'pause' },
+      ];
+      for (const form of forms) {
         const result = await run(batchAction, makeRequest(path, { cookie, form }), params);
         expect([403, 404]).toContain(statusOf(result));
       }
