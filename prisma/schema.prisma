@@ -172,8 +172,17 @@ model Project {
   assignments              Assignment[]
   qualificationAttempts    QualificationAttempt[]
   activity                 Activity[]
+  queueSecret              QueueSecret?
 
   @@index([orgId])
+}
+
+/// The key of the hashes that decide gold timing and the shuffled order of a
+/// project. A table of its own, so that loading a project never loads it.
+model QueueSecret {
+  projectId String  @id
+  secret    String  @default(dbgenerated("encode(gen_random_bytes(32), 'hex'::text)"))
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model ProjectMember {
@@ -236,8 +245,8 @@ model Task {
 
   @@index([projectId, status, position])
   @@index([batchId, position])
-  @@index([batchId, status])
-  @@index([batchId, status, position, isGold])
+  @@index([batchId, status, position])
+  @@index([batchId, status, isGold, position])
   @@index([goldSourceId])
 }
 
