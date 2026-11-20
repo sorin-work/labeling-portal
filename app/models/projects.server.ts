@@ -151,7 +151,40 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
   type Row = { metric: string; name: string | null; source: AnswerSource | null; count: number };
-  const rows = await db.$queryRaw<Row[]>`
+  const rows = await db.$queryRaw<Row[]>(schemaUsageSql(projectId));
+
+  const counts = (metric: string): AnswerCounts => {
+    const result: AnswerCounts = {};
+    for (const row of rows) {
+      if (row.metric === metric && row.source) result[row.source] = row.count;
+    }
+    return result;
+  };
+  const byName = (metric: string) => {
+    const result = new Map<string, AnswerCounts>();
+    for (const row of rows) {
+      if (row.metric !== metric || row.name === null || !row.source) continue;
+      result.set(row.name, { ...result.get(row.name), [row.source]: row.count });
+    }
+    return result;
+  };
+  return {
+    tasks: rows.find((row) => row.metric === 'tasks')?.count ?? 0,
+    answers: counts('answers'),
+    names: byName('name'),
+    multiLabel: counts('multiLabel'),
+    ties: counts('ties'),
+    scored: counts('scored'),
+    dimensions: byName('dimension'),
+  };
+}
+
+/**
+ * The statement behind `schemaUsage`, on its own so a test can look at its
+ * plan: it should take apart each different answer once, not every answer.
+ */
+export function schemaUsageSql(projectId: string): Prisma.Sql {
+  return Prisma.sql`
     WITH stored AS (
       SELECT 'submission' AS source, a.answer AS answer
       FROM "Assignment" a WHERE a."projectId" = ${projectId}
@@ -182,82 +215,67 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       JOIN "Task" t ON t.id = e.key AND t."projectId" = q."projectId" AND t."isQualification"
       WHERE q."projectId" = ${projectId}
     ),
+    -- the same value from the same place is taken apart once and counted n
+    -- times: a project has hundreds of thousands of answers but, for
+    -- classification and pairwise preferences, only a handful of different ones
     answers AS (
-      SELECT row_number() OVER () AS id, source, answer
-      FROM stored WHERE jsonb_typeof(answer) = 'object'
+      SELECT row_number() OVER () AS id, source, answer, n
+      FROM (
+        SELECT source, answer, count(*) AS n
+        FROM stored WHERE jsonb_typeof(answer) = 'object'
+        GROUP BY source, answer
+      ) different
     ),
     names AS (
-      SELECT a.id, a.source, 'labels' AS shape, e.value #>> '{}' AS name
+      SELECT a.id, a.source, a.n, 'labels' AS shape, e.value #>> '{}' AS name
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'labels'`)}) e
       WHERE jsonb_typeof(e.value) = 'string'
       UNION
-      SELECT a.id, a.source, 'spans', e.value->>'label'
+      SELECT a.id, a.source, a.n, 'spans', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'spans'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
       UNION
-      SELECT a.id, a.source, 'boxes', e.value->>'label'
+      SELECT a.id, a.source, a.n, 'boxes', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'boxes'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
     ),
+    -- each answer once per name, whichever field the name came from
+    named AS (SELECT DISTINCT id, source, n, name FROM names),
     scores AS (
-      SELECT s.id, s.source,
+      SELECT s.id, s.source, s.n,
         ${objectAt(Prisma.sql`s.answer->'scores'->'a'`)} AS a,
         ${objectAt(Prisma.sql`s.answer->'scores'->'b'`)} AS b
       FROM answers s
     ),
     scored AS (
-      SELECT id, source, a, b FROM scores WHERE a <> '{}'::jsonb OR b <> '{}'::jsonb
+      SELECT id, source, n, a, b FROM scores WHERE a <> '{}'::jsonb OR b <> '{}'::jsonb
     )
     SELECT 'tasks' AS metric, NULL::text AS name, NULL::text AS source, count(*)::int AS count
     FROM "Task" WHERE "projectId" = ${projectId}
     UNION ALL
-    SELECT 'answers', NULL, source, count(*)::int FROM answers GROUP BY source
+    SELECT 'answers', NULL, source, sum(n)::int FROM answers GROUP BY source
     UNION ALL
-    SELECT 'name', name, source, count(DISTINCT id)::int FROM names GROUP BY name, source
+    SELECT 'name', name, source, sum(n)::int FROM named GROUP BY name, source
     UNION ALL
-    SELECT 'multiLabel', NULL, source, count(*)::int
+    SELECT 'multiLabel', NULL, source, sum(n)::int
     FROM (
-      SELECT id, source FROM names WHERE shape = 'labels' GROUP BY id, source HAVING count(*) > 1
+      SELECT id, source, n FROM names WHERE shape = 'labels'
+      GROUP BY id, source, n HAVING count(*) > 1
     ) multi
     GROUP BY source
     UNION ALL
-    SELECT 'ties', NULL, source, count(*)::int
+    SELECT 'ties', NULL, source, sum(n)::int
     FROM answers WHERE answer->>'preference' = 'tie' GROUP BY source
     UNION ALL
-    SELECT 'scored', NULL, source, count(*)::int FROM scored GROUP BY source
+    SELECT 'scored', NULL, source, sum(n)::int FROM scored GROUP BY source
     UNION ALL
-    SELECT 'dimension', k.key, s.source, count(*)::int
+    SELECT 'dimension', k.key, s.source, sum(s.n)::int
     FROM scored s CROSS JOIN LATERAL jsonb_object_keys(s.a) AS k(key)
     WHERE s.b -> k.key IS NOT NULL
     GROUP BY k.key, s.source`;
-
-  const counts = (metric: string): AnswerCounts => {
-    const result: AnswerCounts = {};
-    for (const row of rows) {
-      if (row.metric === metric && row.source) result[row.source] = row.count;
-    }
-    return result;
-  };
-  const byName = (metric: string) => {
-    const result = new Map<string, AnswerCounts>();
-    for (const row of rows) {
-      if (row.metric !== metric || row.name === null || !row.source) continue;
-      result.set(row.name, { ...result.get(row.name), [row.source]: row.count });
-    }
-    return result;
-  };
-  return {
-    tasks: rows.find((row) => row.metric === 'tasks')?.count ?? 0,
-    answers: counts('answers'),
-    names: byName('name'),
-    multiLabel: counts('multiLabel'),
-    ties: counts('ties'),
-    scored: counts('scored'),
-    dimensions: byName('dimension'),
-  };
 }
 
 export type UpdateProjectResult =

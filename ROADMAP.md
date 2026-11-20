@@ -50,7 +50,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 14  | Image classification                         | Shipped | labeling      | M    | -          |
 | 15  | Audit trail                                  | Shipped | ops           | M    | -          |
 | 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
-| 17  | Faster on large projects                     | Maybe   | performance   | L    | 12         |
+| 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
@@ -58,58 +58,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 ## Later
 
 ## Maybe
-
-### 17. Faster on large projects
-
-I have only run this with a few thousand tasks. Several paths load a whole
-project into memory or walk it on every request, and an import stops at 5,000
-rows (`MAX_IMPORT_ROWS`) and 5 MB. I do not know that anyone needs more, which
-is why this is here and not above. What would have to change first:
-
-- Export: `loadExportTasks` reads every task with its assignments and reviews
-  in one query, the writers in `domain/export.ts` build one string and
-  `routes/project-download.ts` returns it. Page through the tasks by
-  `position` and return a stream. JSONL and CSV become one task at a time.
-  COCO has global lists and ids, and the zip formats from item 6 need a
-  streaming writer.
-- Quality: `projectQuality` loads every submitted and skipped assignment, with
-  answers and reviews for categorical projects, on each view of the page and
-  again for `quality.csv`. The counts per annotator can be one `GROUP BY`, as
-  `dailyThroughput` already does with `$queryRaw`. Kappa needs one value per
-  annotator and task, not the whole answer.
-- Claiming: `eligibleFor` runs a `NOT EXISTS` and a `count(*)` for each
-  candidate, in position order, until one passes. Tasks that are full but not
-  complete (waiting for review) are checked again on every claim. With 50,000
-  of those in front of the first free task, each claim reads them all. A
-  count of taken slots on `Task`, kept up to date wherever an assignment is
-  created, skipped, released or expired, would let an index answer the
-  question.
-- Import: `createBatch` is one `createMany`, which is fine for 5,000 rows.
-  Raising the cap means inserting in chunks and reading the upload as a
-  stream; the action calls `file.text()`.
-- Lists: `routes/project-annotator.tsx` shows a person's latest 50 entries
-  with no pages.
-- Schema edits: `schemaUsage` in `models/projects.server.ts` unnests every
-  stored answer of the project in one statement, about two seconds at 200,000
-  tasks, on every load of the settings page and again inside a save that
-  changes the schema. Keep the counts per name up to date where answers are
-  written, or count only when the schema field is edited. The second also
-  shortens the window item 2 leaves open.
-- Tricky: the counter is a second source of truth for the queue. Expiry is
-  lazy (`releaseExpiredClaims` is one `updateMany` at the next claim), so the
-  counter has to drop in that same statement. A test should run a random
-  series of claims, skips, releases, expiries and reviews and then compare
-  every counter with a fresh count.
-- Tricky: proving it in CI. Timing on a shared runner is noise. Build a
-  fixture of some 20,000 tasks with `createMany` and assert on work done: rows
-  read by the claim query, from `EXPLAIN (ANALYZE, FORMAT JSON)`, and rows
-  fetched per export page.
-- Depends on item 12: the faster claim has to keep the ordering rules that
-  item adds (batch priority and pause, shuffled order, gold spacing). Items 6,
-  10 and 11 touch the same export and queue code without being needed first.
-- Undecided: how much of this to do without a real large project. Streaming
-  export and SQL aggregates are plain wins. The counter adds a way for the
-  queue to be wrong, and I would only add it with the consistency test.
 
 ### 18. Pre-labeling hook
 
@@ -512,3 +460,33 @@ an `/api/` path refuses the session even in a route that forgets `apiRoute`;
 making
 and revoking tokens is in the audit trail. Still open: webhooks and scopes
 beyond read-only, and the limit is per process like the sign-in limit.
+
+### 17. Faster on large projects
+
+Measured on a fixture of 200,000 tasks (half complete, 40% full and waiting
+for review, gold every 50th), old and new code side by side on the same data,
+with identical results for the pick, the dashboard count, the schema check and
+the quality page. Claiming: `Task.takenSlots` counts a task's active claims
+and submissions, kept by a trigger on `Assignment` in the statement that
+writes it, so no code path can miss it; `eligibleFor` compares it on the
+task's row, and `claimNextTask` and `countAvailable` mark expired claims first
+so the counter equals the old count. A claim past 80,000 full tasks went from
+about 300 ms to 80 ms and the dashboard count about three times faster; a
+shuffled claim hashes and sorts only tasks with a free slot, about 650 ms to
+120 ms. Quality: two statements in place of nested relations, about 25 s to
+4 s, with the per-annotator loop unchanged. Schema check: each different
+answer is taken apart once and counted as many times as it occurs, 2 to 3 s
+to under 1 s for classification (no gain for entities or
+boxes, where answers are all different). The annotator page has pages. CI has
+a 20,000 task fixture and asserts work done, not time: assignment rows read by
+the claim, the number of times answers are unnested, the statements the
+quality page runs, and a random series that compares every counter with a
+fresh count. Different from the design: export paging and streaming had
+already come with item 6, so this item adds nothing there; counts per
+annotator stay in the JavaScript loop over rows read in SQL instead of a
+`GROUP BY`, which keeps the results the same to the last digit. Left out: the
+import cap stays at 5,000 rows and 5 MB, since nobody has asked for more, and
+the schema check still runs on each load of the settings page. Still open: a
+claim still visits each full task's row (an index cannot hold a comparison
+with the project's overlap), and the trigger makes bulk inserts of
+assignments slower, which only a fixture does.
