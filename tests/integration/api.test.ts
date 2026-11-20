@@ -132,13 +132,14 @@ describe('the api refuses', () => {
   it('a request without a token, with a cookie only, or with a bad token, as JSON 401', async () => {
     const { org, person } = await setup();
     const cookie = await cookieFor(person, org.id);
-    for (const headers of [
+    const variants: Array<Record<string, string>> = [
       {},
       { Cookie: cookie },
       bearer('lp_not-a-token'),
       bearer('something-else'),
       { Authorization: 'Basic abc' },
-    ]) {
+    ];
+    for (const headers of variants) {
       const result = await call(projectsLoader, '/api/v1/projects', { headers });
       expect(result.status, JSON.stringify(headers)).toBe(401);
       expect(result.json?.error).toEqual(expect.any(String));
