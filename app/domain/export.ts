@@ -25,6 +25,8 @@ export type ExportTask = {
   data: Record<string, unknown>;
   status: string;
   consensus: Answer | null;
+  /** where the consensus came from: the accepted answers, or a reviewer in adjudication */
+  consensusSource?: 'majority' | 'adjudicated' | null;
   agreement: number | null;
   annotations: ExportAnnotation[];
 };
@@ -49,6 +51,7 @@ export function toJsonl(schema: TaskSchema, tasks: ExportTask[]): string {
         status: task.status.toLowerCase(),
         data: task.data,
         consensus: withSpanText(schema, task.data, task.consensus),
+        consensus_source: task.consensusSource ?? null,
         agreement: task.agreement,
         annotations: task.annotations.map((a) => ({
           annotator: a.annotator,

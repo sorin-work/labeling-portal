@@ -80,6 +80,7 @@ export default function ProjectBatches({ loaderData }: Route.ComponentProps) {
                       </div>
                       <span className="w-40 text-xs text-slate-500">
                         {batch.complete}/{batch.total} done
+                        {batch.adjudication > 0 && `, ${batch.adjudication} to adjudicate`}
                         {batch.gold > 0 && `, ${batch.gold} gold`}
                         {batch.qualification > 0 && `, ${batch.qualification} test`}
                       </span>
