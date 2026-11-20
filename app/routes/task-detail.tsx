@@ -75,13 +75,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       activeSeconds: a.activeSeconds,
       skipReason: a.skipReason,
       answer: a.answer ? finalAnswer<Answer>(a.answer, a.reviews) : null,
-      corrected: a.reviews.some((r) => r.decision === 'FIX'),
+      corrected: a.reviews.some((r) => r.decision === 'FIX' && !r.overturnedAt),
       reviews: a.reviews.map((r) => ({
         id: r.id,
         reviewer: r.reviewer.name,
         decision: r.decision,
         qaScore: r.qaScore,
         feedback: r.feedback,
+        overturned: r.overturnedAt !== null,
       })),
     })),
   };
@@ -175,6 +176,7 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
                       {r.decision.replace('_', ' ').toLowerCase()}
                       {r.qaScore !== null && ` (score ${r.qaScore})`}
                       {r.feedback && ` - ${r.feedback}`}
+                      {r.overturned && ' (overturned after a dispute)'}
                     </li>
                   ))}
                 </ul>
