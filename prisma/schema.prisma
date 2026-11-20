@@ -65,6 +65,8 @@ enum DisputeStatus {
   OPEN
   UPHELD
   OVERTURNED
+  /// taken back by the annotator before anyone settled it
+  WITHDRAWN
 }
 
 enum PayMode {
