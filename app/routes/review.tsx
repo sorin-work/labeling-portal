@@ -105,7 +105,16 @@ const DECISION_STYLE: Record<string, string> = {
   FIX: 'text-sky-700',
 };
 
-export default function Review({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * Approving, sending back or fixing moves on to the next submission without
+ * leaving this route, so React would keep the page's state. The key makes the
+ * score, the feedback and the fix start fresh for every submission.
+ */
+export default function Review(props: Route.ComponentProps) {
+  return <ReviewPage key={props.loaderData.assignment.id} {...props} />;
+}
+
+function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, assignment, task, history, ownWork } = loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
