@@ -42,3 +42,16 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+      # The tests truncate every table as they go, so the demo data is put in
+      # first. Then the backup loop runs against made-up clocks, the database
+      # is dumped, the dump is restored into a scratch database and the row
+      # counts are compared. The tools come from the image the backup service
+      # runs in, since pg_dump has to match the server.
+      - name: Check that a backup restores
+        run: |
+          npm run db:seed
+          docker run --rm --network host \
+            -e PGHOST=localhost -e PGUSER=labeling -e PGPASSWORD=labeling -e PGDATABASE=labeling_test \
+            -v "${{ github.workspace }}/docker:/scripts:ro" \
+            postgres:17-alpine sh /scripts/check-backup.sh
