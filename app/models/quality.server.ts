@@ -13,7 +13,14 @@ export type AnnotatorStats = {
   userId: string;
   name: string;
   submitted: number;
+  /** review decisions on their work; sent-back work can have several */
   reviewed: number;
+  /** submissions a reviewer could look at, so gold tasks are left out */
+  reviewable: number;
+  /** how many of those a reviewer has decided on */
+  reviewedSubmissions: number;
+  /** the part of their work the approval rate is based on */
+  reviewedShare: number | null;
   approved: number;
   sentBack: number;
   skipped: number;
@@ -67,6 +74,9 @@ export async function projectQuality(project: Project) {
         name: a.user.name,
         submitted: 0,
         reviewed: 0,
+        reviewable: 0,
+        reviewedSubmissions: 0,
+        reviewedShare: null,
         approved: 0,
         sentBack: 0,
         skipped: 0,
@@ -96,6 +106,8 @@ export async function projectQuality(project: Project) {
       if (a.goldScore !== null) stats.gold.push(a.goldScore);
       continue;
     }
+    stats.reviewable += 1;
+    if (a.reviews.length > 0) stats.reviewedSubmissions += 1;
     for (const review of a.reviews) {
       stats.reviewed += 1;
       if (review.decision === 'APPROVE') stats.approved += 1;
@@ -132,6 +144,7 @@ export async function projectQuality(project: Project) {
         goldAttempts: gold.length,
         goldAccuracy: goldMean === null ? null : round(goldMean, 4),
         flagged: isGoldFlagged(goldMean, gold.length),
+        reviewedShare: s.reviewable ? round(s.reviewedSubmissions / s.reviewable, 4) : null,
         approvalRate: s.reviewed ? round(s.approved / s.reviewed, 4) : null,
         avgQaScore: avgQa === null ? null : round(avgQa, 2),
         avgSeconds: avgSec === null ? null : Math.round(avgSec),
