@@ -51,6 +51,10 @@ export function parseGold(
       if (preference !== 'A' && preference !== 'B' && preference !== 'tie') {
         return { ok: false, error: 'Gold preference must be A, B or tie' };
       }
+      // as for an annotator's answer: no tie where the schema does not allow one
+      if (preference === 'tie' && !schema.allowTie) {
+        return { ok: false, error: 'Ties are not allowed here' };
+      }
       return { ok: true, answer: { preference, scores: { a: {}, b: {} }, rationale: '' } };
     }
     case 'bbox': {
