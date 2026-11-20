@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 
+import { Pagination } from '~/components/pagination';
 import { Badge, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { shownReview } from '~/domain/disputes';
@@ -8,6 +9,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { DISPUTE_BADGES, formatDateTime, REVIEW_BADGES } from '~/lib/format';
 import { notFound } from '~/lib/http';
+import { paginate, readPage } from '~/lib/pagination';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-annotator';
@@ -25,14 +27,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   });
   if (!annotator) throw notFound('Annotator not found');
 
+  const where = {
+    projectId: project.id,
+    userId: annotator.id,
+    status: { in: ['SUBMITTED' as const, 'SKIPPED' as const] },
+  };
+  // the latest first, 50 to a page
+  const page = paginate(
+    await prisma.assignment.count({ where }),
+    readPage(new URL(request.url)),
+    50,
+  );
   const work = await prisma.assignment.findMany({
-    where: {
-      projectId: project.id,
-      userId: annotator.id,
-      status: { in: ['SUBMITTED', 'SKIPPED'] },
-    },
-    orderBy: { claimedAt: 'desc' },
-    take: 50,
+    where,
+    orderBy: [{ claimedAt: 'desc' }, { id: 'desc' }],
+    skip: page.skip,
+    take: page.take,
     include: {
       task: {
         select: { id: true, externalId: true, data: true, isGold: true, goldRetiredAt: true },
@@ -48,6 +58,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     projectId: project.id,
     annotator,
+    page,
     work: work.map((a) => ({
       id: a.id,
       taskId: a.task.id,
@@ -69,7 +80,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
-  const { projectId, annotator, work } = loaderData;
+  const { projectId, annotator, work, page } = loaderData;
   return (
     <div>
       <PageHeader
@@ -134,6 +145,7 @@ export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
           })}
         </ul>
       )}
+      <Pagination info={page} />
     </div>
   );
 }
