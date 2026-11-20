@@ -89,6 +89,8 @@ function exportPage(
       consensus: true,
       adjudicatedAt: true,
       agreement: true,
+      suggestion: true,
+      suggestionSource: true,
       batch: { select: { name: true } },
       assignments: {
         where: { status: 'SUBMITTED', reviewStatus: { in: [...ACCEPTED_STATUSES] } },
@@ -99,6 +101,8 @@ function exportPage(
           reviewStatus: detailed,
           activeSeconds: detailed,
           submittedAt: detailed,
+          fromSuggestion: detailed,
+          suggestionUnchanged: detailed,
           user: withEmail ? { select: { email: true } } : false,
           reviews: {
             orderBy: { createdAt: 'asc' },
@@ -147,6 +151,10 @@ export async function* exportTasks(
         consensus: task.consensus as Answer | null,
         consensusSource: consensusSource(task),
         agreement: task.agreement,
+        suggestion:
+          task.suggestion === null
+            ? null
+            : { answer: task.suggestion as Answer, source: task.suggestionSource ?? 'file' },
         annotations: task.assignments.map((a) => {
           // the score of the last review that gave one and was not overturned
           const scored = standingReviews(a.reviews).filter((r) => r.qaScore != null);
@@ -157,6 +165,8 @@ export async function* exportTasks(
             qaScore: scored.length ? (scored[scored.length - 1].qaScore ?? null) : null,
             activeSeconds: a.activeSeconds ?? 0,
             submittedAt: a.submittedAt?.toISOString() ?? null,
+            fromSuggestion: a.fromSuggestion ?? false,
+            suggestionUnchanged: a.suggestionUnchanged ?? null,
           };
         }),
       };

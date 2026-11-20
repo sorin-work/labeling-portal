@@ -9,6 +9,7 @@ import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { lowestGoldTasks } from '~/models/gold.server';
 import { requireProject } from '~/models/projects.server';
+import { suggestionQuality } from '~/models/prelabel.server';
 import { dailyThroughput, projectQuality } from '~/models/quality.server';
 
 import type { Route } from './+types/project-quality';
@@ -20,12 +21,13 @@ export function meta({ matches }: Route.MetaArgs) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'viewQuality');
-  const [quality, daily, lowestGold] = await Promise.all([
+  const [quality, daily, lowestGold, suggestions] = await Promise.all([
     projectQuality(project),
     dailyThroughput(project.id),
     lowestGoldTasks(project),
+    suggestionQuality(project),
   ]);
-  return { ...quality, daily, lowestGold, projectId: project.id };
+  return { ...quality, daily, lowestGold, suggestions, projectId: project.id };
 }
 
 function pct(value: number | null): string {
@@ -58,7 +60,8 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
 ];
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
-  const { annotators, agreement, skipReasons, daily, lowestGold, projectId } = loaderData;
+  const { annotators, agreement, skipReasons, daily, lowestGold, suggestions, projectId } =
+    loaderData;
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
     key: 'submitted',
     desc: true,
@@ -277,6 +280,61 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+      )}
+
+      {suggestions.tasks > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Suggested answers
+          </h2>
+          <p className="mb-2 text-sm text-slate-600">
+            {suggestions.tasks} task{suggestions.tasks === 1 ? ' has' : 's have'} a suggested
+            answer. Every annotator of a task sees the same suggestion, so agreement and the
+            consensus lean towards it: high agreement here says less than on tasks without one.
+            Suggestions are not answers and count nowhere else.
+          </p>
+          {suggestions.againstGold.length > 0 && (
+            <ul className="mb-3 text-sm">
+              {suggestions.againstGold.map((g) => (
+                <li key={g.source}>
+                  {g.source === 'file'
+                    ? 'Suggestions from the import file'
+                    : `The ${g.source} rule`}{' '}
+                  scores <span className="font-medium">{pct(g.score)}</span> against the gold
+                  answers on {g.tasks} gold task{g.tasks === 1 ? '' : 's'}.
+                </li>
+              ))}
+            </ul>
+          )}
+          {suggestions.annotators.length > 0 && (
+            <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2">Annotator</th>
+                    <th className="px-4 py-2 text-right">With a suggestion</th>
+                    <th className="px-4 py-2 text-right">Handed in unchanged</th>
+                    <th className="px-4 py-2 text-right">Average time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {suggestions.annotators.map((a) => (
+                    <tr key={a.userId}>
+                      <td className="px-4 py-2 font-medium">{a.name}</td>
+                      <td className="px-4 py-2 text-right">{a.withSuggestion}</td>
+                      <td className="px-4 py-2 text-right">
+                        {pct(a.withSuggestion ? a.unchanged / a.withSuggestion : null)}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {a.avgSeconds === null ? '–' : formatDuration(a.avgSeconds)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       )}

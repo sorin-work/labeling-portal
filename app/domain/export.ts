@@ -28,6 +28,10 @@ export type ExportAnnotation = {
   activeSeconds: number;
   /** ISO 8601, UTC */
   submittedAt: string | null;
+  /** the annotator started from the task's suggestion */
+  fromSuggestion?: boolean;
+  /** with a suggestion: handed in exactly as suggested */
+  suggestionUnchanged?: boolean | null;
 };
 
 export type ExportTask = {
@@ -41,6 +45,8 @@ export type ExportTask = {
   consensusSource?: 'majority' | 'adjudicated' | null;
   agreement: number | null;
   annotations: ExportAnnotation[];
+  /** the task's suggested answer and where it came from; never an annotation */
+  suggestion?: { answer: Answer; source: string } | null;
 };
 
 export type ExportContext = { schema: TaskSchema; projectName: string; now: Date };
@@ -104,8 +110,17 @@ export function jsonlLine(schema: TaskSchema, task: ExportTask): string {
       qa_score: a.qaScore,
       active_seconds: a.activeSeconds,
       submitted_at: a.submittedAt,
+      from_suggestion: a.fromSuggestion ?? false,
+      suggestion_unchanged: a.suggestionUnchanged ?? null,
     })),
     consensus_source: task.consensusSource ?? null,
+    // so the effect of suggestions can be measured later
+    suggestion: task.suggestion
+      ? {
+          answer: withSpanText(schema, task.data, task.suggestion.answer),
+          source: task.suggestion.source,
+        }
+      : null,
   });
 }
 
