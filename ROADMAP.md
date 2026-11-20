@@ -144,8 +144,12 @@ schema.
   the diff against the saved schema as well and show it before the save.
 - The way out for a real redesign exists: "Duplicate" (`duplicateProject`)
   copies the setup into a new draft without tasks. The error should say so.
-- Put the list of changes into the `detail` of the `project.settings` activity
-  entry, which is empty today.
+- Record the change in the `project.settings` activity entry, whose `detail`
+  is empty today, as `detail.changes.schema = [before, after]` with the two
+  schemas as JSON. This is the one shape for settings changes, a map from
+  field name to `[before, after]`, and item 15 uses it for every other field.
+  The list from `diffSchema` is not stored: the activity page runs the diff on
+  the pair when it describes the entry.
 - Tricky: tasks and answers are separate checks. A draft project with imported
   tasks and no answers can still be broken by a field rename.
 - Undecided: a "rename this label everywhere" action that rewrites the stored
@@ -821,11 +825,14 @@ neither is creating a project. The tab shows the latest 100 entries
   (`routes/account.tsx`), sign-in and lockout (`routes/login.tsx`), and the
   three downloads (`routes/project-download.ts`,
   `routes/project-quality-export.ts`, `routes/payouts-export.ts`).
-- Settings changes say what changed. `updateProject` already reads the project
-  before saving, for the instructions check; read the other fields there too,
-  compare, and store `changes: { rateCents: [8, 10] }`. For the instructions
-  store that they changed, not the text. For the schema store before and
-  after.
+- Settings changes say what changed, in one shape shared with item 2: the
+  `detail` of a `project.settings` entry holds `changes`, a map from field
+  name to `[before, after]`, for example `changes: { rateCents: [8, 10] }`.
+  `schema` holds the two schemas as JSON; item 2 writes that key, and if it
+  has not landed, write it here the same way. `instructions` holds the two
+  lengths of the text, not the text. `updateProject` already reads the project
+  before saving, for the instructions check; read the other fields there too
+  and compare.
 - A page `/audit` for admins (`requireRole`, a link in
   `routes/app-layout.tsx`) with filters for person, action, project and date
   (`readRange`), pages (`paginate`) and a CSV download (`toCsv`). The project
