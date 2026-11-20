@@ -185,10 +185,12 @@ saved. The rule lives in the model, so it holds for any form post, not only
 for the settings page. The page gets the same counts from its loader and
 shows what an edit would do while the manager types.
 
-"Stored answers" are the five places an answer is kept: submissions
+"Stored answers" are the six places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
-answers (`Task.goldAnswer`), consensus answers (`Task.consensus`) and
-qualification attempts (`QualificationAttempt.answers`).
+answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
+a dispute was about (`Dispute.answer`) and qualification attempts
+(`QualificationAttempt.answers`). A correction that a dispute overturned
+still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |

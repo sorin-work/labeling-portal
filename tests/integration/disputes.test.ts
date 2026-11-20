@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { reviewerStats } from '~/models/annotator-stats.server';
 import { openDispute, resolveDispute } from '~/models/disputes.server';
 import { payoutReport } from '~/models/payouts.server';
+import { schemaUsage } from '~/models/projects.server';
 import { projectQuality } from '~/models/quality.server';
 import { resubmitAssignment } from '~/models/queue.server';
 import { action as reviseAction, loader as reviseLoader } from '~/routes/my-work-revise';
@@ -491,6 +492,17 @@ describe('settling a dispute', () => {
       disputes: [{ status: 'OPEN', resolvedById: null, resolution: null, resolvedAt: null }],
       reviews: [{ overturnedAt: null }],
     });
+  });
+
+  it('keeps the disputed answer as stored work that a schema edit must respect', async () => {
+    const s = await disputed();
+    await settle(s, s.disputeId, s.cookies.second, { intent: 'uphold', resolution: 'Stands' });
+    await resubmitAssignment(s.submission.id, s.ann.id, { labels: ['negative'] });
+
+    // the submission no longer says "positive"; the dispute record still does
+    const usage = await schemaUsage(s.project.id);
+    expect(usage.names.get('positive')).toBe(1);
+    expect(usage.names.get('negative')).toBe(1);
   });
 
   it('lists disputes for reviewers with the open count on the tab', async () => {
