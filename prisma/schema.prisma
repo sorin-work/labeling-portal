@@ -245,6 +245,8 @@ model Task {
   extraSlots      Int          @default(0)
   /// when the task went to adjudication
   escalatedAt     DateTime?
+  /// while it waits there: what a majority of the answers says, if anything; not a result
+  majority        Json?
   /// who settled the task in adjudication, when and why; their answer is the consensus
   adjudicatedById String?
   adjudicatedAt   DateTime?
