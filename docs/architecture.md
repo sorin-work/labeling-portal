@@ -422,6 +422,8 @@ schema union:
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.
+   A format of its own for the kind is one more row in `EXPORT_FORMATS`; the
+   download route and the export page read that table.
 5. `app/domain/schema-diff.ts`: which edits of the new schema are safe. If its
    answers name labels in a new place, `schemaUsage` in
    `app/models/projects.server.ts` has to count them.

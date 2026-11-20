@@ -16,7 +16,8 @@ or fix the work.
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
   rationale) and bounding boxes on images, all with keyboard shortcuts
-- **Import** CSV or JSONL into batches with per-line error reports, example
+- **Import** CSV, TSV, JSON Lines or a JSON array into batches. A file goes
+  in completely or not at all, with the lines that failed listed; example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
   abandoned claims, one extension per claim, skip with a reason, release
@@ -42,7 +43,9 @@ or fix the work.
   had when it was made, and work counts in the period it became payable
 - **Earnings** page where everyone sees their own money: what is payable for
   a period and what is still waiting for review or was sent back
-- **Export** of finished labels as JSONL, CSV or COCO (box projects)
+- **Export** of finished labels as JSON Lines or CSV (both can be imported
+  again), COCO, YOLO or Pascal VOC for boxes and CoNLL tags for entities,
+  with pseudonyms in place of annotator addresses
 - Activity log, needs-attention list for managers, demo data
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).

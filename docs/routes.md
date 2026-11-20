@@ -45,13 +45,13 @@ from the session, so nobody can open someone else's.
 
 These are resource routes that return files or JSON instead of pages.
 
-| Path                                               | Returns                                        |
-| -------------------------------------------------- | ---------------------------------------------- |
-| `GET /healthz`                                     | `{"status":"ok","database":"ok"}` or 503       |
-| `GET /projects/:id/download?format=&scope=&batch=` | `jsonl`, `csv` or `coco` (box projects) export |
-| `GET /projects/:id/example?format=csv\|jsonl`      | Example import file for the project's schema   |
-| `GET /projects/:id/quality.csv`                    | Annotator quality table                        |
-| `GET /payouts/export?from=&to=`                    | Payout CSV, one row per person, project, rate  |
+| Path                                                           | Returns                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /healthz`                                                 | `{"status":"ok","database":"ok"}` or 503                                 |
+| `GET /projects/:id/download?format=&scope=&batch=&annotators=` | Label export as a stream: `jsonl`, `csv`, `coco`, `yolo`, `voc`, `conll` |
+| `GET /projects/:id/example?format=csv\|jsonl`                  | Example import file for the project's schema                             |
+| `GET /projects/:id/quality.csv`                                | Annotator quality table                                                  |
+| `GET /payouts/export?from=&to=`                                | Payout CSV, one row per person, project, rate                            |
 
 Projects from another organisation answer 404, not 403, so their ids cannot
 be probed.

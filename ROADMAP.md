@@ -39,7 +39,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Shipped | payouts       | M    | -          |
-| 6   | More import and export formats               | Next    | import/export | M    | -          |
+| 6   | More import and export formats               | Shipped | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
@@ -121,56 +121,6 @@ shows.
   walk through the pairwise groups, and for the "is this text entry" rule as a
   pure function. Key handling inside components cannot be tested until item 8
   adds a DOM test setup, so keep the logic outside the components.
-
-### 6. More import and export formats
-
-Export writes JSONL, CSV and, for box projects, COCO. Whoever trains a model
-on the labels then writes the same converters again: token tags for entity
-projects, YOLO files for boxes. Import reads CSV and JSON Lines, and a `.json`
-file is taken for JSON Lines (`detectFormat` in `domain/import.ts`), so an
-ordinary JSON array is rejected line by line ("Not valid JSON").
-
-- Formats are spread over three places: the `FORMATS` map and the conditional
-  in `routes/project-download.ts`, the radio list in
-  `routes/project-export.tsx` (with its own `kind === 'BBOX'` check) and the
-  writers in `domain/export.ts` (`toJsonl`, `toCsvExport`, `toCoco`). First
-  make one table (name, label, hint, kinds, content type, extension, writer)
-  that both routes read.
-- CoNLL-style BIO tags for entity projects: one token and its tag per line, an
-  empty line between tasks. This needs a small tokenizer with offsets in
-  `domain/`. Like COCO it uses the consensus, or the single accepted answer
-  when there is no consensus.
-- YOLO for box projects: one text file per image with `class cx cy w h`
-  divided by `imageWidth` and `imageHeight` (both are in `BboxAnswer`), and a
-  `classes.txt` in schema order. Pascal VOC (one XML file per image) is the
-  same data in another wrapper.
-- Both are many files, so the download is a zip, and the repo has no zip code.
-  A writer for stored or deflated entries is under a hundred lines with Node's
-  `zlib` (`deflateRawSync`, `crc32`).
-- Annotator identity: every exported row carries the annotator's email
-  (`a.user.email` in `models/export.server.ts`). Exports get passed around.
-  Add an option for stable pseudonyms, for example `ann_` plus eight hex
-  characters of a SHA-256 over project id and user id.
-- Import: JSON arrays in `readRecords`, with "item 3" where the other formats
-  say "line 3". `parseCsvRecords` in `domain/csv.ts` hard-codes the comma; a
-  delimiter parameter gives TSV, and sniffing the header line gives the
-  semicolon files that spreadsheet programs write in many locales.
-- Tricky: spans are character offsets and need not line up with tokens
-  (`trimSelection` trims whitespace only, so a span can cover half a word).
-  Tag every token the span overlaps and count the spans that did not line up.
-- Tricky: file names inside the zip come from `externalId` or the image URL.
-  They need cleaning (no slashes, no `..`) and a suffix when two tasks share a
-  name.
-- Tricky: `Batch.format` is a Prisma enum with `CSV` and `JSONL`. A JSON array
-  or a TSV file either records the nearest of those or the enum grows with a
-  migration.
-- Undecided: `fflate` instead of a hand-written zip writer. I lean towards
-  writing it and using `fflate` as a dev dependency to read the result back in
-  tests. And which identity is the default: I lean towards pseudonyms, with
-  `annotators=email` in the URL for the old output.
-- Tests: `tests/unit/export.test.ts` and `tests/unit/import.test.ts` for the
-  writers and readers, `tests/integration/export.test.ts` for the downloads.
-  `docs/import-export.md` gets the new formats.
 
 ### 8. Accessibility pass
 
@@ -847,6 +797,27 @@ does not record payments. Still open: the rates of work from before the
 migration are the project's rate of that day, which is an approximation, and
 marking a period as paid, bonuses, reviewer pay and other currencies remain
 out.
+
+### 6. More import and export formats
+
+One table, `EXPORT_FORMATS` in `domain/export.ts`, feeds the download route
+and the export page. New in it: CoNLL BIO tags for entity projects (with a
+tokenizer in `domain/tokenize.ts`) and YOLO and Pascal VOC for boxes, as a
+zip from a writer in `domain/zip.ts`. Exports stream task by task and name
+annotators by a pseudonym unless `annotators=email` is asked for. Import
+reads JSON arrays, tab-separated and semicolon files, and `Batch.format`
+grew `JSON` and `TSV`. Different from the design: a file is imported
+completely or not at all, so "skip invalid rows" is gone; the JSON Lines and
+CSV exports can be imported again, the consensus coming back as the gold
+answer, and the CSV export got `submitted_at`, `answer` and `data` columns
+for that; CSV cells that a spreadsheet would run as a formula are guarded;
+the upload is cut off at 5 MB while it is read; a batch is refused when the
+schema changed under it; and the count of spans that do not line up with
+tokens is on the export page, on request, because a stream cannot report it.
+The zip is read back in the tests by Python's `zipfile` and a small reader
+instead of `fflate`. Still open: a zip holds at most 65,533 tasks (no zip64),
+COCO keeps its box list in memory while it streams the images, and the
+annotations of single annotators do not come back from a re-import.
 
 ### 7. Scheduled backups
 

@@ -23,6 +23,18 @@
   and a reload continues from there. Revising sent-back work keeps a draft the
   same way; the qualification test keeps its answers in the browser tab. What
   is kept in the tab belongs to one user and is removed on sign-out
+- Import reads tab-separated files, semicolon CSV files and JSON arrays next
+  to CSV and JSON Lines, and takes a quote inside a field as text
+- A file is imported completely or not at all. The option to skip invalid
+  rows is gone; the refusal lists the first 20 problems and counts the rest
+- An upload is cut off at 5 MB instead of being read first, and zip and gzip
+  files are refused without being unpacked
+- Image addresses for box projects have to be http or https URLs or a path on
+  the portal; `//host` addresses are refused now. The server never fetches
+  them
+- A gold answer for a comparison may only be a tie where the schema allows
+  ties, and a batch is refused when the schema changed while its file was
+  read
 
 ### Review and quality
 
@@ -68,6 +80,19 @@
   paid on hourly projects. It is saved with the revision draft, so a reload
   does not lose it. A revision is credited at most the project's time limit,
   and a task at most three time limits in all
+- New export formats: YOLO and Pascal VOC (a zip with one file per image) for
+  box projects and CoNLL BIO tags for entity projects
+- Exports name annotators by a pseudonym that is stable within a project.
+  `annotators=email` in the download address gives the email address as
+  before
+- Exports are written as a stream, task by task, so a large project no longer
+  has to fit in memory
+- The CSV export has three more columns at the end (`submitted_at`, `answer`,
+  `data`), and a cell that starts with `=`, `+`, `-` or `@` gets a quote in
+  front so that a spreadsheet does not run it. The payout and quality CSV
+  files are guarded the same way
+- The JSON Lines and CSV exports can be imported again: tasks come back with
+  their data and external id, and the consensus as the gold answer
 
 **Upgrade note.** The day work became payable is stored from this version on
 (`Assignment.payableAt`). The migration sets it to the submission date for
