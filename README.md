@@ -116,8 +116,19 @@ that was suspended or switched off catches up when it is back.
 After each dump only the newest seven are kept. Files with any other name are
 left alone: rename a dump to keep it for good. How old a dump is, and which
 ones are the oldest, is read from the time in the file name and never from
-the file's modification time. A dump dated in the future, which is what a
-clock that was set back leaves behind, counts as made now and not as overdue.
+the file's modification time.
+
+A dump dated in the future is what a wrong clock leaves behind. Such dumps
+are left out everywhere:
+
+- They do not say how old the newest dump is. The newest dump that is not
+  dated in the future decides, so next to an older dump a new one is made at
+  once. If every dump is dated in the future, the service waits a full day
+  before its first dump instead of dumping at once.
+- They are never removed automatically and do not count towards the seven.
+  The dumps with a sane date get all seven places.
+- Every start and every dump logs a warning that names them. Look at them
+  and remove or rename them by hand.
 
 | Variable                  | Default     | Purpose                               |
 | ------------------------- | ----------- | ------------------------------------- |
@@ -131,22 +142,33 @@ A dump right now, for example before an upgrade:
 docker compose run --rm backup once
 ```
 
-To restore, stop the app, name the dump and start the app again:
+To restore, stop everything that uses the database, which is the app and the
+backup service, name the dump, and start them again:
 
 ```bash
-docker compose stop app
+docker compose --profile backup stop app backup
 docker compose run --rm backup restore labeling-20261120T030000Z.dump
-docker compose start app
+docker compose start app        # and backup, if you run it
 ```
 
 `restore` without a file name lists the dumps. The restore replaces the whole
-database, so everything written after the dump is gone. The dump is loaded
-into a new database first, and that one takes the place of the old one only
-when the load worked: a damaged file, or an app that is still running, leaves
-the data as it was. Should the very last step fail, giving the new database
-its name, the script says where the restored data is and prints the command
-that finishes the job. Leave the app stopped until that is done: on start it
-would create a new, empty database under the old name.
+database, so everything written after the dump is gone. It goes in three
+steps:
+
+1. The dump is loaded into a new database, `labeling_restoring`. A damaged
+   file stops here and the data in use was never touched.
+2. The swap: the database in use is renamed to `labeling_replaced` and the
+   restored copy takes its name, both in one transaction. There is no moment
+   without a `labeling` database, whatever happens to the machine in the
+   middle. PostgreSQL refuses the swap while anything is connected, so an app
+   or a dump that is still running leaves the data as it was, and the message
+   says who is connected.
+3. Only then is `labeling_replaced` dropped.
+
+A restore that was interrupted leaves a complete `labeling` behind, the old
+one or the restored one, and possibly a `labeling_restoring` or
+`labeling_replaced` next to it. The next restore removes those. The folder
+with the dumps can be mounted read-only for a restore.
 
 When the app starts again it applies any migrations that are newer than the
 dump, so an older dump restored under a newer app is fine.

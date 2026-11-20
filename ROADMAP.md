@@ -1023,8 +1023,10 @@ the loop pauses before the next. Different from the design: a dump right away
 is `docker compose run --rm backup once`, because without an argument the
 service is the daily loop, and that makes a dump at the start only when the
 newest one is older than a day. A restore is part of the script
-(`backup restore <file>`), loading the dump into a new database that replaces
-the old one only when the load worked. CI runs `docker/check-backup.sh` after
+(`backup restore <file>`), loading the dump into a new database and swapping
+it with the old one in one transaction, so that a database with the name
+exists at every moment. Dumps dated in the future are never pruned and do not
+count towards the seven. CI runs `docker/check-backup.sh` after
 the tests, with the demo data in: the loop and the pruning against made-up
 clocks, then a real dump, a restore into a scratch database and the row
 counts. Still open: the dumps are not encrypted and stay on the same disk
