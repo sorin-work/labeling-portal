@@ -51,69 +51,13 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 15  | Audit trail                                  | Shipped | ops           | M    | -          |
 | 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
 | 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
-| 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
+| 18  | Pre-labeling hook                            | Shipped | labeling      | L    | -          |
 
 ## Next
 
 ## Later
 
 ## Maybe
-
-### 18. Pre-labeling hook
-
-Tasks could arrive with a suggested answer, so annotators correct instead of
-starting from nothing: entities from a name list, a sentiment label from a
-keyword rule, or the output of whatever model the project owner runs
-elsewhere. Other tools get a lot of speed from this. I am not sure about the
-price: people accept what is already filled in.
-
-- Two sources of suggestions:
-  - a `_prediction` column in the import file, read like `_gold` (`parseGold`
-    in `domain/gold.ts` already accepts the short forms). This covers any
-    model that ran outside the app;
-  - rules that run in the app at import. A new `domain/prelabel.ts` with one
-    function type, `(schema, data, config) => Answer | null`, and a registry
-    by name. It ships with two rule-based entries and calls no service:
-    keyword lists for classification, and phrase lists per entity type for
-    spans (longest match first, no overlaps, because `validateNer` refuses
-    overlapping spans).
-- Data: `suggestion Json?` on `Task`, `prelabel Json?` on `Project` (which
-  rule and its lists, checked with zod like the task schema) and
-  `fromSuggestion Boolean` on `Assignment`. `ImportRow` and `createBatch`
-  carry the suggestion.
-- The work loader (`routes/work.tsx`) sends the suggestion and the interface
-  starts from it. A draft from item 1 wins when both exist.
-- That only works because the page starts fresh for each assignment: since
-  item 1 the page body is rendered under `key={assignment.id}`, so `answer`
-  does not carry over from the previous task and can start from the
-  suggestion.
-- Never for gold or qualification tasks. A gold task with a suggestion either
-  gives the answer away or tests whether people fix it, and neither is what
-  gold accuracy means today.
-- On the quality page: for each annotator, the share of suggestions submitted
-  unchanged and the time spent on them. And for the rule itself: run it over
-  the gold tasks without showing the result to anyone, and report its score
-  against the gold answers with `scoreAgainstGold`. That measure costs
-  nothing.
-- Tricky: anchoring. The submit button is enabled as soon as there is an
-  answer (`disabled={busy || !toSubmit}`), so a pre-filled task is one keypress.
-  Show a suggestion as a suggestion (dashed, labelled) and require an explicit
-  accept or an edit before submitting.
-- Tricky: agreement is inflated. All annotators of a task see the same
-  suggestion, so kappa and the consensus lean towards it. At least say so on
-  the quality page.
-- Tricky: patterns written by managers. A regular expression can hang the
-  server during an import. Start with literal phrases and word lists and cap
-  their number and length.
-- The export should say which annotations started from a suggestion and carry
-  the suggestion itself, so its effect can be measured later.
-- Undecided: show the suggestion to every annotator of a task or only to the
-  first. Only the first keeps the others independent, and makes the queue care
-  about who came first. I lean towards everyone, with the note on the quality
-  page.
-- Tests: `tests/unit/prelabel.test.ts` for the rules; integration tests for an
-  import with `_prediction`, rules applied at import, no suggestion on gold
-  tasks, and what a submission records.
 
 ## Shipped
 
@@ -490,3 +434,28 @@ the schema check still runs on each load of the settings page. Still open: a
 claim still visits each full task's row (an index cannot hold a comparison
 with the project's overlap), and the trigger makes bulk inserts of
 assignments slower, which only a fixture does.
+
+### 18. Pre-labeling hook
+
+Tasks can carry a suggested answer, from a `_prediction` column in the import
+or from the project's rule, with `suggestion` and `suggestionSource` on
+`Task`, `prelabel` on `Project`, and `fromSuggestion` and
+`suggestionUnchanged` on `Assignment`. Rules are entries of a registry in
+`domain/prelabel.ts` with one function type; the two that ship are keyword
+lists for classification and phrase lists for spans (longest first, no
+overlaps), capped in number and length, with no regular expressions and no
+service. Everything suggested is checked like an answer. The rule runs after
+the import, off the request, with a 15 second limit, and the batch page shows
+its state and runs it again. The work page shows the suggestion in a dashed,
+labelled box and fills nothing in until "Start from the suggestion", so a
+suggestion is never handed in without an action; a draft wins. Suggestions
+count nowhere: not in consensus, agreement, gold scores or pay. The quality
+page shows each annotator's unchanged share and time and scores the
+suggestions against gold, with a note that agreement leans towards the
+suggestion; the export carries the suggestion and how each annotation used
+it. Different from the design: gold tasks get the rule's suggestion like any
+other task (and a gold copy keeps its source's), because a task without one
+would stand out as gold; everyone sees the suggestion, as the item leaned.
+Still open: the rule runs in the web process, so a run cut short by a restart
+only goes on when its batch page is opened; the CSV export does not carry
+suggestions; image classification and boxes have no rule.
