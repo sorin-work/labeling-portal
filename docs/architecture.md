@@ -139,23 +139,39 @@ limit stays counted until it is marked expired, so `claimNextTask` and
 `countAvailable` first mark expired claims with the same `now`; after that the
 counter is exactly what the old per-task count gave.
 
-**Lock order: the task row before the assignment row.** When an assignment
-enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release, an expiry,
-a deletion), the trigger updates its task's row, which takes that row's
-`FOR NO KEY UPDATE` lock. So every transaction that writes an assignment
-takes its task row first, with `lockTaskOfAssignment` in `lib/db.server.ts`
-(or, for a claim, the pick's `FOR UPDATE`): submit, skip, release, the expiry
-of a late submission, a resubmission, a review decision and the overturn of a
-dispute. Gold scoring reads the expected answer under that same
-`FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock can never be
-upgraded in a circle. Expiry of many claims (`expireClaims`) first locks all
-their tasks in id order and only then writes the claims, so two expiries and a
-submission cannot cycle either. Writes that never change an assignment's state
-and never lock a task (draft saves, extensions, review holds) take only the
-assignment row. As a backstop, `retryOnLockConflict` runs the queue's transactions (claim, submit, skip, release, expiry) once more if PostgreSQL still aborts one with a deadlock (40P01) or a serialization failure (40001). The cost: writers of the same task queue on its
+**Lock order.** Every transaction that writes an assignment takes its row
+locks in one order, so two of them can only queue, never wait for each other
+in a circle:
+
+1. the person's work clock (their `Membership` row, `lockWorkClock`), for
+   the transactions that credit time: a submission and a revision;
+2. task rows, in id order when there are several (`lockTaskOfAssignment` in
+   `lib/db.server.ts` for one; `expireClaims` and `promoteToGold` lock theirs
+   `ORDER BY id`; a claim takes its task through the pick's `FOR UPDATE`);
+3. assignment rows, in id order when there are several (`holdReview` locks
+   the submission to reserve and the reviewer's other reservations in one
+   statement `ORDER BY id`).
+
+The slot counter is why the task row comes before the assignment row: when an
+assignment enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release,
+an expiry, a deletion), the trigger updates its task's row inside the
+assignment write. So submit, skip, release, the expiry of a late submission,
+a resubmission, a review decision and the overturn of a dispute all lock the
+task row first. A revision reads the organisation of the assignment without a
+lock (it never changes), then takes the clock, the task row and the
+assignment, in that order. Gold scoring reads the expected answer under the
+same `FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock is never
+upgraded in a circle. Writes that never change an assignment's state and never
+lock a task or a clock (draft saves, extensions, renewing a review hold, the
+single-statement reservation of the next review) take only the assignment
+row. As a backstop, `retryOnLockConflict` runs the claim, a submission, a
+skip, a release, expiry, a revision, a gold promotion and a review hold once
+more if PostgreSQL still aborts one with a deadlock (40P01) or a
+serialization failure (40001). The cost: writers of the same task queue on its
 row for the moment each takes, including annotators submitting the same gold
-task. `tests/integration/lock-order.test.ts` holds the locks from a second
-connection and checks the order.
+task. `tests/integration/lock-order.test.ts` holds locks from a second
+connection and checks the order for skips, releases, submissions (gold among
+them), expiry, revisions and review holds.
 
 The migration puts the trigger in place and fills the counters in one
 statement, with the `Assignment` table locked against writes, so nothing
