@@ -99,20 +99,30 @@ describe('schemaUsage', () => {
       where: { id: t2.id },
       data: { isGold: true, goldAnswer: { labels: ['d'] } },
     });
-    // QualificationAttempt.answers is kept as it was posted: a label twice is
-    // one label, and entries that are not answers are skipped
+    // QualificationAttempt.answers is kept as it was posted. Only the entry
+    // of a test question counts, and a label posted twice is one label. The
+    // rest of the map was never validated: an entry under a made-up key or
+    // under the id of a regular task, and values that are not answers
+    await prisma.task.update({ where: { id: t3.id }, data: { isQualification: true } });
     await prisma.qualificationAttempt.create({
       data: {
         projectId: project.id,
         userId: ann.id,
         scorePercent: 0,
         passed: false,
-        answers: { [t3.id]: { labels: ['e', 'e'] }, junk: 'text', more: ['f'], none: null },
+        answers: {
+          [t3.id]: { labels: ['e', 'e'] },
+          extra: { labels: ['f', 'a'] },
+          [t1.id]: { labels: ['f', 'b'] },
+          junk: 'text',
+          more: ['f'],
+          none: null,
+        },
       },
     });
     // a claim without an answer, and another project's work, are not counted
     await prisma.assignment.create({
-      data: { projectId: project.id, taskId: t3.id, userId: ann.id, expiresAt: new Date() },
+      data: { projectId: project.id, taskId: t2.id, userId: ann.id, expiresAt: new Date() },
     });
     const other = await createTestProject(org.id, { schema, reviewRequired: false });
     await createTasks(other.id, [{ text: 'x' }]);
@@ -354,6 +364,40 @@ describe('schema edits once work exists', () => {
       '“multiple” cannot be turned off while 2 stored answers have more than one label',
     );
     expect(await stored()).toEqual(multi);
+  });
+
+  it('is not blocked by what a hand-made test attempt adds to its answers', async () => {
+    const multi = { ...sentiment, multiple: true };
+    const { ann, project, save, stored } = await setup(multi);
+    const [question] = await createTasks(project.id, [{ text: 'one' }]);
+    await prisma.task.update({
+      where: { id: question.id },
+      data: { isQualification: true, goldAnswer: { labels: ['positive'] } },
+    });
+    // the answer to the question was validated, the extra entry never was
+    await prisma.qualificationAttempt.create({
+      data: {
+        projectId: project.id,
+        userId: ann.id,
+        scorePercent: 100,
+        passed: true,
+        answers: {
+          [question.id]: { labels: ['positive'] },
+          extra: { labels: ['neutral', 'negative'] },
+        },
+      },
+    });
+
+    const next = { ...sentiment, labels: ['positive', 'other'] };
+    expect(payload<Saved>(await save(next)).saved).toBe(true);
+    expect(await stored()).toEqual(next);
+
+    // the validated answer still counts
+    const result = await save({ ...next, labels: ['other', 'another'] });
+    expect(statusOf(result)).toBe(400);
+    expect(payload<Saved>(result).errors?.schema).toContain(
+      'the label “positive” cannot be removed',
+    );
   });
 
   it('refuses a new rubric dimension and ties turned off, and warns about a removed one', async () => {

@@ -101,8 +101,11 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
  * statement so every number comes from the same snapshot. It reads the five
  * columns that hold answers: `Assignment.answer`, `Review.correctedAnswer`,
  * `Task.goldAnswer`, `Task.consensus` and `QualificationAttempt.answers` (a
- * map from task id to answer). Attempt answers are kept as they were posted,
- * so nothing here trusts the shape of a value before it is taken apart.
+ * map from task id to answer). Attempt answers are kept as they were posted.
+ * Only the entries of the project's test questions were validated, so only
+ * those count: anything else in the map is whatever the browser sent, and
+ * would otherwise block an edit for good. For the same reason nothing here
+ * trusts the shape of a value before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
   const rows = await db.$queryRaw<Array<{ metric: string; name: string | null; count: number }>>`
@@ -120,6 +123,7 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       SELECT e.value
       FROM "QualificationAttempt" q
       CROSS JOIN LATERAL jsonb_each(${objectAt(Prisma.sql`q.answers`)}) e
+      JOIN "Task" t ON t.id = e.key AND t."projectId" = q."projectId" AND t."isQualification"
       WHERE q."projectId" = ${projectId}
     ),
     answers AS (
