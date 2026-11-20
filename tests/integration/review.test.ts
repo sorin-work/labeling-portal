@@ -407,6 +407,8 @@ async function withHistory(projectId: string, userId: string, count = ALWAYS_REV
       taskId: task.id,
       userId,
       status: 'SUBMITTED' as const,
+      rateCents: 0,
+      payMode: 'PER_TASK' as const,
       claimedAt: at,
       expiresAt: at,
       submittedAt: at,
@@ -499,6 +501,8 @@ describe('review sampling', () => {
         taskId: task.id,
         userId: ann.id,
         status: 'SUBMITTED' as const,
+        rateCents: 0,
+        payMode: 'PER_TASK' as const,
         claimedAt: at,
         expiresAt: at,
         submittedAt: at,
@@ -578,9 +582,12 @@ describe('review sampling', () => {
       { assignmentId: fresh.id },
     );
     const { resubmitAssignment } = await import('~/models/queue.server');
-    expect(await resubmitAssignment(fresh.id, ann.id, { labels: ['negative'] })).toEqual({
-      ok: true,
-    });
+    expect(
+      await resubmitAssignment(fresh.id, ann.id, {
+        answer: { labels: ['negative'] },
+        activeSeconds: 0,
+      }),
+    ).toEqual({ ok: true });
     expect(await prisma.assignment.findUniqueOrThrow({ where: { id: fresh.id } })).toMatchObject({
       reviewStatus: 'PENDING',
       reviewSample: 'NEW_ANNOTATOR',
