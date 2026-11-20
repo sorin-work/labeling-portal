@@ -572,7 +572,8 @@ under "Adding a labeling kind": `categoricalValue` names every kind and has no
 default, the quality page asks `isCategorical`, `mainField` and `isImageKind`
 cover the preview, the batch search and the image check of the import,
 `KIND_NAMES` and the test helper use the app's own maps. An image that does
-not load shows its address and points to Skip, on box tasks as well;
+not load shows its address and points to Skip, on box tasks as well, and
+nothing can be labelled or handed in until it loads;
 `TaskContext` now hides `width` and `height` only for boxes. Image addresses
 follow the rule from item 6 and the server never fetches them. The demo has a
 fifth project. Decided: a new kind rather than an `imageField` on text

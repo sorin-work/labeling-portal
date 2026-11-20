@@ -27,7 +27,10 @@
   check_
 - An image that does not load, on an image classification or a box task,
   says so with its address and points to Skip ("Content is broken or
-  unreadable") instead of showing a broken picture
+  unreadable") instead of showing a broken picture. While it has failed the
+  labels, the keys and the submit button are off, so Skip is the only way on;
+  revised work cannot be handed in again, and a reviewer can send it back but
+  not approve or fix it
 
 - Drafts: the work page saves the answer in progress and the working time to
   the server a moment after each change and when the tab is hidden or closed,

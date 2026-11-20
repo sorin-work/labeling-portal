@@ -794,13 +794,17 @@ the kind with `===` or ask for one field and have to be checked by hand:
   the import checks it as an image address (`parseImport`).
 - `TaskContext` hides `width` and `height` only for box tasks, which read
   them themselves.
+- An image kind reports a picture that did not load (`onImageFailed`).
+  The interface takes no labels then, and the work, revise and review
+  pages hand nothing in: Skip, or on review Send back, is the way on.
 - `tests/integration/helpers.ts` creates projects with the app's own
   `KIND_TO_ENUM`, and `tests/dom/fixtures.ts` has one project of each kind
   that the page tests go through.
 
-`categoricalValue` and `isCategorical` in `app/domain/agreement.ts` name
-every kind and have no default, so a new kind does not compile until it is
-decided whether it gets kappa; the quality page asks `isCategorical`.
+`categoricalValue` in `app/domain/agreement.ts` names every kind and has no
+default, so a new kind does not compile until it is decided whether it gets
+kappa. The quality page asks `isCategorical`, which is derived from
+`categoricalValue` and is not a second list.
 
 ## Conventions
 
