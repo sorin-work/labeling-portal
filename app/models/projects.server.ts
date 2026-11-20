@@ -4,6 +4,8 @@ import type { ProjectInput } from '~/domain/project-form';
 import {
   breakingChanges,
   diffSchema,
+  type AnswerCounts,
+  type AnswerSource,
   type SchemaChange,
   type SchemaUsage,
 } from '~/domain/schema-diff';
@@ -98,8 +100,9 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
 
 /**
  * Counts what the stored work of a project uses from its schema, in one
- * statement so every number comes from the same snapshot. It reads the five
- * columns that hold answers: `Assignment.answer`, `Review.correctedAnswer`,
+ * statement so every number comes from the same snapshot. Every count is
+ * split by where the answers are stored. It reads the five columns that hold
+ * answers: `Assignment.answer`, `Review.correctedAnswer`,
  * `Task.goldAnswer`, `Task.consensus` and `QualificationAttempt.answers` (a
  * map from task id to answer). Attempt answers are kept as they were posted.
  * Only the entries of the project's test questions were validated, so only
@@ -108,81 +111,100 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
  * trusts the shape of a value before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
-  const rows = await db.$queryRaw<Array<{ metric: string; name: string | null; count: number }>>`
+  type Row = { metric: string; name: string | null; source: AnswerSource | null; count: number };
+  const rows = await db.$queryRaw<Row[]>`
     WITH stored AS (
-      SELECT a.answer AS answer FROM "Assignment" a WHERE a."projectId" = ${projectId}
+      SELECT 'submission' AS source, a.answer AS answer
+      FROM "Assignment" a WHERE a."projectId" = ${projectId}
       UNION ALL
-      SELECT r."correctedAnswer"
+      SELECT 'correction', r."correctedAnswer"
       FROM "Review" r JOIN "Assignment" a ON a.id = r."assignmentId"
       WHERE a."projectId" = ${projectId}
       UNION ALL
-      SELECT t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
+      SELECT 'gold', t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
-      SELECT t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
+      SELECT 'consensus', t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
-      SELECT e.value
+      SELECT 'qualification', e.value
       FROM "QualificationAttempt" q
       CROSS JOIN LATERAL jsonb_each(${objectAt(Prisma.sql`q.answers`)}) e
       JOIN "Task" t ON t.id = e.key AND t."projectId" = q."projectId" AND t."isQualification"
       WHERE q."projectId" = ${projectId}
     ),
     answers AS (
-      SELECT row_number() OVER () AS id, answer FROM stored WHERE jsonb_typeof(answer) = 'object'
+      SELECT row_number() OVER () AS id, source, answer
+      FROM stored WHERE jsonb_typeof(answer) = 'object'
     ),
     names AS (
-      SELECT a.id, 'labels' AS source, e.value #>> '{}' AS name
+      SELECT a.id, a.source, 'labels' AS shape, e.value #>> '{}' AS name
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'labels'`)}) e
       WHERE jsonb_typeof(e.value) = 'string'
       UNION
-      SELECT a.id, 'spans', e.value->>'label'
+      SELECT a.id, a.source, 'spans', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'spans'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
       UNION
-      SELECT a.id, 'boxes', e.value->>'label'
+      SELECT a.id, a.source, 'boxes', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'boxes'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
     ),
     scores AS (
-      SELECT s.id,
+      SELECT s.id, s.source,
         ${objectAt(Prisma.sql`s.answer->'scores'->'a'`)} AS a,
         ${objectAt(Prisma.sql`s.answer->'scores'->'b'`)} AS b
       FROM answers s
     ),
     scored AS (
-      SELECT id, a, b FROM scores WHERE a <> '{}'::jsonb OR b <> '{}'::jsonb
+      SELECT id, source, a, b FROM scores WHERE a <> '{}'::jsonb OR b <> '{}'::jsonb
     )
-    SELECT 'tasks' AS metric, NULL::text AS name, count(*)::int AS count
+    SELECT 'tasks' AS metric, NULL::text AS name, NULL::text AS source, count(*)::int AS count
     FROM "Task" WHERE "projectId" = ${projectId}
     UNION ALL
-    SELECT 'answers', NULL, count(*)::int FROM answers
+    SELECT 'answers', NULL, source, count(*)::int FROM answers GROUP BY source
     UNION ALL
-    SELECT 'name', name, count(DISTINCT id)::int FROM names GROUP BY name
+    SELECT 'name', name, source, count(DISTINCT id)::int FROM names GROUP BY name, source
     UNION ALL
-    SELECT 'multiLabel', NULL, count(*)::int
-    FROM (SELECT id FROM names WHERE source = 'labels' GROUP BY id HAVING count(*) > 1) multi
+    SELECT 'multiLabel', NULL, source, count(*)::int
+    FROM (
+      SELECT id, source FROM names WHERE shape = 'labels' GROUP BY id, source HAVING count(*) > 1
+    ) multi
+    GROUP BY source
     UNION ALL
-    SELECT 'ties', NULL, count(*)::int FROM answers WHERE answer->>'preference' = 'tie'
+    SELECT 'ties', NULL, source, count(*)::int
+    FROM answers WHERE answer->>'preference' = 'tie' GROUP BY source
     UNION ALL
-    SELECT 'scored', NULL, count(*)::int FROM scored
+    SELECT 'scored', NULL, source, count(*)::int FROM scored GROUP BY source
     UNION ALL
-    SELECT 'dimension', k.key, count(*)::int
+    SELECT 'dimension', k.key, s.source, count(*)::int
     FROM scored s CROSS JOIN LATERAL jsonb_object_keys(s.a) AS k(key)
     WHERE s.b -> k.key IS NOT NULL
-    GROUP BY k.key`;
+    GROUP BY k.key, s.source`;
 
-  const total = (metric: string) => rows.find((r) => r.metric === metric)?.count ?? 0;
-  const byName = (metric: string) =>
-    new Map(rows.filter((r) => r.metric === metric).map((r) => [r.name ?? '', r.count]));
+  const counts = (metric: string): AnswerCounts => {
+    const result: AnswerCounts = {};
+    for (const row of rows) {
+      if (row.metric === metric && row.source) result[row.source] = row.count;
+    }
+    return result;
+  };
+  const byName = (metric: string) => {
+    const result = new Map<string, AnswerCounts>();
+    for (const row of rows) {
+      if (row.metric !== metric || row.name === null || !row.source) continue;
+      result.set(row.name, { ...result.get(row.name), [row.source]: row.count });
+    }
+    return result;
+  };
   return {
-    tasks: total('tasks'),
-    answers: total('answers'),
+    tasks: rows.find((row) => row.metric === 'tasks')?.count ?? 0,
+    answers: counts('answers'),
     names: byName('name'),
-    multiLabel: total('multiLabel'),
-    ties: total('ties'),
-    scored: total('scored'),
+    multiLabel: counts('multiLabel'),
+    ties: counts('ties'),
+    scored: counts('scored'),
     dimensions: byName('dimension'),
   };
 }
