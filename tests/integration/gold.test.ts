@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { myStats } from '~/models/annotator-stats.server';
 import { listBatches } from '~/models/batches.server';
-import { applyRescore, promoteToGold, setGoldRetired } from '~/models/gold.server';
+import { applyRescore, previewRescore, promoteToGold, setGoldRetired } from '~/models/gold.server';
 import { payoutReport } from '~/models/payouts.server';
 import { schemaUsage } from '~/models/projects.server';
 import { isAnnotatorFlagged, projectQuality } from '~/models/quality.server';
 import { claimNextTask, submitAssignment } from '~/models/queue.server';
-import { action as batchAction } from '~/routes/batch-detail';
+import { action as batchAction, loader as batchLoader } from '~/routes/batch-detail';
 import { loader as reviseLoader } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { loader as activityLoader } from '~/routes/project-activity';
@@ -200,11 +200,18 @@ const editForm = (label: string, reason = 'The text is clearly negative.') => ({
   reason,
 });
 
+/** Presses "Rescore" on the plan the task page shows right now. */
+async function rescore(s: GoldSetup, taskId: string) {
+  const page = payload<GoldView>(await s.view(taskId));
+  return s.post(taskId, { intent: 'gold-rescore', digest: page.gold?.rescore?.digest ?? '' });
+}
+
 type GoldView = {
   gold: {
     answer: unknown;
     revisions: Array<Record<string, unknown>>;
     rescore: {
+      digest: string;
       submissions: number;
       changes: unknown[];
       impact: { moved: unknown[]; newlyFlagged: string[]; noLongerFlagged: string[] };
@@ -273,7 +280,7 @@ describe('changing a gold answer', () => {
       select: { id: true, status: true, reviewStatus: true, answer: true, submittedAt: true },
     });
 
-    expect(statusOf(await s.post(wrong.id, { intent: 'gold-rescore' }))).toBe(302);
+    expect(statusOf(await rescore(s, wrong.id))).toBe(302);
     expect(await scoresOf(ann.id)).toEqual([0, 1, 1]);
     expect(await scoresOf(ben.id)).toEqual([1, 1, 1]);
     // what gates on the scores follows: the flag, and with it who is always reviewed
@@ -286,7 +293,8 @@ describe('changing a gold answer', () => {
     ]);
 
     // a second run finds nothing to do
-    const again = await applyRescore(s.project, wrong.id, s.pm.id);
+    const upToDate = await previewRescore(s.project, wrong.id);
+    const again = await applyRescore(s.project, wrong.id, s.pm.id, upToDate!.digest);
     expect(again.ok && again.plan.changes).toEqual([]);
     expect(await scoresOf(ann.id)).toEqual([0, 1, 1]);
     expect(payload<GoldView>(await s.view(wrong.id)).gold?.rescore?.changes).toEqual([]);
@@ -311,6 +319,60 @@ describe('changing a gold answer', () => {
       'rescored gold task #1: 2 scores changed for 2 annotators (1 newly flagged, 1 no longer flagged)',
       'changed the expected answer of gold task #1 from “positive” to “negative”: The text is clearly negative.',
     ]);
+  });
+
+  it('only applies the rescore that was previewed', async () => {
+    const s = await goldProject();
+    const ann = await answersGold(s, 'Ann', ['positive', 'positive', 'negative']);
+    const ben = await answersGold(s, 'Ben', ['negative', 'positive', 'negative']);
+    const [wrong] = s.gold;
+    await s.post(wrong.id, editForm('negative'));
+    // the manager looks at: Ann 1 to 0, Ben 0 to 1
+    const previewed = payload<GoldView>(await s.view(wrong.id)).gold!.rescore!.digest;
+
+    // meanwhile the expected answer changes again, in another tab
+    await s.post(wrong.id, editForm('neutral', 'On second thought.'));
+    const stale = await s.post(wrong.id, { intent: 'gold-rescore', digest: previewed });
+    expect(statusOf(stale)).toBe(409);
+    expect(payload<{ error: string }>(stale).error).toMatch(/Nothing was rescored/);
+    expect(await scoresOf(ann.id)).toEqual([1, 1, 1]);
+    expect(await scoresOf(ben.id)).toEqual([0, 1, 1]);
+    // a press without any preview does nothing either
+    expect(statusOf(await s.post(wrong.id, { intent: 'gold-rescore' }))).toBe(409);
+    expect(await prisma.activity.count({ where: { action: 'gold.rescored' } })).toBe(0);
+
+    // the page now shows the plan for the answer as it is, and that one applies
+    expect(statusOf(await rescore(s, wrong.id))).toBe(302);
+    expect(await scoresOf(ann.id)).toEqual([0, 1, 1]);
+    expect(await scoresOf(ben.id)).toEqual([0, 1, 1]);
+  });
+
+  it('shows an annotator no score that belongs to an earlier expected answer', async () => {
+    const s = await goldProject();
+    const ben = await answersGold(s, 'Ben', ['negative']);
+    const cookie = await cookieFor(ben, s.org.id);
+    const [submission] = await prisma.assignment.findMany({ where: { userId: ben.id } });
+    const shown = async () =>
+      payload<{ items: Array<{ goldScore: number | null }> }>(
+        await run(myWorkLoader, makeRequest('/my-work', { cookie })),
+      ).items[0].goldScore;
+    const detail = () =>
+      run(reviseLoader, makeRequest(`/my-work/${submission.id}`, { cookie }), {
+        assignmentId: submission.id,
+      });
+    expect(await shown()).toBe(0);
+    const [wrong] = s.gold;
+
+    // edited but not rescored: "0%, expected negative" beside his own "negative" would be wrong
+    await s.post(wrong.id, editForm('negative'));
+    expect(await shown()).toBeNull();
+    expect(locationOf(await detail())).toBe('/my-work');
+
+    await rescore(s, wrong.id);
+    expect(await shown()).toBe(1);
+    expect(payload<Record<string, unknown>>(await detail())).toMatchObject({
+      goldCheck: { score: 1, expected: 'negative' },
+    });
   });
 
   it('refuses an answer the schema does not allow, the same answer and a missing reason', async () => {
@@ -456,6 +518,10 @@ describe('changing a gold answer', () => {
       { projectId: s.project.id },
     );
     expect(statusOf(refused)).toBe(400);
+    // the refusal says what holds the label: the history, which never goes away
+    expect(payload<{ errors: { schema: string } }>(refused).errors.schema).toMatch(
+      /“neutral” cannot be removed or renamed while 1 stored answer uses it, which is in the history of a gold task/,
+    );
   });
 });
 
@@ -531,16 +597,50 @@ describe('retiring a gold task', () => {
 describe('making gold tasks from completed tasks', () => {
   beforeEach(resetDb);
 
+  /**
+   * Ann has finished batch "week 1" (the three gold tasks and two regular
+   * ones). Batch "week 2" has four open tasks, with ids of their own.
+   */
   async function completed() {
-    const s = await goldProject(4);
+    const s = await goldProject(2);
     const ann = await createMember(s.org.id, 'ANNOTATOR', { name: 'Ann' });
     await addToProject(s.project.id, ann);
-    // Ann works through the three gold tasks and the first two regular ones
     for (const label of ['negative', 'positive', 'negative', 'positive', 'negative']) {
       await submitWork(s.project, ann.id, { labels: [label] });
     }
-    return { ...s, ann, done: s.regular.slice(0, 2), open: s.regular.slice(2) };
+    const open = await createTasks(
+      s.project.id,
+      Array.from({ length: 4 }, (_, i) => ({ id: `w2-${i}`, text: `second week ${i}` })),
+    );
+    const [week1, week2] = await prisma.batch.findMany({ orderBy: { createdAt: 'asc' } });
+    await prisma.batch.update({ where: { id: week1.id }, data: { name: 'week 1' } });
+    await prisma.batch.update({ where: { id: week2.id }, data: { name: 'week 2' } });
+    return { ...s, ann, done: s.regular, open, week1, week2 };
   }
+
+  /** What the work page sends for the task this annotator gets next. */
+  async function nextWorkPage(s: GoldSetup, userId: string) {
+    const claim = await claimNextTask(s.project, userId);
+    if (!claim.ok) return null;
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const page = await run(
+      workLoader,
+      makeRequest(`/work/${claim.assignment.id}`, { cookie: await cookieFor(user, s.org.id) }),
+      { assignmentId: claim.assignment.id },
+    );
+    return {
+      assignment: claim.assignment,
+      task: payload<{ task: { ref: string; batch: string; data: Record<string, unknown> } }>(page)
+        .task,
+    };
+  }
+
+  const finish = (assignmentId: string, userId: string) =>
+    submitAssignment(assignmentId, userId, {
+      answer: { labels: ['positive'] },
+      activeSeconds: 0,
+      reviewRequired: false,
+    });
 
   it('copies the task with its consensus as the expected answer and leaves the original alone', async () => {
     const s = await completed();
@@ -556,11 +656,12 @@ describe('making gold tasks from completed tasks', () => {
       isGold: true,
       status: 'OPEN',
       goldAnswer: { labels: ['positive'] },
-      batchId: source.batchId,
-      externalId: source.externalId,
       data: source.data,
+      // among the open tasks of the most recent batch that has some, and
+      // without the original's id from an older import
+      batchId: s.week2.id,
+      externalId: null,
     });
-    // somewhere among the open tasks, not after everything else
     expect(s.open.map((t) => t.position)).toContain(copy.position);
     expect(copy.goldRevisions).toMatchObject([
       { change: 'CREATED', answer: { labels: ['positive'] }, changedById: s.pm.id },
@@ -588,10 +689,77 @@ describe('making gold tasks from completed tasks', () => {
     expect(payload<{ error: string }>(again).error).toMatch(/already used as gold/);
   });
 
+  it('puts the copy in the batch that was chosen, and refuses when no batch is open', async () => {
+    const s = await completed();
+    const [first, second] = s.done;
+    const [older] = await createTasks(s.project.id, [{ text: 'third week' }]);
+
+    // the default is the most recent batch with open tasks; a manager can pick another
+    const chosen = await promoteToGold(s.project, [first.id], s.pm.id, { batchId: s.week2.id });
+    expect(chosen.created).toHaveLength(1);
+    const copy = await prisma.task.findUniqueOrThrow({ where: { id: chosen.created[0] } });
+    expect(copy.batchId).toBe(s.week2.id);
+    // a finished batch is no place for it: it would be the only task anyone still gets from there
+    expect(await promoteToGold(s.project, [second.id], s.pm.id, { batchId: s.week1.id })).toEqual({
+      created: [],
+      skipped: [],
+      refused: 'the chosen batch has no open tasks left to put a gold task among',
+    });
+
+    await prisma.task.updateMany({
+      where: { id: { in: [...s.open.map((t) => t.id), older.id] } },
+      data: { status: 'COMPLETE' },
+    });
+    const refused = await s.post(second.id, { intent: 'gold-copy' });
+    expect(statusOf(refused)).toBe(409);
+    expect(payload<{ error: string }>(refused).error).toMatch(/no batch has open tasks/);
+    expect(await prisma.task.count({ where: { goldSourceId: second.id } })).toBe(0);
+  });
+
+  it('looks like the tasks around it on the work page', async () => {
+    const s = await completed();
+    // the original came from an import with an id column, like week 2's tasks
+    await prisma.task.update({
+      where: { id: s.done[0].id },
+      data: { data: { id: 'w1-3', text: 'regular 0' } },
+    });
+    const made = await promoteToGold(s.project, [s.done[0].id], s.pm.id, { random: () => 0 });
+    const [copyId] = made.created;
+    const cy = await createMember(s.org.id, 'ANNOTATOR');
+    await addToProject(s.project.id, cy);
+    // Cy starts with week 2: week 1 is complete and its own gold tasks are retired
+    await prisma.task.updateMany({
+      where: { id: { in: s.gold.map((t) => t.id) } },
+      data: { goldRetiredAt: new Date() },
+    });
+    const pages = [];
+    for (let i = 0; i < 5; i++) {
+      const next = await nextWorkPage(s, cy.id);
+      if (!next) break;
+      pages.push(next);
+      await finish(next.assignment.id, cy.id);
+    }
+    const gold = pages.find((p) => p.assignment.taskId === copyId);
+    const regular = pages.filter((p) => p.assignment.taskId !== copyId);
+    expect(gold).toBeDefined();
+    expect(regular).toHaveLength(4);
+
+    // the same batch name as its neighbours, a reference of the same form,
+    // and data with the same keys: no id from an older import
+    for (const page of pages) {
+      expect(page.task.batch).toBe('week 2');
+      expect(page.task.ref).toMatch(/^[A-Z0-9]{6}$/);
+      expect(Object.keys(page.task).sort()).toEqual(['batch', 'data', 'ref']);
+      expect(Object.keys(page.task.data)).toEqual(['text']);
+    }
+    expect(new Set(pages.map((p) => p.task.ref)).size).toBe(5);
+    expect(JSON.stringify(gold?.task)).not.toMatch(/week 1|externalId|w1-3/);
+  });
+
   it('never offers the copy to the annotator who worked on the original', async () => {
     const s = await completed();
     const [source] = s.done;
-    const made = await promoteToGold(s.project, [source.id], s.pm.id, () => 0);
+    const made = await promoteToGold(s.project, [source.id], s.pm.id, { random: () => 0 });
     const [copyId] = made.created;
     const copy = await prisma.task.findUniqueOrThrow({ where: { id: copyId } });
     expect(copy.position).toBe(s.open[0].position);
@@ -602,11 +770,7 @@ describe('making gold tasks from completed tasks', () => {
       const claim = await claimNextTask(s.project, s.ann.id);
       if (!claim.ok) break;
       forAnn.push(claim.assignment.taskId);
-      await submitAssignment(claim.assignment.id, s.ann.id, {
-        answer: { labels: ['positive'] },
-        activeSeconds: 0,
-        reviewRequired: false,
-      });
+      await finish(claim.assignment.id, s.ann.id);
     }
     expect(forAnn.sort()).toEqual(s.open.map((t) => t.id).sort());
 
@@ -617,11 +781,7 @@ describe('making gold tasks from completed tasks', () => {
       const claim = await claimNextTask(s.project, cy.id);
       if (!claim.ok) break;
       seen.push(claim.assignment.taskId);
-      await submitAssignment(claim.assignment.id, cy.id, {
-        answer: { labels: ['positive'] },
-        activeSeconds: 0,
-        reviewRequired: false,
-      });
+      await finish(claim.assignment.id, cy.id);
     }
     expect(seen).toContain(copyId);
     const scored = await prisma.assignment.findFirstOrThrow({
@@ -630,18 +790,84 @@ describe('making gold tasks from completed tasks', () => {
     expect(scored).toMatchObject({ goldScore: 1, reviewStatus: 'NOT_REQUIRED' });
   });
 
+  it('keeps an original and its copies as one group: one live copy, and nobody gets two', async () => {
+    const s = await completed();
+    const [source] = s.done;
+    const retire = (taskId: string, retired: boolean) =>
+      s.post(taskId, { intent: retired ? 'gold-retire' : 'gold-restore', reason: 'Trying.' });
+    const [first] = (await promoteToGold(s.project, [source.id], s.pm.id)).created;
+    // Cy answers the first copy
+    const cy = await createMember(s.org.id, 'ANNOTATOR');
+    const cyClaim = await prisma.assignment.create({
+      data: {
+        projectId: s.project.id,
+        taskId: first,
+        userId: cy.id,
+        status: 'SUBMITTED',
+        claimedAt: new Date(),
+        expiresAt: new Date(),
+        submittedAt: new Date(),
+        answer: { labels: ['positive'] },
+        reviewStatus: 'NOT_REQUIRED',
+        goldScore: 1,
+      },
+    });
+    expect(cyClaim.taskId).toBe(first);
+
+    // the manager retires it and uses the task as gold once more
+    expect(statusOf(await retire(first, true))).toBe(302);
+    const [second] = (await promoteToGold(s.project, [source.id], s.pm.id)).created;
+    expect(second).toBeDefined();
+
+    // bringing the first one back would make two live copies of one item
+    const both = await retire(first, false);
+    expect(statusOf(both)).toBe(409);
+    expect(payload<{ error: string }>(both).error).toMatch(/one gold copy at a time/);
+    expect(
+      await prisma.task.count({ where: { goldSourceId: source.id, goldRetiredAt: null } }),
+    ).toBe(1);
+
+    // Neither Ann, who labeled the original, nor Cy, who answered the first
+    // copy, gets the second. A gold task is otherwise open to everyone.
+    const everything = async (userId: string) => {
+      const got = [];
+      for (;;) {
+        const claim = await claimNextTask(s.project, userId);
+        if (!claim.ok) break;
+        got.push(claim.assignment.taskId);
+        await finish(claim.assignment.id, userId);
+      }
+      return got;
+    };
+    expect((await everything(s.ann.id)).sort()).toEqual(s.open.map((t) => t.id).sort());
+    expect((await everything(cy.id)).sort()).toEqual(s.gold.map((t) => t.id).sort());
+    const dee = await createMember(s.org.id, 'ANNOTATOR');
+    expect(await everything(dee.id)).toContain(second);
+
+    // retire the second, and the first can come back; two at once still leave one
+    expect(statusOf(await retire(second, true))).toBe(302);
+    const results = await Promise.all([
+      setGoldRetired(s.project, first, s.pm.id, { retired: false, reason: 'one' }),
+      setGoldRetired(s.project, second, s.pm.id, { retired: false, reason: 'two' }),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(
+      await prisma.task.count({ where: { goldSourceId: source.id, goldRetiredAt: null } }),
+    ).toBe(1);
+  });
+
   it('takes several at once from the batch page and says what it skipped', async () => {
     const s = await completed();
-    const batchId = s.done[0].batchId;
     const form = {
       intent: 'gold-copy',
-      taskId: [s.done[0].id, s.done[1].id, s.open[0].id, s.gold[0].id],
+      targetBatchId: s.week2.id,
+      taskId: [s.done[0].id, s.done[1].id, s.gold[0].id],
     };
     const post = (cookie: string) =>
       run(
         batchAction,
-        makeRequest(`/projects/${s.project.id}/batches/${batchId}`, { cookie, form }),
-        { projectId: s.project.id, batchId },
+        makeRequest(`/projects/${s.project.id}/batches/${s.week1.id}`, { cookie, form }),
+        { projectId: s.project.id, batchId: s.week1.id },
       );
 
     expect(statusOf(await post(s.reviewerCookie))).toBe(403);
@@ -649,9 +875,19 @@ describe('making gold tasks from completed tasks', () => {
 
     const copies = await prisma.task.findMany({ where: { goldSourceId: { not: null } } });
     expect(copies.map((c) => c.goldSourceId).sort()).toEqual(s.done.map((t) => t.id).sort());
+    expect(copies.every((c) => c.batchId === s.week2.id)).toBe(true);
     const batches = await listBatches(s.project.id);
     // gold never completes, so it is counted apart from the batch's progress
-    expect(batches[0]).toMatchObject({ total: 4, complete: 2, gold: 5 });
+    expect(batches.find((b) => b.id === s.week1.id)).toMatchObject({
+      total: 2,
+      complete: 2,
+      gold: 3,
+    });
+    expect(batches.find((b) => b.id === s.week2.id)).toMatchObject({
+      total: 4,
+      complete: 0,
+      gold: 2,
+    });
   });
 
   it('validates the consensus against the schema as it is now', async () => {
@@ -675,6 +911,28 @@ describe('making gold tasks from completed tasks', () => {
       { taskId: s.open[0].id, why: 'not complete, or without a consensus' },
     ]);
     expect(await prisma.task.count({ where: { goldSourceId: { not: null } } })).toBe(0);
+  });
+
+  it('finds the task an annotator reports by its reference', async () => {
+    const s = await completed();
+    const submission = await prisma.assignment.findFirstOrThrow({
+      where: { userId: s.ann.id, taskId: s.done[1].id },
+    });
+    const ref = submission.id.slice(-6).toUpperCase();
+    const search = (q: string) =>
+      run(
+        batchLoader,
+        makeRequest(`/projects/${s.project.id}/batches/${s.week1.id}?q=${q}`, {
+          cookie: s.pmCookie,
+        }),
+        { projectId: s.project.id, batchId: s.week1.id },
+      );
+
+    expect(payload<{ tasks: Array<{ id: string }> }>(await search(ref)).tasks).toMatchObject([
+      { id: s.done[1].id },
+    ]);
+    const page = payload<{ assignments: Array<{ ref: string }> }>(await s.view(s.done[1].id));
+    expect(page.assignments.map((a) => a.ref)).toContain(ref);
   });
 });
 
@@ -720,7 +978,7 @@ describe('what an annotator can tell about gold', () => {
     expect(sent).not.toContain(s.gold[0].id);
     expect(sent).not.toMatch(/gold/i);
     expect(sent).not.toContain('"positive"]');
-    expect(Object.keys(gold.page.task).sort()).toEqual(['batch', 'data', 'externalId']);
+    expect(Object.keys(gold.page.task).sort()).toEqual(['batch', 'data', 'ref']);
   });
 
   it('shows the score and the expected answer only after submitting, and only if the project does', async () => {
