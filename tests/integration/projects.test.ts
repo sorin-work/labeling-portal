@@ -53,7 +53,33 @@ describe('projects', () => {
       overlap: 2,
       timeLimitMinutes: 20,
       reviewRequired: true,
+      reviewSamplePercent: 100,
     });
+  });
+
+  it('stores the share of work to review and copies it to a duplicate', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const cookie = await cookieFor(pm, org.id);
+
+    await run(
+      newProjectAction,
+      makeRequest('/projects/new', { cookie, form: { ...validForm, reviewSamplePercent: '25' } }),
+    );
+    const project = await prisma.project.findFirstOrThrow();
+    expect(project.reviewSamplePercent).toBe(25);
+    const overview = await run(overviewLoader, makeRequest(`/projects/${project.id}`, { cookie }), {
+      projectId: project.id,
+    });
+    expect(payload<{ project: { review: string } }>(overview).project.review).toBe('25% sample');
+
+    const path = `/projects/${project.id}/settings`;
+    const params = { projectId: project.id };
+    const edited = { ...validForm, reviewSamplePercent: '40' };
+    await run(settingsAction, makeRequest(path, { cookie, form: edited }), params);
+    await run(settingsAction, makeRequest(path, { cookie, form: { intent: 'duplicate' } }), params);
+    const copies = await prisma.project.findMany({ select: { reviewSamplePercent: true } });
+    expect(copies).toEqual([{ reviewSamplePercent: 40 }, { reviewSamplePercent: 40 }]);
   });
 
   it('returns field errors for an invalid schema', async () => {
