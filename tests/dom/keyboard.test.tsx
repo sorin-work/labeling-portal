@@ -120,3 +120,58 @@ describe('the list of shortcuts', () => {
     expect(document.activeElement).toBe(before);
   });
 });
+
+describe('boxes in words', () => {
+  function Boxes({ onAnswer }: { onAnswer: (answer: Answer) => void }) {
+    const [value, setValue] = useState<Answer>({
+      boxes: [
+        { x: 10, y: 20, w: 30, h: 40, label: 'car' },
+        { x: 100, y: 50, w: 20, h: 20, label: 'person' },
+      ],
+      imageWidth: 640,
+      imageHeight: 480,
+    });
+    return (
+      <main>
+        <LabelingInterface
+          schema={KINDS.bbox.schema}
+          data={KINDS.bbox.data}
+          value={value}
+          onChange={(next) => {
+            setValue(next);
+            onAnswer(next);
+          }}
+        />
+      </main>
+    );
+  }
+
+  it('lists every box, picks one from the list and edits it with the keys', async () => {
+    const user = userEvent.setup();
+    let answer: Answer | null = null;
+    render(<Boxes onAnswer={(a) => (answer = a)} />);
+    const list = screen.getByRole('list', { name: 'Boxes' });
+    expect(list.textContent).toContain('car');
+    await expectAccessible();
+
+    await user.click(screen.getByRole('button', { name: /^Go to person, box 2 of 2, at 100, 50/ }));
+    const box = screen.getByRole('button', { name: /^person, box 2 of 2/, pressed: true });
+    expect(document.activeElement).toBe(box);
+    await user.keyboard('{ArrowRight}');
+    expect(answer).toMatchObject({ boxes: [{ x: 10 }, { x: 101, label: 'person' }] });
+    expect(screen.getByRole('status').textContent).toBe(
+      'person, box 2 of 2, at 101, 50, 20 by 20 pixels',
+    );
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Label of box 1' }), 'person');
+    expect(answer).toMatchObject({ boxes: [{ label: 'person' }, {}] });
+    expect(screen.getByRole('status').textContent).toBe('Box 1 is now person.');
+
+    await user.click(screen.getByRole('button', { name: 'Remove box 1, person' }));
+    expect(screen.getByRole('status').textContent).toBe(
+      'Removed the person box. Ctrl + Z puts it back.',
+    );
+    await user.keyboard('{Control>}z{/Control}');
+    expect(answer).toMatchObject({ boxes: [{ x: 10 }, { x: 101 }] });
+  });
+});
