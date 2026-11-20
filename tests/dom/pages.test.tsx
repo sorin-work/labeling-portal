@@ -3,16 +3,16 @@ import userEvent from '@testing-library/user-event';
 import { Link, redirect } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
-import Work from '~/routes/work';
+import Work, { type loader as workLoader } from '~/routes/work';
 
 import { expectAccessible } from './axe';
 import { KIND_NAMES, KINDS, type Kind } from './fixtures';
 import { renderPage } from './render';
 
-function workData(kind: Kind, id = 'a1') {
+function workData(kind: Kind, id = 'a1'): Awaited<ReturnType<typeof workLoader>> {
   const { schema, data } = KINDS[kind];
   return {
-    userId: 'u1',
+    userTag: 'tag-u1',
     instructionsChanged: false,
     assignment: {
       id,

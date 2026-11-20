@@ -26,11 +26,14 @@ or fix the work.
   included; radio groups are real radio groups; focus moves to the next task
   and changes are said aloud for screen readers; text meets 4.5:1 contrast.
   axe runs over the main pages in the tests
-- **Import** CSV or JSONL into batches with per-line error reports, example
+- **Import** CSV, TSV, JSON Lines or a JSON array into batches. A file goes
+  in completely or not at all, with the lines that failed listed; example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
   abandoned claims, up to three extensions per claim, skip with a reason,
-  release
+  release.
+  Managers give batches a priority or pause them, can shuffle the order for
+  each annotator and can space gold tasks out ("about one in every N")
 - **Drafts**: the answer in progress and its working time are saved to the
   server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
@@ -52,8 +55,13 @@ or fix the work.
   after seeing what that changes, retire a gold task, and turn completed
   tasks into gold. After submitting, annotators see how they did
 - **Time tracking** of active time per task and a **payouts** report (per task
-  or hourly) with CSV download
-- **Export** of finished labels as JSONL, CSV or COCO (box projects)
+  or hourly) with CSV download. Each submission keeps the rate its project
+  had when it was made, and work counts in the period it became payable
+- **Earnings** page where everyone sees their own money: what is payable for
+  a period and what is still waiting for review or was sent back
+- **Export** of finished labels as JSON Lines or CSV (both can be imported
+  again), COCO, YOLO or Pascal VOC for boxes and CoNLL tags for entities,
+  with pseudonyms in place of annotator addresses
 - Activity log, needs-attention list for managers, demo data
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
@@ -79,14 +87,14 @@ organisation, _Harbor Data Labs_, is created with four projects (one per
 labeling kind), a few weeks of reviewed work, gold tasks and a qualification
 test. Every demo account uses the password `labeling-demo`:
 
-| Email                    | Role            | Try                                                               |
-| ------------------------ | --------------- | ----------------------------------------------------------------- |
-| `admin@example.com`      | Admin           | People, payouts, everything below                                 |
-| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export, settle a dispute        |
-| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)         |
-| `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project |
-| `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work             |
-| `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                |
+| Email                    | Role            | Try                                                                                              |
+| ------------------------ | --------------- | ------------------------------------------------------------------------------------------------ |
+| `admin@example.com`      | Admin           | People, payouts, everything below                                                                |
+| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export, settle a dispute                                       |
+| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)                                        |
+| `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project                                |
+| `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work, and Earnings shows a project at two rates |
+| `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                                               |
 
 Change the port with `WEB_PORT=8080 docker compose up`. Data lives in the
 `db-data` volume; `docker compose down -v` starts fresh. For daily dumps of
@@ -108,15 +116,16 @@ npm run dev              # http://localhost:4421
 
 ## Configuration
 
-| Variable            | Default               | Purpose                                                           |
-| ------------------- | --------------------- | ----------------------------------------------------------------- |
-| `DATABASE_URL`      | (required)            | PostgreSQL connection string                                      |
-| `SESSION_SECRET`    | dev-only value        | Signs the session cookie; required (16+ characters) in production |
-| `COOKIE_SECURE`     | `true` in production  | Set `false` when serving over plain http                          |
-| `SEED_DEMO`         | `false`               | Docker only: create the demo organisation on start                |
-| `SHOW_DEMO_LOGINS`  | `false`               | List the demo accounts on the sign-in page                        |
-| `TEST_DATABASE_URL` | local `labeling_test` | Database for integration tests (it is truncated between tests)    |
-| `WEB_PORT`          | `4421`                | Host port for the compose setup                                   |
+| Variable               | Default               | Purpose                                                               |
+| ---------------------- | --------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`         | (required)            | PostgreSQL connection string                                          |
+| `SESSION_SECRET`       | dev-only value        | Signs the session cookie; required (16+ characters) in production     |
+| `COOKIE_SECURE`        | `true` in production  | Set `false` when serving over plain http                              |
+| `SEED_DEMO`            | `false`               | Docker only: create the demo organisation on start                    |
+| `SHOW_DEMO_LOGINS`     | `false`               | List the demo accounts on the sign-in page                            |
+| `INTERNAL_IMAGE_HOSTS` | (empty)               | Internal hosts that box project images may come from, comma separated |
+| `TEST_DATABASE_URL`    | local `labeling_test` | Database for integration tests (it is truncated between tests)        |
+| `WEB_PORT`             | `4421`                | Host port for the compose setup                                       |
 
 ## Backup and restore
 
@@ -144,8 +153,9 @@ left alone: rename a dump to keep it for good. How old a dump is, and which
 ones are the oldest, is read from the time in the file name and never from
 the file's modification time.
 
-A dump dated in the future is what a wrong clock leaves behind. Such dumps
-are left out everywhere:
+A dump dated in the future is what a wrong clock leaves behind. Such dumps,
+and dumps whose name holds a date that does not exist, are left out
+everywhere:
 
 - They do not say how old the newest dump is. The newest dump that is not
   dated in the future decides, so next to an older dump a new one is made at

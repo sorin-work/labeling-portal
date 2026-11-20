@@ -15,8 +15,9 @@
 # at: on a network share they come from another machine's clock.
 #
 # A dump whose name is dated in the future was made while the clock was
-# wrong. Such dumps are never removed here and do not use up BACKUP_KEEP, and
-# every run names them in a warning.
+# wrong. Such dumps, and dumps whose name holds a date that does not exist,
+# are never removed here and do not use up BACKUP_KEEP, and every run names
+# them in a warning.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -66,9 +67,17 @@ dumps() {
 }
 
 # The time in a dump's name as seconds since 1970. Prints nothing when the
-# name does not hold a real date.
+# name does not hold a real date. Busybox date, which the postgres image has,
+# rolls an impossible date over instead of refusing it (2026-02-31 becomes
+# 3 March), so the time is written back as a name and has to give the same
+# name. Otherwise such a dump would pass for one made on 3 March and could be
+# pruned.
 dump_time() {
-  date -u -d "$(echo "$1" | sed -E 's/^labeling-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
+  stamp=${1#labeling-}
+  stamp=${stamp%.dump}
+  made=$(date -u -d "$(echo "$stamp" | sed -E 's/^(....)(..)(..)T(..)(..)(..)Z$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null) || return 0
+  [ "$(date -u -d "@$made" +%Y%m%dT%H%M%SZ 2>/dev/null)" = "$stamp" ] || return 0
+  echo "$made"
 }
 
 # The dumps dated at or before a clock that reads $1, newest first. These
@@ -98,7 +107,7 @@ future_dumps() {
 # Nothing removes these by itself, so a person has to hear about them.
 warn_about_future_dumps() {
   ahead=$(future_dumps "$1" | tr '\n' ' ')
-  [ -z "$ahead" ] || log "WARNING: dated in the future, so never removed here and not counted towards BACKUP_KEEP. Have a look at: $ahead"
+  [ -z "$ahead" ] || log "WARNING: dated in the future or on a date that does not exist, so never removed here and not counted towards BACKUP_KEEP. Have a look at: $ahead"
 }
 
 # Removes the oldest dumps until $keep are left. Only dumps that are not

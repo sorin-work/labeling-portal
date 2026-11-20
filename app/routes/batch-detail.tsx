@@ -4,15 +4,21 @@ import { data, Form, Link } from 'react-router';
 import { Pagination } from '~/components/pagination';
 import { Alert, Badge, Button, EmptyState, Input, PageHeader } from '~/components/ui';
 import { taskPreview } from '~/domain/preview';
+import { MAX_BATCH_PRIORITY, parseBatchPriority } from '~/domain/queue-order';
 import { refSuffix } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDate, titleCase } from '~/lib/format';
+import { formatDate, formatDateTime, titleCase } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
 import { logActivity } from '~/models/activity.server';
-import { deleteBatch } from '~/models/batches.server';
+import {
+  batchStanding,
+  deleteBatch,
+  setBatchPaused,
+  setBatchPriority,
+} from '~/models/batches.server';
 import { openBatches, promoteToGold } from '~/models/gold.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -82,7 +88,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   return {
     projectId: project.id,
-    batch: { id: batch.id, name: batch.name, format: batch.format, createdAt: batch.createdAt },
+    batch: {
+      id: batch.id,
+      name: batch.name,
+      format: batch.format,
+      createdAt: batch.createdAt,
+      priority: batch.priority,
+      pausedAt: batch.pausedAt,
+    },
+    standing: await batchStanding(batch.id),
     status,
     q,
     page,
@@ -139,6 +153,45 @@ export async function action({ request, params }: Route.ActionArgs) {
       }`,
     );
   }
+  // Where the batch stands in the queue. Like everything on this page it is
+  // for managers (`manageProjects`, checked at the top of the action).
+  const here = `/projects/${project.id}/batches/${params.batchId}`;
+  if (form.get('intent') === 'priority') {
+    const priority = parseBatchPriority(form.get('priority'));
+    if (!priority.ok) return data({ error: priority.error }, { status: 400 });
+    const changed = await setBatchPriority(
+      project.id,
+      params.batchId,
+      current.user.id,
+      priority.value,
+    );
+    if (!changed.ok && changed.error === 'not_found') throw notFound('Batch not found');
+    return redirectWithFlash(
+      request,
+      here,
+      changed.ok
+        ? `Priority set to ${priority.value}. It counts from the next task anyone asks for.`
+        : `The priority is ${priority.value} already.`,
+    );
+  }
+  if (form.get('intent') === 'pause' || form.get('intent') === 'resume') {
+    const pause = form.get('intent') === 'pause';
+    const changed = await setBatchPaused(project.id, params.batchId, current.user.id, pause);
+    if (!changed.ok && changed.error === 'not_found') throw notFound('Batch not found');
+    if (!changed.ok) {
+      return data(
+        { error: pause ? 'This batch is paused already.' : 'This batch is not paused.' },
+        { status: 409 },
+      );
+    }
+    return redirectWithFlash(
+      request,
+      here,
+      pause
+        ? 'Paused. Nothing from this batch is handed out until it is resumed; tasks that are being worked on can be finished.'
+        : 'Resumed. The batch is handed out again from where it was.',
+    );
+  }
   if (form.get('intent') !== 'delete') throw badRequest('Unknown action');
   const result = await deleteBatch(project.id, params.batchId);
   if (!result.ok) return data({ error: result.error }, { status: 409 });
@@ -156,7 +209,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function BatchDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { projectId, batch, tasks, page, status, q, openBatches } = loaderData;
+  const { projectId, batch, tasks, page, status, q, openBatches, standing } = loaderData;
   const filters = [
     { label: 'All', value: null },
     { label: 'Open', value: 'OPEN' },
@@ -186,6 +239,50 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
           <Alert>{actionData.error}</Alert>
         </div>
       )}
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200">
+        <Form method="post" className="flex items-center gap-2">
+          <label htmlFor="priority" className="text-slate-600">
+            Priority
+          </label>
+          <Input
+            id="priority"
+            name="priority"
+            type="number"
+            min={-MAX_BATCH_PRIORITY}
+            max={MAX_BATCH_PRIORITY}
+            defaultValue={batch.priority}
+            className="w-20"
+            title="Batches with a higher number are handed out first. 0 is normal."
+          />
+          <Button name="intent" value="priority" variant="secondary">
+            Set
+          </Button>
+        </Form>
+        <Form method="post" className="flex items-center gap-2">
+          {batch.pausedAt ? (
+            <>
+              <Badge tone="amber">Paused since {formatDateTime(batch.pausedAt)}</Badge>
+              <Button name="intent" value="resume" variant="secondary">
+                Resume
+              </Button>
+            </>
+          ) : (
+            <Button name="intent" value="pause" variant="secondary">
+              Pause
+            </Button>
+          )}
+        </Form>
+        <p className="text-slate-500">
+          {standing.open} open task{standing.open === 1 ? '' : 's'}
+          {standing.partial > 0 &&
+            `, ${standing.partial} of them with some answers already${
+              batch.pausedAt ? ', waiting for the rest until the batch is resumed' : ''
+            }`}
+          {standing.claims > 0 &&
+            `; ${standing.claims} being worked on${batch.pausedAt ? ', which can be finished' : ''}`}
+          .
+        </p>
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-1">
         {filters.map((f) => (
           <Link

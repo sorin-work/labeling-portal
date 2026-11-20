@@ -11,7 +11,7 @@ import {
   sameAnswer,
   scoreAgainstGold,
 } from '~/domain/gold';
-import { diffSchema } from '~/domain/schema-diff';
+import { diffSchema, NO_USAGE, type AnswerCounts } from '~/domain/schema-diff';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
 
 describe('scoreAgainstGold', () => {
@@ -255,29 +255,22 @@ describe('goldFeedback', () => {
 describe('a label held by the history of a gold task', () => {
   const before = SCHEMA_TEMPLATES.text_classification;
   const [gone, ...kept] = before.labels;
-  const usage = {
-    tasks: 5,
-    answers: 4,
-    names: new Map([[gone, 3]]),
-    multiLabel: 0,
-    ties: 0,
-    scored: 0,
-    dimensions: new Map<string, number>(),
-  };
-  const reason = (goldHistory?: Map<string, number>) =>
-    diffSchema(before, { ...before, labels: kept }, { ...usage, goldHistory }).find(
-      (change) => change.impact === 'breaking',
-    )?.reason;
+  const reason = (where: AnswerCounts) =>
+    diffSchema(
+      before,
+      { ...before, labels: kept },
+      { ...NO_USAGE, tasks: 5, answers: where, names: new Map([[gone, where]]) },
+    ).find((change) => change.impact === 'breaking')?.reason;
 
   it('is named in the refusal, because that history never goes away', () => {
-    expect(reason()).toBe(
-      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it`,
+    expect(reason({ submission: 3 })).toBe(
+      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it (3 submissions)`,
     );
-    expect(reason(new Map([[gone, 2]]))).toBe(
-      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it, 2 of them in the history of a gold task whose expected answer was changed; that history is kept for good`,
+    expect(reason({ submission: 1, goldHistory: 2 })).toBe(
+      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it (1 submission, 2 earlier gold answers), 2 of them in the history of a gold task whose expected answer was changed; that history is kept for good`,
     );
-    expect(reason(new Map([[gone, 3]]))).toMatch(
-      /use it, all of them in the history of a gold task/,
+    expect(reason({ goldHistory: 3 })).toMatch(
+      /use it \(3 earlier gold answers\), all of them in the history of a gold task/,
     );
   });
 });

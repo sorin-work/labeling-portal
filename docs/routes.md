@@ -21,7 +21,7 @@ at the end. The table lists who can open each page.
 | `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                         |
 | `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)    |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
-| `/projects/:id/batches[/new\|/:id]` | Import and browse tasks, make gold tasks | admin, project manager                      |
+| `/projects/:id/batches[/new\|/:id]` | Import, browse, gold, priority and pause | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
 | `/projects/:id/members`             | Add people, reset qualification          | admin, project manager                      |
 | `/projects/:id/export`              | Download labels                          | admin, project manager                      |
@@ -29,6 +29,7 @@ at the end. The table lists who can open each page.
 | `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                      |
 | `/my-work`                          | Your submissions, feedback, corrections  | annotators                                  |
 | `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work              |
+| `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators) |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
@@ -36,6 +37,9 @@ at the end. The table lists who can open each page.
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are
 in [architecture](architecture.md#changing-the-schema-once-work-exists).
+
+`/earnings` takes no person from the request. Whose earnings it shows comes
+from the session, so nobody can open someone else's.
 
 The task page also takes what a manager does to a gold task as POSTs: change
 the expected answer, rescore, retire or bring back, and use a completed task
@@ -48,13 +52,13 @@ quotes from the work page.
 
 These are resource routes that return files or JSON instead of pages.
 
-| Path                                               | Returns                                        |
-| -------------------------------------------------- | ---------------------------------------------- |
-| `GET /healthz`                                     | `{"status":"ok","database":"ok"}` or 503       |
-| `GET /projects/:id/download?format=&scope=&batch=` | `jsonl`, `csv` or `coco` (box projects) export |
-| `GET /projects/:id/example?format=csv\|jsonl`      | Example import file for the project's schema   |
-| `GET /projects/:id/quality.csv`                    | Annotator quality table                        |
-| `GET /payouts/export?from=&to=`                    | Payout CSV (dates inclusive, UTC)              |
+| Path                                                           | Returns                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /healthz`                                                 | `{"status":"ok","database":"ok"}` or 503                                 |
+| `GET /projects/:id/download?format=&scope=&batch=&annotators=` | Label export as a stream: `jsonl`, `csv`, `coco`, `yolo`, `voc`, `conll` |
+| `GET /projects/:id/example?format=csv\|jsonl`                  | Example import file for the project's schema                             |
+| `GET /projects/:id/quality.csv`                                | Annotator quality table                                                  |
+| `GET /payouts/export?from=&to=`                                | Payout CSV, one row per person, project, rate                            |
 
 Projects from another organisation answer 404, not 403, so their ids cannot
 be probed.

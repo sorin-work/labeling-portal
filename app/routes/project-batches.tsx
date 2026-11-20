@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 
-import { Button, EmptyState } from '~/components/ui';
+import { Badge, Button, EmptyState } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { formatDate } from '~/lib/format';
@@ -60,6 +60,16 @@ export default function ProjectBatches({ loaderData }: Route.ComponentProps) {
                     >
                       {batch.name}
                     </Link>
+                    {batch.pausedAt && (
+                      <span className="ml-2">
+                        <Badge tone="amber">Paused</Badge>
+                      </span>
+                    )}
+                    {batch.priority !== 0 && (
+                      <span className="ml-2">
+                        <Badge tone="indigo">Priority {batch.priority}</Badge>
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{batch.format}</td>
                   <td className="px-4 py-3 text-slate-500">{formatDate(batch.createdAt)}</td>

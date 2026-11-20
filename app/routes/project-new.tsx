@@ -55,6 +55,8 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
           ? disputeWindow
           : DEFAULT_DISPUTE_WINDOW_DAYS,
         goldFeedback: values.goldFeedback === 'on',
+        queueOrder: values.queueOrder === 'SHUFFLED' ? ('SHUFFLED' as const) : ('IMPORT' as const),
+        goldEvery: Number(values.goldEvery) || null,
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
         payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),

@@ -385,13 +385,14 @@ export type PromoteOutcome = {
 const openRegular = { status: 'OPEN', isGold: false, isQualification: false } as const;
 
 /**
- * The batches a new gold task can go into: those that still have open tasks,
- * the most recently imported first. A gold task in a batch that is otherwise
- * finished would be the only task an annotator still gets from it.
+ * The batches a new gold task can go into: those that still have open tasks
+ * and are not paused, the most recently imported first. A gold task in a
+ * batch that is otherwise finished would be the only task an annotator still
+ * gets from it.
  */
 export function openBatches(projectId: string, db: Db = prisma) {
   return db.batch.findMany({
-    where: { projectId, tasks: { some: openRegular } },
+    where: { projectId, pausedAt: null, tasks: { some: openRegular } },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: { id: true, name: true },
   });

@@ -1,14 +1,41 @@
-import type { Prisma } from '@prisma/client';
+import type { Batch, Prisma } from '@prisma/client';
 
 import type { ImportFormat, ImportRow } from '~/domain/import';
+import { diffSchema } from '~/domain/schema-diff';
+import { parseTaskSchema, type TaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
-/** Creates a batch and its tasks. Task positions continue after the project's last task. */
+export type CreateBatchResult = { ok: true; batch: Batch } | { ok: false; error: 'schema_changed' };
+
+/**
+ * Creates a batch and its tasks, all of them or none. Task positions continue
+ * after the project's last task.
+ *
+ * `schema` is the one the rows, and their gold answers, were validated
+ * against. The project row is held while the tasks are written, and the batch
+ * is refused when the saved schema is no longer that one. A settings save
+ * asks for a stronger lock on the same row, so it either waits for this import
+ * and then counts its gold answers, or it was first, and then the file has to
+ * be read again against the new schema.
+ */
 export async function createBatch(
   projectId: string,
-  input: { name: string; format: ImportFormat; rows: ImportRow[]; qualification?: boolean },
-) {
+  input: {
+    name: string;
+    format: ImportFormat;
+    rows: ImportRow[];
+    qualification?: boolean;
+    schema: TaskSchema;
+  },
+): Promise<CreateBatchResult> {
   return prisma.$transaction(async (tx) => {
+    const [project] = await tx.$queryRaw<Array<{ schema: unknown }>>`
+      SELECT schema FROM "Project" WHERE id = ${projectId} FOR SHARE`;
+    const saved = parseTaskSchema(project?.schema);
+    if (!saved.ok || diffSchema(saved.schema, input.schema).length > 0) {
+      return { ok: false, error: 'schema_changed' };
+    }
+
     const last = await tx.task.aggregate({ where: { projectId }, _max: { position: true } });
     const start = (last._max.position ?? 0) + 1;
     const batch = await tx.batch.create({
@@ -26,7 +53,7 @@ export async function createBatch(
         goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
       })),
     });
-    return batch;
+    return { ok: true, batch };
   });
 }
 
@@ -56,6 +83,96 @@ export async function listBatches(projectId: string) {
       qualification: sum(mine.filter((c) => c.isQualification)),
     };
   });
+}
+
+type QueueChange = { ok: true } | { ok: false; error: 'not_found' | 'unchanged' };
+
+/**
+ * Sets how early a batch is handed out: batches with a higher number come
+ * first. It changes which task the next claim gets and nothing else: claims
+ * that exist keep their task.
+ */
+export async function setBatchPriority(
+  projectId: string,
+  batchId: string,
+  actorId: string,
+  priority: number,
+  now = new Date(),
+): Promise<QueueChange> {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
+    if (!batch) return { ok: false, error: 'not_found' };
+    const changed = await tx.batch.updateMany({
+      where: { id: batchId, priority: { not: priority } },
+      data: { priority },
+    });
+    if (changed.count === 0) return { ok: false, error: 'unchanged' };
+    await tx.activity.create({
+      data: {
+        projectId,
+        actorId,
+        action: 'batch.priority',
+        detail: { name: batch.name, from: batch.priority, to: priority },
+        createdAt: now,
+      },
+    });
+    return { ok: true };
+  });
+}
+
+/**
+ * Pauses a batch or resumes it. A paused batch hands out nothing new from the
+ * next claim on. Tasks that are being worked on can be finished, and nothing
+ * else about the batch changes, so resuming picks up exactly where it was:
+ * tasks that have some of their answers get the rest then.
+ */
+export async function setBatchPaused(
+  projectId: string,
+  batchId: string,
+  actorId: string,
+  paused: boolean,
+  now = new Date(),
+): Promise<QueueChange> {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
+    if (!batch) return { ok: false, error: 'not_found' };
+    // the write names the state it expects, so two managers pressing the
+    // button at once leave one entry in the activity log
+    const changed = await tx.batch.updateMany({
+      where: { id: batchId, pausedAt: paused ? null : { not: null } },
+      data: { pausedAt: paused ? now : null },
+    });
+    if (changed.count === 0) return { ok: false, error: 'unchanged' };
+    await tx.activity.create({
+      data: {
+        projectId,
+        actorId,
+        action: paused ? 'batch.paused' : 'batch.resumed',
+        detail: { name: batch.name },
+        createdAt: now,
+      },
+    });
+    return { ok: true };
+  });
+}
+
+/**
+ * What is going on in a batch right now, for its page: open tasks, how many
+ * of those already have some answers (they wait while the batch is paused),
+ * and claims that are being worked on.
+ */
+export async function batchStanding(batchId: string, now = new Date()) {
+  const regular = { batchId, status: 'OPEN', isGold: false, isQualification: false } as const;
+  const [open, partial, claims] = await Promise.all([
+    prisma.task.count({ where: regular }),
+    prisma.task.count({
+      where: { ...regular, assignments: { some: { status: 'SUBMITTED' } } },
+    }),
+    prisma.assignment.count({
+      where: { task: { batchId }, status: 'ACTIVE', expiresAt: { gt: now } },
+    }),
+  ]);
+  return { open, partial, claims };
 }
 
 export type DeleteBatchResult = { ok: true; tasks: number } | { ok: false; error: string };

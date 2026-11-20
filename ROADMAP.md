@@ -38,14 +38,14 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Shipped | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
-| 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
-| 6   | More import and export formats               | Next    | import/export | M    | -          |
+| 5   | Earnings page and rates frozen at submission | Shipped | payouts       | M    | -          |
+| 6   | More import and export formats               | Shipped | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Shipped | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
-| 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
+| 12  | Queue order, batch priority and gold spacing | Shipped | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Shipped | labeling      | M    | -          |
 | 14  | Image classification                         | Later   | labeling      | M    | -          |
 | 15  | Audit trail                                  | Later   | ops           | M    | -          |
@@ -54,112 +54,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
-
-### 5. Earnings page and rates frozen at submission
-
-Annotators see hours and counts on the dashboard (`myStats`) but never money:
-`/payouts` is for admins and project managers. And the report prices all past
-work with each project's current `rateCents` and `payMode` at the moment
-someone opens it (`payoutReport` in `models/payouts.server.ts`), so changing a
-rate in the settings silently reprices every earlier month.
-
-- Data: `rateCents Int?` and `payMode PayMode?` on `Assignment`, written by
-  `submitAssignment` from the project. The migration fills existing submitted
-  rows from their project's current values. `payoutReport` reads the copy.
-- `computePayouts` in `domain/payouts.ts` keeps one `rateCents` per project.
-  With a rate change inside the range that is wrong, so group by project, pay
-  mode and rate: such a project shows as two lines, also in the CSV
-  (`routes/payouts-export.ts`).
-- New page `/earnings` (`routes/earnings.tsx`, a link in
-  `routes/app-layout.tsx` for roles that can annotate): a date range read with
-  `readRange` as on the payouts page, then for each project the accepted
-  tasks, active time, rate and amount, and separately what is still waiting
-  for review or was sent back and is not payable yet. `payoutReport` counts
-  that as `pending` for the whole organisation already. The loader uses
-  `requireUser` and filters on the user's own id; no new capability.
-- Tricky: hourly amounts are rounded once per block (`amountCents`). More
-  blocks means the total can differ by a cent from before. State the rule on
-  the page and test it.
-- The date that puts work into a period changes. Today the report goes by
-  `submittedAt`, so work approved in November still lands in October's total
-  after October was paid. From now on work counts on the day it became
-  payable: `reviewedAt` for work a reviewer approved or fixed, and
-  `submittedAt` for work accepted without a review (`NOT_REQUIRED`: projects
-  with review off, gold tasks, and work that the sampling of item 4 lets
-  through). Both reports use this date, `payoutReport` with its CSV and the
-  new page, and both say so on the page. A period that was paid then never
-  changes afterwards. When item 9 overturns a send-back, that work becomes
-  payable at the time of the overturn, for the same reason.
-- Work that is waiting for review or was sent back has no such date yet.
-  `payoutReport` keeps counting it as `pending` by `submittedAt` in the range;
-  the earnings page lists all of it, whatever the range.
-- Tricky: time spent revising sent-back work is not counted at all.
-  `routes/my-work-revise.tsx` posts no `activeSeconds` and
-  `resubmitAssignment` does not touch them. On an hourly project that is
-  unpaid time. Count it with `useActiveTime` and add it to the assignment,
-  capped at the time since the review.
-- Tricky: gold tasks are paid like other work (`NOT_REQUIRED` is one of the
-  `ACCEPTED_STATUSES`) and the qualification test is not. The page should say
-  so, or people will count differently.
-- Not in this item: marking a period as paid, bonuses and deductions, pay for
-  reviewers (a `Review` records no time), currencies other than USD
-  (`formatCents`, the `rate_usd` and `amount_usd` columns).
-- Tests: `tests/unit/payouts.test.ts` for the grouping by rate;
-  `tests/integration/payouts.test.ts`: a rate change leaves earlier work
-  alone, an annotator sees only their own lines, revise time is counted, and
-  work submitted in one month and approved in the next counts in the second.
-  The existing cases use a project without review, so they go by `submittedAt`
-  as before.
-
-### 6. More import and export formats
-
-Export writes JSONL, CSV and, for box projects, COCO. Whoever trains a model
-on the labels then writes the same converters again: token tags for entity
-projects, YOLO files for boxes. Import reads CSV and JSON Lines, and a `.json`
-file is taken for JSON Lines (`detectFormat` in `domain/import.ts`), so an
-ordinary JSON array is rejected line by line ("Not valid JSON").
-
-- Formats are spread over three places: the `FORMATS` map and the conditional
-  in `routes/project-download.ts`, the radio list in
-  `routes/project-export.tsx` (with its own `kind === 'BBOX'` check) and the
-  writers in `domain/export.ts` (`toJsonl`, `toCsvExport`, `toCoco`). First
-  make one table (name, label, hint, kinds, content type, extension, writer)
-  that both routes read.
-- CoNLL-style BIO tags for entity projects: one token and its tag per line, an
-  empty line between tasks. This needs a small tokenizer with offsets in
-  `domain/`. Like COCO it uses the consensus, or the single accepted answer
-  when there is no consensus.
-- YOLO for box projects: one text file per image with `class cx cy w h`
-  divided by `imageWidth` and `imageHeight` (both are in `BboxAnswer`), and a
-  `classes.txt` in schema order. Pascal VOC (one XML file per image) is the
-  same data in another wrapper.
-- Both are many files, so the download is a zip, and the repo has no zip code.
-  A writer for stored or deflated entries is under a hundred lines with Node's
-  `zlib` (`deflateRawSync`, `crc32`).
-- Annotator identity: every exported row carries the annotator's email
-  (`a.user.email` in `models/export.server.ts`). Exports get passed around.
-  Add an option for stable pseudonyms, for example `ann_` plus eight hex
-  characters of a SHA-256 over project id and user id.
-- Import: JSON arrays in `readRecords`, with "item 3" where the other formats
-  say "line 3". `parseCsvRecords` in `domain/csv.ts` hard-codes the comma; a
-  delimiter parameter gives TSV, and sniffing the header line gives the
-  semicolon files that spreadsheet programs write in many locales.
-- Tricky: spans are character offsets and need not line up with tokens
-  (`trimSelection` trims whitespace only, so a span can cover half a word).
-  Tag every token the span overlaps and count the spans that did not line up.
-- Tricky: file names inside the zip come from `externalId` or the image URL.
-  They need cleaning (no slashes, no `..`) and a suffix when two tasks share a
-  name.
-- Tricky: `Batch.format` is a Prisma enum with `CSV` and `JSONL`. A JSON array
-  or a TSV file either records the nearest of those or the enum grows with a
-  migration.
-- Undecided: `fflate` instead of a hand-written zip writer. I lean towards
-  writing it and using `fflate` as a dev dependency to read the result back in
-  tests. And which identity is the default: I lean towards pseudonyms, with
-  `annotators=email` in the URL for the old output.
-- Tests: `tests/unit/export.test.ts` and `tests/unit/import.test.ts` for the
-  writers and readers, `tests/integration/export.test.ts` for the downloads.
-  `docs/import-export.md` gets the new formats.
 
 ## Later
 
@@ -237,8 +131,8 @@ disagreed on.
 - Tricky: an extra slot can stay empty for ever when every member has already
   answered the task. Managers should be able to send a task that is waiting
   for an extra annotator to adjudication from its page.
-- Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
-  two that must stay: a retired gold task is never eligible
+- Items 10 and 12 have shipped conditions in `eligibleFor` that must stay.
+  Item 12: a task in a paused batch is never eligible. Item 10: a retired gold task is never eligible
   (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
   that task's other copies are one group (the second `NOT EXISTS`, over
   `kin`): whoever has a claim, a submission or a skip on one of them gets
@@ -254,70 +148,6 @@ disagreed on.
   can settle it, a task still under after the last extra goes to adjudication,
   an adjudicated task survives a later review, and the export marks the
   source. One case per kind for the number that is compared.
-
-### 12. Queue order, batch priority and gold spacing
-
-The queue has one rule: the open task with the lowest `position` that you have
-not touched and that has a free slot (`nextCandidate` in
-`models/queue.server.ts`). Position is import order. So an urgent batch
-imported later waits behind everything before it, and a batch with a problem
-cannot be held back short of pausing the whole project. Everyone works through
-the file in the same order. Gold tasks sit wherever their rows were in the
-file, so a block of gold at the top is done in the first ten minutes and never
-met again.
-
-This pull request is three changes to how the next task is chosen, and nothing
-else. They are the ordering rules that item 17 has to keep.
-
-- Batch priority and pause: `priority Int @default(0)` and
-  `pausedAt DateTime?` on `Batch`. `nextCandidate` joins the batch and sorts
-  by priority first; `eligibleFor` skips paused batches. Controls on
-  `routes/batch-detail.tsx` (new intents beside `delete`), shown in
-  `routes/project-batches.tsx`, with activity entries.
-- Order inside a priority: a project setting, import order or shuffled.
-  Shuffled has to be stable for one annotator and different between them, for
-  example `ORDER BY md5(t.id || userId)`.
-- Gold spacing: a project setting `goldEvery` ("about one gold task in every
-  N"). `claimNextTask` counts the annotator's submissions since their last
-  gold task, and when one is due and an unseen one exists it serves that,
-  otherwise a regular task. Some jitter keeps it from being exactly every Nth.
-  Empty means today's behaviour.
-- Tricky: `countAvailable` feeds "N tasks available" and the Start button on
-  the dashboard. It must skip paused batches too, or the dashboard offers work
-  that the claim then refuses.
-- Tricky: eligibility is evaluated three times per claim (the candidate query,
-  the locked re-check, the count). The choice between gold and regular has to
-  sit inside the retry loop of `claimNextTask`.
-- Tricky: no index serves a shuffled order, so every claim sorts all eligible
-  tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
-- Tricky: with default settings the behaviour must stay exactly as it is. The
-  queue tests rely on position order.
-- Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
-  has shipped two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
-  that task's other copies are one group (the second `NOT EXISTS`, over
-  `kin`): whoever has a claim, a submission or a skip on one of them gets
-  none of the others. Gold spacing has to treat those copies like any other
-  gold task, and a new order must not single them out: today a copy sits in a
-  batch with open tasks, at the position of one of them.
-- Follow-ups, each small enough for a pull request of its own and not part of
-  this one:
-  - a daily limit per annotator, so one fast person cannot label most of a
-    project: `dailyTaskLimit` on `Project`, counted per UTC day like "done
-    today" on the work page, a `limit` reason in `ClaimResult` with a text in
-    `lib/queue-messages.ts`, and the same check in `countAvailable`;
-  - a manager releasing somebody's claim from `routes/task-detail.tsx`. A
-    claim that was walked away from blocks its slot until the time limit runs
-    out, which can be eight hours (`timeLimitMinutes` goes up to 480) or
-    sixteen with the extension. It is listed under "Claims" on the task page
-    and cannot be released there;
-  - assigning tasks to named people by hand (`assignedToId` on `Task`). I do
-    not think it is needed while claims work.
-- Tests: `tests/integration/queue.test.ts`, with the random source passed in
-  as `now` is today: a higher priority batch is served first, a paused batch
-  is skipped by the claim and by the count, the shuffled order is stable for
-  one annotator and differs between two, gold arrives about every N tasks and
-  never twice for one person, and the defaults give position order.
 
 ### 14. Image classification
 
@@ -514,6 +344,12 @@ is why this is here and not above. What would have to change first:
   stream; the action calls `file.text()`.
 - Lists: `routes/project-annotator.tsx` shows a person's latest 50 entries
   with no pages.
+- Schema edits: `schemaUsage` in `models/projects.server.ts` unnests every
+  stored answer of the project in one statement, about two seconds at 200,000
+  tasks, on every load of the settings page and again inside a save that
+  changes the schema. Keep the counts per name up to date where answers are
+  written, or count only when the schema field is edited. The second also
+  shortens the window item 2 leaves open.
 - Tricky: the counter is a second source of truth for the queue. Expiry is
   lazy (`releaseExpiredClaims` is one `updateMany` at the next claim), so the
   counter has to drop in that same statement. A test should run a random
@@ -625,10 +461,11 @@ new rubric dimension is refused only while an answer with scores has none for
 it, so a dimension removed by mistake can be put back, and consensus now
 averages only the dimensions of the current rubric, so the scores a removed
 dimension leaves behind stay out of it. Left out: "rename this label
-everywhere" and a forced save for admins. Still open: the check covers what is
-stored when the save runs. An answer validated against the old schema in the
-same instant can land after it, and closing that needs every place that stores
-an answer to hold the project row while it validates and writes.
+everywhere" and a forced save for admins. Still open: the check is not atomic
+with the code that stores answers. An answer committed after the usage count
+took its snapshot, or stored by a request that read the old schema before the
+save committed, is not caught. Closing that needs every place that stores an
+answer to hold the project row while it validates and writes.
 
 ### 3. Hotkeys for every action
 
@@ -675,6 +512,49 @@ the form appears, and deciding on a submission another reviewer holds is
 refused. Still open: pulling an accepted, unsampled submission into review
 later as a spot check, and releasing or taking over a hold before it lapses.
 
+### 5. Earnings page and rates frozen at submission
+
+`submitAssignment` copies the project's `rateCents` and `payMode` onto the
+assignment in the write that stores the answer, and `payoutReport`, its CSV
+and the new `/earnings` page read the copy. `computePayouts` groups by
+project, pay mode and rate. The day work became payable is stored in
+`Assignment.payableAt` by the write that accepts it, and both reports go by
+it. `/earnings` shows a person their own blocks for a range and, whatever the
+range, what is waiting for review or was sent back. Revising time is added to
+the active time. Different from the design: the payable day is a stored
+column and not derived, and work accepted before the upgrade keeps its
+submission day, so no past report changes; check constraints refuse a
+submitted row without its rate and accepted work without its date; a revision
+is credited at most the project's time limit and a task three limits in all,
+because revising has no deadline, and a person's time is credited once
+across all their work through the stretches of time already credited; and
+hourly rounding moved into one integer function. The page says that nothing
+is marked as paid, because the portal does not record payments. Still open: the rates of work from before the
+migration are the project's rate of that day, which is an approximation, and
+marking a period as paid, bonuses, reviewer pay and other currencies remain
+out.
+
+### 6. More import and export formats
+
+One table, `EXPORT_FORMATS` in `domain/export.ts`, feeds the download route
+and the export page. New in it: CoNLL BIO tags for entity projects (with a
+tokenizer in `domain/tokenize.ts`) and YOLO and Pascal VOC for boxes, as a
+zip from a writer in `domain/zip.ts`. Exports stream task by task and name
+annotators by a pseudonym unless `annotators=email` is asked for. Import
+reads JSON arrays, tab-separated and semicolon files, and `Batch.format`
+grew `JSON` and `TSV`. Different from the design: a file is imported
+completely or not at all, so "skip invalid rows" is gone; the JSON Lines and
+CSV exports can be imported again, the consensus coming back as the gold
+answer, and the CSV export got `submitted_at`, `answer` and `data` columns
+for that; CSV cells that a spreadsheet would run as a formula are guarded;
+the upload is cut off at 5 MB while it is read; a batch is refused when the
+schema changed under it; and the count of spans that do not line up with
+tokens is on the export page, on request, because a stream cannot report it.
+The zip is read back in the tests by Python's `zipfile` and a small reader
+instead of `fflate`. Still open: a zip holds at most 65,533 tasks (no zip64),
+COCO keeps its box list in memory while it streams the images, and the
+annotations of single annotators do not come back from a re-import.
+
 ### 7. Scheduled backups
 
 A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
@@ -712,10 +592,9 @@ axe over the four interfaces and the main pages, with one shared helper and
 only `color-contrast` switched off; contrast is worked out from the
 stylesheet in a unit test instead. Different from the design: the contrast
 check is automated rather than by hand, and the countdown speaks at 10, 5
-and 1 minutes. Still open: the earnings page is not covered because it has
-not landed yet; target sizes, reflow and the colours a schema picks for its
-entity types are still checked by hand; there was no session with a real
-screen reader.
+and 1 minutes. Still open: target sizes, reflow and the colours a schema
+picks for its entity types are still checked by hand, and there was no
+session with a real screen reader.
 
 ### 9. Disputes on review decisions
 
@@ -731,12 +610,12 @@ keeps its date. Sent-back work cannot be revised while its dispute is open.
 Different from the design: the window is a project setting instead of a fixed
 14 days, the dispute stores a copy of the answer it was about, the annotator
 can withdraw an open dispute, and a dispute is not opened when nobody but the
-deciding reviewer could settle it. Still open: the payouts report selects by
-`submittedAt`, so an overturned send-back shows in the period it was
-submitted in until item 5 makes the report go by the day work became payable
-(the date is stamped for it). Gold scores and low QA scores on approved work
-cannot be disputed, and nobody is told about a new dispute or its outcome
-except by the tab count and the "My work" page.
+deciding reviewer could settle it. Since item 5 the pay reports go by the day
+work became payable, so an overturned send-back shows in the period of the
+overturn and never in the one it was submitted in. Still open: gold scores
+and low QA scores on approved work cannot be disputed, and nobody is told
+about a new dispute or its outcome except by the tab count and the "My work"
+page.
 
 ### 10. Gold tasks: add, fix and rescore
 
@@ -758,6 +637,25 @@ and past qualification attempts never follow a rescore. Still open: gold spacing
 the position of a random open task), a retired task that someone has claimed
 can still be submitted, and the server does different work for a gold
 submission than for a regular one, which a patient observer could measure.
+
+### 12. Queue order, batch priority and gold spacing
+
+Managers set a priority on a batch and pause or resume it from the batch page,
+with activity entries; the batch list shows both. A project can hand out tasks
+in import order or shuffled, and can space gold tasks out ("about one gold
+task in every N"). The whole choice is one statement, `nextTaskSql`, that
+picks and locks the task (`FOR UPDATE SKIP LOCKED`) and is the same for the
+same inputs. Different from the design: every hash is an HMAC keyed with a
+random secret per project that never leaves the server, so neither the
+shuffled order nor gold timing can be worked out from ids; gold spacing is a
+draw without memory (each claim is gold with a chance of 1 in N, with a cap
+on streaks) instead of counting submissions, never makes the first task of a
+session (30 minutes without a submission) gold, and falls back to the other
+kind so the queue never runs dry. New indexes on
+`Task(batchId, status, position)` and `Task(batchId, status, isGold,
+position)` serve import order; shuffled order sorts the open tasks of one
+batch at a time. Still open: the daily limit, a manager releasing a claim and manual
+assignment, as planned, and the measurements of item 17.
 
 ### 13. Moving, resizing and zooming boxes
 

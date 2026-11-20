@@ -3,6 +3,7 @@ import { data, Form } from 'react-router';
 
 import { ProjectForm } from '~/components/project-form';
 import { Alert, Button, Card } from '~/components/ui';
+import { centsToDecimal } from '~/domain/payouts';
 import { parseProjectForm } from '~/domain/project-form';
 import { refusalMessage } from '~/domain/schema-diff';
 import { requireUser } from '~/lib/auth.server';
@@ -47,10 +48,12 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       reviewSamplePercent: project.reviewSamplePercent,
       disputeWindowDays: project.disputeWindowDays,
       goldFeedback: project.goldFeedback,
+      queueOrder: project.queueOrder,
+      goldEvery: project.goldEvery,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,
-      rate: (project.rateCents / 100).toFixed(2),
+      rate: centsToDecimal(project.rateCents),
     },
     // lets the form show what a schema edit would break before it is saved
     usage: await schemaUsage(project.id),

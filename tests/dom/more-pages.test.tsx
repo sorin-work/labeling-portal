@@ -2,6 +2,7 @@ import { screen } from '@testing-library/react';
 import { describe, it } from 'vitest';
 
 import MyWorkRevise, { type loader as reviseLoader } from '~/routes/my-work-revise';
+import Earnings, { type loader as earningsLoader } from '~/routes/earnings';
 import Payouts, { type loader as payoutsLoader } from '~/routes/payouts';
 import ProjectQualification, {
   type loader as qualificationLoader,
@@ -81,7 +82,7 @@ describe('pages have no axe violations', () => {
 
 function revise(kind: Kind, mode: 'revise' | 'compare'): Data<typeof reviseLoader> {
   return {
-    userId: 'u1',
+    userTag: 'tag-u1',
     mode,
     corrected: mode === 'compare' ? (answers[kind] as never) : null,
     goldCheck: null,
@@ -92,7 +93,9 @@ function revise(kind: Kind, mode: 'revise' | 'compare'): Data<typeof reviseLoade
     answer: answers[kind] as never,
     draft: null,
     draftNote: null,
+    draftSeconds: 0,
     feedback: 'Please look again at the second half.',
+    editable: mode === 'revise',
     dispute: null,
     disputeUntil: new Date(at.getTime() + 14 * 86_400_000),
     disputeClosed: null,
@@ -219,14 +222,16 @@ const settings: Data<typeof settingsLoader> = {
     qualificationPassPercent: 80,
     payMode: 'PER_TASK',
     rate: '0.25',
+    queueOrder: 'IMPORT',
+    goldEvery: null,
   },
   usage: {
     tasks: 10,
-    answers: 4,
-    names: new Map([['PERSON', 3]]),
-    multiLabel: 0,
-    ties: 0,
-    scored: 0,
+    answers: { submission: 4 },
+    names: new Map([['PERSON', { submission: 3 }]]),
+    multiLabel: {},
+    ties: {},
+    scored: {},
     dimensions: new Map(),
   },
 };
@@ -329,6 +334,32 @@ describe('manager pages have no axe violations', () => {
       inProject: true,
     });
     await screen.findAllByText('Bob');
+    await expectAccessible();
+  });
+
+  it('earnings', async () => {
+    const block = {
+      projectId: 'p1',
+      projectName: 'Reviews',
+      payMode: 'PER_TASK' as const,
+      rateCents: 25,
+      tasks: 12,
+      seconds: 840,
+      amountCents: 300,
+    };
+    const earnings: Data<typeof earningsLoader> = {
+      range: { from: '2026-11-01', to: '2026-11-20' },
+      payable: { blocks: [block], tasks: 12, seconds: 840, totalCents: 300 },
+      waiting: {
+        blocks: [{ ...block, tasks: 2, amountCents: 50 }],
+        tasks: 2,
+        seconds: 100,
+        totalCents: 50,
+      },
+      sentBack: { blocks: [], tasks: 0, seconds: 0, totalCents: 0 },
+    };
+    renderPage({ path: '/earnings', url: '/earnings', Component: Earnings, loaderData: earnings });
+    await screen.findAllByText('Reviews');
     await expectAccessible();
   });
 
