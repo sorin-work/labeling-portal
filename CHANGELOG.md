@@ -105,10 +105,11 @@
   paid on hourly projects. It is saved with the revision draft, so a reload
   does not lose it. A revision is credited at most the project's time limit,
   and a task at most three time limits in all. A person's time is credited
-  once: time for any submission or revision counts from where their time was
-  last credited (`Membership.creditedUntil`), so several sent-back
-  submissions handed in together, or a revision made while a claim is held,
-  do not pay the same minutes twice
+  once: the stretches of their time already credited are kept, and any
+  submission or revision is credited only the time of its own window that no
+  other work took, so several sent-back submissions handed in together, or a
+  revision made while a claim is held, do not pay the same minutes twice,
+  whatever order they are handed in
 
 **Upgrade note.** The day work became payable is stored from this version on
 (`Assignment.payableAt`). The migration sets it to the submission date for

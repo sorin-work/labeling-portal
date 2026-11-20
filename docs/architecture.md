@@ -566,18 +566,30 @@ same way.
   wall-clock time is one resource per person: three submissions sent back
   together and handed in twenty minutes later hold twenty minutes of work
   between them, and a revision made while a claim is held is not also time
-  on the claim. So each membership keeps `creditedUntil`, the moment up to
-  which the person's time has been credited. `creditTime` in
+  on the claim. So the stretches of a person's time that have been credited
+  are stored (`CreditedInterval`, by organisation and user). `creditTime` in
   `app/domain/active-time.ts` is the one place time is credited, for first
-  submissions and revisions alike: a piece of work is credited from the later
-  of that moment and its own start (the claim, or the review that sent it
-  back), up to now, within its own cap, and the moment moves forward by what
-  was credited. Each credit is then its own interval and no two overlap. The
-  submit and resubmit transactions lock the membership row first, so two
-  submissions of one person are credited one after the other. The clock is
-  per organisation and not per project, so the same minutes cannot be paid
-  on two projects either. The revision draft only keeps a count; the
-  resubmission credits it.
+  submissions and revisions alike: a piece of work is credited from its own
+  window, its start (the claim, or the review that sent it back) to now,
+  minus the stretches already credited, within its own cap. It takes the
+  earliest free time of the window, which later-started work could not use,
+  so a claim from 09:00 handed in at 09:30 still gets its 25 minutes after a
+  revision of 09:10 to 09:15 was handed in first. What it takes is stored,
+  and no two credits overlap.
+- The submit and resubmit transactions lock the person's membership row
+  first, so two submissions of one person are credited one after the other.
+  The stretches are written back merged. A credit reaches back at most 24
+  hours (`CREDIT_WINDOW_MS`): a claim lives at most two time limits of at
+  most 480 minutes each, and a revision, which has no deadline, is credited
+  only in the last day before it is handed in. Stretches that end before
+  that are removed, so the table holds a few rows per person.
+- The clock is per organisation and not per project, so the same minutes
+  cannot be paid on two projects. A person in two organisations has two
+  clocks, and that is intended: the organisations do not see each other's
+  work, and each pays for its own. The stretches are kept by organisation
+  and user and not on the membership, so removing someone and adding them
+  again does not forget what was credited. The revision draft only keeps a
+  count; the resubmission credits it.
 - **Money is whole cents everywhere.** Amounts are computed per block of
   work, which is one person, project, pay mode and rate, by `amountCents`.
   An hourly block is rounded once, to the nearest cent with half a cent

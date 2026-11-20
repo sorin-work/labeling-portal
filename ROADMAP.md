@@ -631,9 +631,9 @@ submission day, so no past report changes; check constraints refuse a
 submitted row without its rate and accepted work without its date; a revision
 is credited at most the project's time limit and a task three limits in all,
 because revising has no deadline, and a person's time is credited once
-across all their work through a clock on the membership; and hourly rounding
-moved into one integer function. The page says that nothing is marked as paid, because the portal
-does not record payments. Still open: the rates of work from before the
+across all their work through the stretches of time already credited; and
+hourly rounding moved into one integer function. The page says that nothing
+is marked as paid, because the portal does not record payments. Still open: the rates of work from before the
 migration are the project's rate of that day, which is an approximation, and
 marking a period as paid, bonuses, reviewer pay and other currencies remain
 out.
