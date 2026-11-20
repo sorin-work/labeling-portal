@@ -5,6 +5,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 import { Countdown } from '~/components/countdown';
 import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
+import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
@@ -12,8 +13,15 @@ import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
-import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import {
+  emptyAnswer,
+  parseAnswerJson,
+  validateAnswer,
+  type Answer,
+  type ImageSize,
+} from '~/domain/answers';
 import { droppedNote, fitDraft } from '~/domain/drafts';
+import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { renderMarkdown } from '~/domain/markdown';
 import { assignmentRef } from '~/domain/reference';
@@ -193,17 +201,15 @@ export default function Work(props: Route.ComponentProps) {
 function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
+  // A text without entities or an image without objects is submitted as it
+  // is: nothing marked is the answer. For boxes that needs the loaded image.
+  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
+  const toSubmit = answer ?? emptyAnswer(schema, imageSize);
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (!skipping) return;
-    skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSkipping(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    if (skipping) skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
   }, [skipping]);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
@@ -226,18 +232,21 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     },
   });
   const submitRef = useRef<HTMLButtonElement>(null);
+  const skipRef = useRef<HTMLButtonElement>(null);
 
-  // Ctrl/Cmd+Enter submits, even from the rationale box
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        submitRef.current?.click();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  // The keys of this page are rows of the key map (domain/hotkeys.ts). While
+  // the skip form is open the labeling interface gets no keys.
+  useHotkeyPage('work', skipping ? 'skipping' : 'labeling');
+  usePageHotkeys((action) => {
+    // Ctrl+Enter hands in what the page is on: the task, or with the skip
+    // form open the skip. It never submits the task from the skip form.
+    if (action === 'submit') submitRef.current?.click();
+    else if (action === 'confirmSkip') skipRef.current?.click();
+    else if (action === 'skip') setSkipping(true);
+    else if (action === 'closeSkip') setSkipping(false);
+    else return false;
+    return true;
+  });
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -260,7 +269,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             <span className="ml-3 text-xs text-slate-500">{loaderData.doneToday} done today</span>
           </div>
           <div className="flex items-center gap-3">
-            <KeyboardHelp />
+            <KeyboardHelp page="work" schema={schema} />
             <span
               className="text-xs text-slate-500"
               title="Time you have actively worked on this task"
@@ -291,23 +300,30 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             data={task.data}
             value={answer}
             onChange={setAnswer}
+            onImageSize={setImageSize}
           />
         </Card>
         <TaskContext schema={schema} data={task.data} />
         <Form method="post" className="flex flex-wrap items-center gap-2">
-          <input type="hidden" name="answer" value={answer ? JSON.stringify(answer) : ''} />
+          <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
           <Button
             ref={submitRef}
             type="submit"
             name="intent"
             value="submit"
-            disabled={busy || !answer}
-            title="Ctrl+Enter"
+            disabled={busy || !toSubmit}
+            title={`Shortcut: ${pageShortcut('work', 'submit')}`}
           >
             Submit and next
           </Button>
-          <Button type="button" variant="secondary" onClick={() => setSkipping((s) => !s)}>
+          <Button
+            type="button"
+            variant="secondary"
+            title={`Shortcut: ${pageShortcut('work', 'skip')}`}
+            aria-expanded={skipping}
+            onClick={() => setSkipping((s) => !s)}
+          >
             Skip…
           </Button>
           <Button
@@ -351,7 +367,15 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
               placeholder="Details (required for Other)"
               className="block w-full rounded-md px-3 py-2 text-sm ring-1 ring-slate-300"
             />
-            <Button type="submit" name="intent" value="skip" variant="secondary" disabled={busy}>
+            <Button
+              ref={skipRef}
+              type="submit"
+              name="intent"
+              value="skip"
+              variant="secondary"
+              disabled={busy}
+              title={`Shortcut: ${pageShortcut('work', 'confirmSkip')}`}
+            >
               Skip task
             </Button>
           </Form>

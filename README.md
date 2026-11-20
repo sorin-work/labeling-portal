@@ -15,7 +15,10 @@ or fix the work.
 - **Four labeling interfaces**: text classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
-  rationale) and bounding boxes on images, all with keyboard shortcuts
+  rationale) and bounding boxes on images
+- **Keyboard shortcuts** for every action: a key for each label (1 to 9, 0,
+  then letters), a rubric that can be typed, keys for skipping, reviewing and
+  fixing, and a list of them behind `?` on every labeling page
 - **Import** CSV or JSONL into batches with per-line error reports, example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of

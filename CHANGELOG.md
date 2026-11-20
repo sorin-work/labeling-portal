@@ -21,6 +21,23 @@
   and a reload continues from there. Revising sent-back work keeps a draft the
   same way; the qualification test keeps its answers in the browser tab. What
   is kept in the tab belongs to one user and is removed on sign-out
+- Shortcuts for every action, all from one key map: a key for every label (1
+  to 9, 0 for the tenth, then letters, shown on the buttons), pairwise rubrics
+  that can be typed (digits walk the score rows, the arrows choose inside a
+  row), `s` for the skip form, and on the review page `s` for the feedback
+  box, `e` for "Fix it myself" and Esc to cancel a fix. Ctrl+Enter hands in
+  the task, or the skip while the skip form is open
+- Approving by key takes two keys, `a` and then Enter, and any other key
+  calls it off. Right after a decision the keys that decide wait a moment, so
+  a held or repeated key cannot approve the next submission unseen
+- Entity spans are selected with a click, get another type with a key and are
+  removed with Delete or the × next to them. The last removal can be undone
+- `?` lists the shortcuts of the page and the project's labeling kind, on the
+  work, review, revise and qualification pages
+- Shortcuts keep working while a radio button has focus, and work on keyboard
+  layouts where the digits need Shift and on the number pad. On the
+  qualification test they act on one question, the one that was clicked or
+  holds the focus, and that question is marked
 
 ### Review and quality
 
@@ -92,7 +109,11 @@
   submission into an expired claim. Skipping and releasing are guarded the
   same way
 - The work page starts fresh for every task: the previous task's answer and
-  working time no longer carry over after "Submit and next"
+  working time no longer carry over after "Submit and next". The review page
+  does the same for the score, the feedback and an open fix
+- Entity and box tasks with nothing to label could not be submitted: the
+  button stayed off until something had been marked and removed again. The
+  qualification test has a "Nothing to label here" button for such a question
 - Box projects: the drawing layer no longer goes missing after a reload, when
   the image came from the browser cache before the page was ready
 

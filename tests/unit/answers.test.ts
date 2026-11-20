@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseAnswerJson, validateAnswer } from '~/domain/answers';
+import { emptyAnswer, parseAnswerJson, validateAnswer } from '~/domain/answers';
+import { scoreAgainstGold } from '~/domain/gold';
 import { SCHEMA_TEMPLATES, type TextClassificationSchema } from '~/domain/task-schema';
 
 const single = SCHEMA_TEMPLATES.text_classification;
@@ -153,6 +154,36 @@ describe('bounding box answers', () => {
     expect(
       validateAnswer(bbox, {}, { ...base, boxes: [{ x: 1, y: 1, w: 20, h: 20, label: 'dog' }] }).ok,
     ).toBe(false);
+  });
+});
+
+describe('nothing to label', () => {
+  it('is a valid answer for entities, scored as a match against an empty gold answer', () => {
+    const empty = emptyAnswer(ner);
+    expect(empty).toEqual({ spans: [] });
+    expect(validateAnswer(ner, { text: 'No names here.' }, empty)).toEqual({
+      ok: true,
+      answer: { spans: [] },
+    });
+    expect(scoreAgainstGold(ner, empty!, { spans: [] })).toBe(1);
+  });
+
+  it('is a valid answer for boxes once the image size is known', () => {
+    expect(emptyAnswer(bbox)).toBeNull();
+    expect(emptyAnswer(bbox, null)).toBeNull();
+    const empty = emptyAnswer(bbox, { width: 640, height: 400 });
+    expect(validateAnswer(bbox, {}, empty)).toEqual({
+      ok: true,
+      answer: { boxes: [], imageWidth: 640, imageHeight: 400 },
+    });
+    expect(scoreAgainstGold(bbox, empty!, { boxes: [], imageWidth: 640, imageHeight: 400 })).toBe(
+      1,
+    );
+  });
+
+  it('does not exist for labels and comparisons', () => {
+    expect(emptyAnswer(single)).toBeNull();
+    expect(emptyAnswer(pairwise)).toBeNull();
   });
 });
 
