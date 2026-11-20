@@ -86,10 +86,10 @@ describe('toCsvExport', () => {
     };
     const [header, row] = toCsvExport(SCHEMA_TEMPLATES.pairwise, [task]).split('\r\n');
     expect(header).toBe(
-      'task_id,external_id,batch,annotator,review_status,qa_score,active_seconds,preference,a_helpfulness,b_helpfulness,a_accuracy,b_accuracy,a_safety,b_safety,rationale',
+      'task_id,external_id,batch,task_status,annotator,review_status,qa_score,active_seconds,preference,a_helpfulness,b_helpfulness,a_accuracy,b_accuracy,a_safety,b_safety,rationale',
     );
     expect(row).toBe(
-      't1,ext-1,March,ann@example.test,fixed,3,90,A,5,2,4,3,5,5,"A is right, ""B"" is vague"',
+      't1,ext-1,March,complete,ann@example.test,fixed,3,90,A,5,2,4,3,5,5,"A is right, ""B"" is vague"',
     );
   });
 
@@ -101,7 +101,7 @@ describe('toCsvExport', () => {
       annotations: [],
     };
     const lines = toCsvExport(SCHEMA_TEMPLATES.text_classification, [task]).trimEnd().split('\r\n');
-    expect(lines[1]).toBe('t1,ext-1,March,consensus,,,,neutral');
+    expect(lines[1]).toBe('t1,ext-1,March,complete,consensus,,,,neutral');
   });
 });
 
