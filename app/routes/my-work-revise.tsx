@@ -241,6 +241,9 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
       {disputePanel}
       {loaderData.draftNote && <Alert tone="info">{loaderData.draftNote}</Alert>}
       <Card>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          {disputeOpen ? 'Your answer' : 'Your revised answer'}
+        </h2>
         <LabelingInterface
           schema={schema}
           data={taskData}
