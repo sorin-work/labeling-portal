@@ -554,6 +554,15 @@ export function parseImport(
     }
     const withSuggestion = suggestion === undefined ? {} : { suggestion };
     const rawGold = record.data[GOLD_KEY];
+    if (!isBlank(rawGold) && suggestion !== undefined) {
+      // a prediction written next to the answer could be the answer: gold
+      // tasks only get the rule's suggestions, which come from the task alone
+      errors.push({
+        line: record.line,
+        message: 'A gold row takes no _prediction: gold tasks only show the rule’s suggestions',
+      });
+      continue;
+    }
     if (!isBlank(rawGold)) {
       // the same checks an annotator's answer gets, against the schema as it is now
       const gold = parseGold(schema, data, rawGold);

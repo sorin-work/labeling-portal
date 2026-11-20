@@ -487,10 +487,17 @@ export async function promoteToGold(
             isGold: true,
             goldAnswer: answer,
             goldSourceId: source.id,
-            // the copy shows what the task showed: a missing suggestion would mark it as gold
-            suggestion:
-              source.suggestion === null ? undefined : (source.suggestion as Prisma.InputJsonValue),
-            suggestionSource: source.suggestionSource,
+            // The copy shows what the task showed when the rule suggested it, so
+            // a missing suggestion does not mark it as gold. A file's
+            // prediction is not copied: gold tasks only show the rule's.
+            ...(source.suggestion !== null &&
+            source.suggestionSource !== null &&
+            source.suggestionSource !== 'file'
+              ? {
+                  suggestion: source.suggestion as Prisma.InputJsonValue,
+                  suggestionSource: source.suggestionSource,
+                }
+              : {}),
             createdAt: now,
           },
         });
