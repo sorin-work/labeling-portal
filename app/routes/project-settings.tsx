@@ -116,14 +116,20 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function ProjectSettings({ loaderData, actionData }: Route.ComponentProps) {
-  const { project } = loaderData;
+  const { project, usage } = loaderData;
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         {actionData?.saved && <Alert tone="success">Settings saved.</Alert>}
+        {actionData?.warnings.map((warning) => (
+          <Alert key={warning} tone="info">
+            Keep in mind: {warning}.
+          </Alert>
+        ))}
         <ProjectForm
           key={project.schema}
           defaults={project}
+          usage={usage}
           errors={actionData?.errors}
           submitLabel="Save changes"
           allowTemplates={false}
