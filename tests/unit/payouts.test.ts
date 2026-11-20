@@ -7,7 +7,7 @@ import {
   divideRounded,
   formatCents,
   parseMoney,
-  payableAt,
+  payableSince,
   type PaidWork,
 } from '~/domain/payouts';
 
@@ -64,31 +64,19 @@ describe('amountCents', () => {
   });
 });
 
-describe('payableAt', () => {
-  const submittedAt = new Date('2026-03-30T10:00:00Z');
-  const reviewedAt = new Date('2026-04-02T09:00:00Z');
+describe('payableSince', () => {
+  const at = new Date('2026-04-02T09:00:00Z');
 
-  it('is the review for work a reviewer approved or fixed', () => {
-    expect(payableAt({ reviewStatus: 'APPROVED', submittedAt, reviewedAt })).toBe(reviewedAt);
-    expect(payableAt({ reviewStatus: 'FIXED', submittedAt, reviewedAt })).toBe(reviewedAt);
+  it('dates work that a write accepts', () => {
+    // a reviewer approved or fixed it, or it was submitted and needs no review
+    expect(payableSince('APPROVED', at)).toBe(at);
+    expect(payableSince('FIXED', at)).toBe(at);
+    expect(payableSince('NOT_REQUIRED', at)).toBe(at);
   });
 
-  it('is the submission for work that needed no review', () => {
-    expect(payableAt({ reviewStatus: 'NOT_REQUIRED', submittedAt, reviewedAt: null })).toBe(
-      submittedAt,
-    );
-  });
-
-  it('is nothing while work waits for review or was sent back', () => {
-    expect(payableAt({ reviewStatus: 'PENDING', submittedAt, reviewedAt: null })).toBeNull();
-    expect(payableAt({ reviewStatus: 'SENT_BACK', submittedAt, reviewedAt })).toBeNull();
-    expect(payableAt({ reviewStatus: null, submittedAt: null, reviewedAt: null })).toBeNull();
-  });
-
-  it('falls back to the submission when an accepted row has no review date', () => {
-    expect(payableAt({ reviewStatus: 'APPROVED', submittedAt, reviewedAt: null })).toBe(
-      submittedAt,
-    );
+  it('gives no date to work that waits for review or was sent back', () => {
+    expect(payableSince('PENDING', at)).toBeNull();
+    expect(payableSince('SENT_BACK', at)).toBeNull();
   });
 });
 

@@ -457,6 +457,7 @@ async function withHistory(projectId: string, userId: string, count = ALWAYS_REV
       answer: { labels: ['positive'] },
       reviewStatus: 'APPROVED' as const,
       reviewedAt: at,
+      payableAt: at,
     })),
   });
   await prisma.task.updateMany({
@@ -550,6 +551,7 @@ describe('review sampling', () => {
         submittedAt: at,
         answer: { labels: ['negative'] },
         reviewStatus: 'NOT_REQUIRED' as const,
+        payableAt: at,
         goldScore: 0,
       })),
     });

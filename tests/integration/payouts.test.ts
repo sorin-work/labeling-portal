@@ -253,6 +253,78 @@ describe('rates frozen at submission', () => {
     ).rejects.toThrow(/Assignment_submitted_has_rate/);
   });
 
+  it('is refused by the database when accepted work has no payable date, or other work has one', async () => {
+    const { project, ann } = await setup();
+    const [task] = await prisma.task.findMany({ where: { projectId: project.id } });
+    const at = new Date('2026-03-10T09:00:00Z');
+    const submitted = {
+      projectId: project.id,
+      taskId: task.id,
+      userId: ann.id,
+      expiresAt: at,
+      submittedAt: at,
+      status: 'SUBMITTED' as const,
+      rateCents: 35,
+      payMode: 'PER_TASK' as const,
+    };
+    const refused = /Assignment_accepted_has_payable_date/;
+
+    for (const reviewStatus of ['APPROVED', 'FIXED', 'NOT_REQUIRED'] as const) {
+      await expect(
+        prisma.assignment.create({ data: { ...submitted, reviewStatus } }),
+      ).rejects.toThrow(refused);
+    }
+    for (const reviewStatus of ['PENDING', 'SENT_BACK'] as const) {
+      await expect(
+        prisma.assignment.create({ data: { ...submitted, reviewStatus, payableAt: at } }),
+      ).rejects.toThrow(refused);
+    }
+    // accepting work in a write that forgets the date is refused as well
+    const pending = await prisma.assignment.create({
+      data: { ...submitted, reviewStatus: 'PENDING' },
+    });
+    await expect(
+      prisma.assignment.update({ where: { id: pending.id }, data: { reviewStatus: 'APPROVED' } }),
+    ).rejects.toThrow(refused);
+  });
+
+  it('takes the rate that is committed when the submission is written', async () => {
+    const { project, ann } = await setup();
+    const { claimNextTask, submitAssignment } = await import('~/models/queue.server');
+    const claimedAt = new Date(Date.now() - 10 * 60_000);
+    const claim = await claimNextTask(project, ann.id, claimedAt);
+    if (!claim.ok) throw new Error(claim.reason);
+
+    // a settings save has changed the rate and is about to commit
+    let commit = () => {};
+    const changed = new Promise<void>((resolve) => (commit = resolve));
+    let updated = () => {};
+    const rateIsWritten = new Promise<void>((resolve) => (updated = resolve));
+    const saving = prisma.$transaction(async (tx) => {
+      await tx.project.update({ where: { id: project.id }, data: { rateCents: 50 } });
+      updated();
+      await changed;
+    });
+    await rateIsWritten;
+
+    const submitting = submitAssignment(claim.assignment.id, ann.id, {
+      answer: { labels: ['positive'] },
+      activeSeconds: 30,
+      reviewRequired: false,
+    });
+    // the submission waits for the save instead of going ahead with the old rate
+    const first = await Promise.race([
+      submitting.then(() => 'submitted'),
+      new Promise((resolve) => setTimeout(() => resolve('waiting'), 300)),
+    ]);
+    expect(first).toBe('waiting');
+    commit();
+    await saving;
+
+    const result = await submitting;
+    expect(result.ok && result.assignment).toMatchObject({ rateCents: 50, payMode: 'PER_TASK' });
+  });
+
   it('leaves earlier work alone when the rate changes', async () => {
     const { project, ann, cookie } = await setup();
     const first = await submitWork(
@@ -359,6 +431,7 @@ describe('the day work becomes payable', () => {
         submittedAt: january,
         reviewStatus: 'APPROVED' as const,
         reviewedAt: january,
+        payableAt: january,
         answer: { labels: ['positive'] },
         rateCents: 35,
         payMode: 'PER_TASK' as const,
@@ -380,6 +453,34 @@ describe('the day work becomes payable', () => {
       rateCents: 35,
       payMode: 'PER_TASK',
     });
+    expect(await report(MARCH)).toMatchObject({ totalCents: 35, pending: 0 });
+    expect((await report(APRIL)).totalCents).toBe(0);
+  });
+
+  it('leaves work that was accepted before the cutover in the period it was submitted in', async () => {
+    const { project, ann, report } = await withReview();
+    const [task] = await prisma.task.findMany({ where: { projectId: project.id } });
+    // what the migration leaves behind for old work: submitted in March,
+    // approved in April, and dated by its submission as the old report had it
+    const submittedAt = new Date('2026-03-30T09:00:00Z');
+    await prisma.assignment.create({
+      data: {
+        projectId: project.id,
+        taskId: task.id,
+        userId: ann.id,
+        status: 'SUBMITTED',
+        claimedAt: submittedAt,
+        expiresAt: submittedAt,
+        submittedAt,
+        reviewStatus: 'APPROVED',
+        reviewedAt: new Date('2026-04-02T10:00:00Z'),
+        payableAt: submittedAt,
+        answer: { labels: ['positive'] },
+        rateCents: 35,
+        payMode: 'PER_TASK',
+      },
+    });
+
     expect(await report(MARCH)).toMatchObject({ totalCents: 35, pending: 0 });
     expect((await report(APRIL)).totalCents).toBe(0);
   });
@@ -509,6 +610,101 @@ describe('the day work becomes payable', () => {
     );
     // 360 seconds at $18 an hour
     expect((await report(MARCH)).totalCents).toBe(180);
+  });
+
+  it('credits a revision no more than the time limit, whatever the routes are sent', async () => {
+    const { org, project, ann, reviewer, report } = await withReview();
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { payMode: 'HOURLY', rateCents: 2000, timeLimitMinutes: 30 },
+    });
+    const submission = await submitWork(
+      project,
+      ann.id,
+      { labels: ['positive'] },
+      { now: new Date('2026-03-10T09:00:00Z'), activeSeconds: 120 },
+    );
+    // sent back five days ago; revising has no deadline of its own
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60_000);
+    await recordReview(
+      submission.id,
+      reviewer.id,
+      { decision: 'SEND_BACK', qaScore: 2, feedback: 'Look again.' },
+      fiveDaysAgo,
+    );
+    const cookie = await cookieFor(ann, org.id);
+    const path = `/my-work/${submission.id}`;
+    const params = { assignmentId: submission.id };
+    const stored = () => prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } });
+
+    // the draft route is posted a time no browser could have counted
+    const saved = (await run(
+      reviseDraftAction,
+      makeRequest(`${path}/draft`, { cookie, form: { activeSeconds: '9999999' } }),
+      params,
+    )) as Response;
+    expect(await saved.json()).toEqual({ ok: true, draftSeconds: 30 * 60 });
+    expect(await stored()).toMatchObject({ activeSeconds: 120, draftSeconds: 30 * 60 });
+
+    // and so is the form that hands the revision in
+    await run(
+      reviseAction,
+      makeRequest(path, {
+        cookie,
+        form: { answer: JSON.stringify({ labels: ['negative'] }), activeSeconds: '9999999' },
+      }),
+      params,
+    );
+    expect(await stored()).toMatchObject({
+      reviewStatus: 'PENDING',
+      activeSeconds: 120 + 30 * 60,
+      draftSeconds: 0,
+    });
+
+    await recordReview(
+      submission.id,
+      reviewer.id,
+      { decision: 'APPROVE', qaScore: 4, feedback: '' },
+      new Date('2026-03-20T09:00:00Z'),
+    );
+    // 32 minutes at $20 an hour, not five days of it
+    expect((await report(MARCH)).totalCents).toBe(1067);
+  });
+
+  it('credits an assignment no more than three time limits, however often it is sent back', async () => {
+    const { project, ann, reviewer } = await withReview();
+    await prisma.project.update({ where: { id: project.id }, data: { timeLimitMinutes: 30 } });
+    const submission = await submitWork(
+      project,
+      ann.id,
+      { labels: ['positive'] },
+      { now: new Date('2026-03-01T09:00:00Z'), activeSeconds: 120 },
+    );
+    const credited = [];
+    for (let round = 1; round <= 5; round++) {
+      const day = String(round + 1).padStart(2, '0');
+      await recordReview(
+        submission.id,
+        reviewer.id,
+        { decision: 'SEND_BACK', qaScore: 2, feedback: 'Again.' },
+        new Date(`2026-03-${day}T09:00:00Z`),
+      );
+      // a day later each time, with a count far beyond it
+      expect(
+        await resubmitAssignment(
+          submission.id,
+          ann.id,
+          { answer: { labels: ['negative'] }, activeSeconds: 9_999_999 },
+          new Date(`2026-03-${day}T21:00:00Z`),
+        ),
+      ).toEqual({ ok: true });
+      const { activeSeconds } = await prisma.assignment.findUniqueOrThrow({
+        where: { id: submission.id },
+      });
+      credited.push(activeSeconds);
+    }
+    // 120 seconds at first, then a limit per revision until three limits are reached
+    expect(credited).toEqual([1920, 3720, 5400, 5400, 5400]);
   });
 
   it('takes the revising time from the form', async () => {
