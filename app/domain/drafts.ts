@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { Answer, Box, PairwiseAnswer, Span } from './answers';
+import { storedBox } from './geometry';
 import { addSpan } from './spans';
 import type {
   BboxSchema,
@@ -135,10 +136,7 @@ function fitBbox(schema: BboxSchema, stored: Record<string, unknown>): FittedDra
   for (const item of stored.boxes) {
     const box = boxShape.safeParse(item);
     if (!box.success || !schema.labels.includes(box.data.label)) continue;
-    const x = Math.max(0, box.data.x);
-    const y = Math.max(0, box.data.y);
-    const w = Math.min(box.data.w, imageWidth - x);
-    const h = Math.min(box.data.h, imageHeight - y);
+    const { x, y, w, h } = storedBox(box.data, { w: imageWidth, h: imageHeight });
     if (w < schema.minBoxSize || h < schema.minBoxSize) continue;
     boxes.push({ x, y, w, h, label: box.data.label });
   }

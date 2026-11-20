@@ -205,6 +205,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
                   value={answers[task.id] ?? null}
                   onChange={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
                   onImageSize={(size) => setSizes((prev) => ({ ...prev, [task.id]: size }))}
+                  viewKey={task.id}
                 />
                 <NothingToLabel
                   shown={!answers[task.id]}

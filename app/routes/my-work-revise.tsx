@@ -219,6 +219,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
               value={answer}
               onChange={() => {}}
               readOnly
+              viewKey={`${loaderData.id}:answer`}
             />
           </Card>
           <Card>
@@ -231,6 +232,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
               value={corrected}
               onChange={() => {}}
               readOnly
+              viewKey={`${loaderData.id}:corrected`}
             />
           </Card>
         </div>
@@ -260,6 +262,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
           value={editable ? value : answer}
           onChange={setValue}
           readOnly={!editable}
+          viewKey={loaderData.id}
         />
       </Card>
       {editable && (

@@ -300,12 +300,16 @@ meanings on one page.
   a moment (`DECISION_PAUSE_MS`), so a key that is still held or pressed twice
   cannot decide on work nobody has looked at.
 - **Label keys** skip the letters that mean something else somewhere (`a`,
-  `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
-  page, so a label always has the same key.
+  `e`, `s` on the pages, `f`, `n` and `r` in the box interface), on every
+  page, so a label always has the same key. That leaves thirty keys, as many
+  as a schema may have labels. `r` joined the list with box editing, so
+  labels 24 to 30 moved one letter on: they were `r` to `y` and are now `t`
+  to `z`.
 - **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
   browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
   with Z, which the browser only uses inside text boxes. A key that is held
-  down does not repeat. What is typed into a text box is text, also `?` and
+  down does not repeat, except the rows marked `repeat` (moving a box with
+  the arrows, zooming). What is typed into a text box is text, also `?` and
   Escape while the list of shortcuts is open; only handing in and closing the
   skip form work from there. While the list is open nothing else acts. A
   focused radio button keeps its arrow keys and Space, a button its Enter.
@@ -323,16 +327,81 @@ meanings on one page.
 - **Nothing is thrown away by a slip.** No single letter or digit skips,
   releases, deletes or decides: `s` only opens the skip form, releasing has
   no key, approving takes two keys. Removing a box takes Delete or Backspace
-  on a box that was selected first. Removing a span takes Delete (Backspace
-  is left to text boxes), a span is let go when the cursor moves into a text
-  box, and the last removal can be put back with the "Undo" next to it or
-  Ctrl+Z.
+  on a box that was selected first, and undo brings it back. Removing a span
+  takes Delete (Backspace is left to text boxes), a span is let go when the
+  cursor moves into a text box, and the last removal can be put back with the
+  "Undo" next to it or Ctrl+Z.
+- **Rows that are only listed.** A row marked `passive` shows up in the list
+  of shortcuts but is not handed out by the key map: Tab is the browser's,
+  and Space and Escape in the box interface only mean something while the
+  pointer is on the picture or dragging.
 
 The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
 pass on what the key map decides. Pairwise score rows are real radio groups:
 one tab stop each, the arrows choose, and a typed digit scores the row that
 has focus (or the first empty one) and moves to the next, A then B for each
 dimension.
+
+## Boxes on an image
+
+`app/components/labeling/bounding-boxes.tsx` wires the pointer and the keys to
+pure code: the geometry in `app/domain/geometry.ts`, undo in
+`app/domain/history.ts` and the keys in the key map.
+
+- **Image pixels.** A box is stored in pixels of the image, whatever is on
+  screen. The view is `{ zoom, x, y }`: zoom 1 fits the whole image, `x` and
+  `y` are the image pixel in the top left corner. `toImage` and `toScreen`
+  convert at any zoom and position, and the picture is shown with one CSS
+  transform (`viewTransform`). Zoom and position are kept for the session
+  under the assignment's id (`viewKey`) and never reach the draft or the
+  answer. Coordinates are kept to a tenth of a pixel and inside the image
+  (`storedBox`). The component stores every box that way, and `validateBbox`
+  and the draft reader compare the minimum size on the same rounded box, so a
+  box the interface keeps is never refused or dropped as too small.
+- **What a press does** is decided by `hitTest` and `pointerIntent`. The
+  handles of the selected box come first. Of the boxes under the pointer the
+  smallest wins, so a box inside a larger one can always be reached, and of
+  two equally large ones the topmost. A press on a handle resizes, on a box
+  moves, on the background draws. With Space held or the middle button it
+  moves the view. Handles, lines, labels and the reach of a press are sized
+  in screen pixels, whatever the size of the image and the zoom.
+- **A drag** starts only after four screen pixels, so a click never moves a
+  box. While it lasts the component shows a preview, and the answer changes
+  once, when the drag ends, so the draft autosave never sees a half dragged
+  box. Escape, a lost pointer (`pointercancel`) and a release more than 24
+  pixels outside the picture put the box back; inside that margin it stops
+  at the edge. `moveBox` keeps a box inside the image, `resizeBox` flips it
+  when a handle is dragged past the opposite side, and neither lets it get
+  smaller than the schema's `minBoxSize`. The drag is measured in the view it
+  started in, so zooming meanwhile does not make the box jump, and only the
+  view keys work while it lasts: a removal or an undo during a drag is
+  ignored.
+- **Without a pointer.** Every box can take focus, and the box that has focus
+  is the selected one, so Tab walks through them. `n` puts a new box in the
+  middle of the view. The arrow keys move the focused box by one image pixel,
+  with Shift by ten, and after `r` they resize it instead. They only do so
+  while a box has focus; elsewhere they scroll the page or move inside a
+  radio group as usual. Resizing is a mode and not a second modifier, because
+  Alt and Ctrl with the arrows belong to the browser, the system and screen
+  readers.
+- **Undo and redo** (Ctrl+Z, Ctrl+Shift+Z, and two buttons) step through one
+  history for the picture: drawing, moving, resizing, relabelling and removing
+  are a step each, a whole drag is one step, and a run of arrow presses on one
+  box is one step too. The selection is part of every step, which is why boxes
+  need no ids. The history starts over when the answer is replaced from
+  outside (a restored draft).
+- **Zooming.** The wheel zooms around the pointer, `+` and `-` do the same,
+  `f` fits the whole image. On a page where the picture can be edited the
+  wheel always zooms. A read-only picture leaves the wheel, and touch, to the
+  page until it has been zoomed with a button or a key, so a page with
+  several pictures still scrolls.
+- **Read-only** is the same component with `readOnly`: it can be zoomed and
+  moved around and nothing else. The pointer learns that in `pointerIntent`,
+  the keys from the `readOnly` rows of the key map, and `apply` in the
+  component is the one gate every change to the boxes has to pass.
+- **Touch and pen** use the same pointer events. A picture that can be edited
+  or is zoomed sets `touch-action: none`, so a finger draws and moves instead
+  of scrolling the page. There is no pinch zoom.
 
 ## Quality
 

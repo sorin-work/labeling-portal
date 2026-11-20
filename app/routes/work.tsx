@@ -301,6 +301,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             value={answer}
             onChange={setAnswer}
             onImageSize={setImageSize}
+            viewKey={assignment.id}
           />
         </Card>
         <TaskContext schema={schema} data={task.data} />
