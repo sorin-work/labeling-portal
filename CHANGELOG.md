@@ -78,6 +78,25 @@
   answer
 - Undo and redo for boxes (Ctrl+Z, Ctrl+Shift+Z and buttons): drawing,
   moving, resizing, relabelling and removing
+- Entity spans can be marked from the keyboard: Tab to the text, the arrows
+  go word by word, Shift with an arrow selects more, Enter marks
+- Classification labels, the pairwise preference and the review score are
+  real radio groups: one tab stop, the arrows choose
+- The list under a box image says each box's label, place and size; a box
+  picked there gets focus on the image, and its label can be changed there
+- After "Submit and next" focus goes to the next task and a screen reader
+  hears that it loaded; after any other navigation focus goes to the page
+  content. Changes to spans and boxes, the time left and a failed draft save
+  are said aloud
+- The list of shortcuts holds focus while it is open and gives it back when
+  it closes; so do the skip form and the armed approval
+- More time can be asked for up to three times per claim instead of once,
+  each time in the last two minutes; the server refuses it earlier. A first
+  submission is still credited at most two time limits
+- Hints, key caps and meta text are darker (`text-slate-500`, 4.5:1 or more)
+- Tests: a `dom` test project (jsdom, Testing Library, `vitest-axe`) checks
+  the interfaces and the main pages with axe, and a unit test works out the
+  contrast of every text colour from the stylesheet
 
 ### Review and quality
 
@@ -203,6 +222,12 @@ the period of its approval.
   no longer counts gold tasks and test questions, which never complete
 
 ### Fixes
+
+- `aria-sort` on the quality table sits on the column header, not on its
+  button
+- A page with two pairwise interfaces had the `rationale` id twice
+- The chart on the quality page has its numbers in words, and the gold flag
+  is said as well as shown
 
 - A task could stay open for good with its overlap met when its last
   submissions were accepted at the same moment. The task is now locked while

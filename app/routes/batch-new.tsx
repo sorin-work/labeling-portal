@@ -133,7 +133,7 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
               {result.errors.map((e, i) => (
                 <li key={i}>
                   {e.line > 0 && (
-                    <span className="text-slate-400">
+                    <span className="text-slate-500">
                       {result.unit ?? 'line'} {e.line}:{' '}
                     </span>
                   )}

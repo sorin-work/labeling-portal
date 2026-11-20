@@ -7,6 +7,7 @@ import {
   boxBetween,
   centredBox,
   clampView,
+  describeBox,
   droppedOutside,
   DROP_SLACK_PX,
   DRAG_THRESHOLD_PX,
@@ -395,5 +396,13 @@ describe('zoom and pan', () => {
       x: 0,
       y: 350,
     });
+  });
+});
+
+describe('describeBox', () => {
+  it('says the label, the place and the size in whole pixels', () => {
+    expect(describeBox({ x: 10.4, y: 0, w: 59.6, h: 40, label: 'car' }, 0, 3)).toBe(
+      'car, box 1 of 3, at 10, 0, 60 by 40 pixels',
+    );
   });
 });

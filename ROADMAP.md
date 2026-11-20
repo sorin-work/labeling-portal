@@ -41,7 +41,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 5   | Earnings page and rates frozen at submission | Shipped | payouts       | M    | -          |
 | 6   | More import and export formats               | Shipped | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
-| 8   | Accessibility pass                           | Next    | ui            | M    | -          |
+| 8   | Accessibility pass                           | Shipped | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Shipped | quality       | M    | -          |
@@ -54,60 +54,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
-
-### 8. Accessibility pass
-
-The basics are there: a skip link, visible focus, labelled navigation and form
-fields, `role="alert"` on the time warning. I have never gone through the
-labeling pages with only a keyboard or with a screen reader, and nothing in CI
-checks any of it. Gaps I already know about:
-
-- Entity spans can only be made with a mouse. `NerSpans` reads
-  `window.getSelection()` on `mouseup`. Since item 3 a span can be selected,
-  retyped and removed from the list under the text with the keyboard, but not
-  made. It needs a keyboard path: while the text has focus, a cursor that the
-  arrow keys move word by word, Shift with an arrow to extend, Enter to apply
-  the active type.
-- Boxes no longer need a pointer since item 13: `n` puts a new box in the
-  view, Tab walks through the boxes, and the arrows move and resize the one
-  that has focus.
-- New keys go into the key map in `domain/hotkeys.ts` (item 3): pages and
-  kinds, key to action, read by the handlers and by `KeyboardHelp`. The arrow
-  keys and Space stay with a focused radio button or checkbox there
-  (`isNativeKey`), so a cursor in the entity text needs its own rule.
-- After "Submit and next" the next task loads without any announcement, and
-  focus stays wherever it was. Move focus to the task, or announce it in a
-  live region, in `routes/work.tsx`, and move focus to `<main id="main">` on
-  navigation in `routes/app-layout.tsx`.
-- `aria-sort` sits on the sort button in the quality table
-  (`routes/project-quality.tsx`). It belongs on the `<th>`.
-- The label buttons in `text-classification.tsx` have `role="radio"`, but
-  each one is a tab stop and the arrow keys do nothing. Make the group behave
-  like a native radio group: one tab stop, and the arrow keys choose. Real
-  radio inputs give that for free; the pairwise score rows have been real
-  radio groups since item 3. The preference buttons in `pairwise.tsx` and the
-  quality score on the review page are `aria-pressed` buttons and want the
-  same.
-- `id="rationale"` is fixed in `PairwiseRubric`, so a page with two interfaces
-  (the comparison in `routes/my-work-revise.tsx`, the qualification test) has
-  the id twice. `useId` fixes it.
-- `KeyboardHelp` opens a `role="dialog"` without moving focus into it or
-  putting it back.
-- `text-slate-400` on white is about 2.6:1 and is used for hints, key caps and
-  meta text in some 25 places. Body text needs 4.5:1; `text-slate-500` passes.
-- `Countdown` says nothing until the two-minute `TimeWarning`, and the limit
-  can be extended once only (`extendAssignment`). People who need longer
-  should be able to ask more than once.
-- An automated check. Both projects in `vitest.config.ts` run in `node`, so
-  there are no component tests at all. Add a third project with `jsdom`,
-  `@testing-library/react` and `vitest-axe`, render the four interfaces and
-  the main pages (through `createRoutesStub` from `react-router`) and fail on
-  violations. Later items can test key handling there too.
-- Tricky: jsdom has no layout and no colours. Contrast and anything that
-  depends on element sizes stay a check by hand; write down the result in the
-  pull request.
-- Undecided: how many extensions. Unlimited extensions let one person sit on a
-  task for ever. I lean towards three, each still asked for by the annotator.
 
 ## Later
 
@@ -485,6 +431,27 @@ clocks, then a real dump, a restore into a scratch database and the row
 counts. Still open: the dumps are not encrypted and stay on the same disk
 unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
 apart from the service's log.
+
+### 8. Accessibility pass
+
+Every labeling action now has a keyboard path: entity spans are marked with a
+word cursor (arrows, Shift to extend, Enter), and the list under a box image
+says each box's label and position and hands focus to it. Classification
+labels, the pairwise preference and the review score are real radio groups.
+Focus moves to `<main>` after a navigation and to the next task after "Submit
+and next", which a live region announces; span and box changes, the time
+left and a failed draft save are said too. The list of shortcuts is a modal
+dialog that keeps and gives back focus. `text-slate-400` is gone, `aria-sort`
+is on the `<th>` and each rationale has its own id. More time can be asked for
+three times per claim, each in the last two minutes (a new `extensions`
+column); a first submission is still credited at most two time limits. A `dom` test project runs
+axe over the four interfaces and the main pages, with one shared helper and
+only `color-contrast` switched off; contrast is worked out from the
+stylesheet in a unit test instead. Different from the design: the contrast
+check is automated rather than by hand, and the countdown speaks at 10, 5
+and 1 minutes. Still open: target sizes, reflow and the colours a schema
+picks for its entity types are still checked by hand, and there was no
+session with a real screen reader.
 
 ### 9. Disputes on review decisions
 

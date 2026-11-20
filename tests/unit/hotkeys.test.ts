@@ -503,6 +503,20 @@ describe('entity spans', () => {
     expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undoRemove');
     expect(interfaceAction(ner, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
   });
+
+  it('are marked from the keyboard: arrows, Shift with the arrows, Enter', () => {
+    const on = editing(at('work', 'labeling'));
+    expect(interfaceAction(ner, 'ArrowRight', on)).toEqual({ action: 'cursor', index: 1 });
+    expect(interfaceAction(ner, 'Shift+ArrowLeft', on)).toEqual({ action: 'extend', index: 0 });
+    expect(interfaceAction(ner, 'Enter', on)?.action).toBe('mark');
+    // held arrows walk on; Enter does not repeat
+    expect(interfaceAction(ner, 'ArrowRight', { ...on, repeat: true })?.action).toBe('cursor');
+    expect(interfaceAction(ner, 'Enter', { ...on, repeat: true })).toBeNull();
+    // not while the skip form is open, and not in a read-only view
+    expect(interfaceAction(ner, 'Enter', editing(at('work', 'skipping')))).toBeNull();
+    expect(interfaceAction(ner, 'ArrowRight', { ...on, readOnly: true })).toBeNull();
+    expect(interfaceShortcut(ner, ['cursor', 'extend'])).toBe('← / →, Shift + ← / Shift + →');
+  });
 });
 
 describe('the cheat sheet', () => {

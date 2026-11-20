@@ -9,6 +9,8 @@ import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
+import { noImplicitSubmit } from '~/components/no-implicit-submit';
+import { useRestoreFocus } from '~/components/use-dialog-focus';
 import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
@@ -25,6 +27,7 @@ import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { renderMarkdown } from '~/domain/markdown';
 import { assignmentRef } from '~/domain/reference';
+import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
 import { requireUser } from '~/lib/auth.server';
 import { userTag } from '~/lib/user-tag.server';
 import { prisma } from '~/lib/db.server';
@@ -94,7 +97,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
-      canExtend: assignment.extendedAt === null,
+      extensionsLeft: extensionsLeft(assignment.extensions),
       draft: draft.answer,
       draftNote: droppedNote(schema, draft.dropped),
       draftSeconds: assignment.draftSeconds,
@@ -139,9 +142,11 @@ export async function action({ request, params }: Route.ActionArgs) {
       return data(
         {
           error:
-            result.error === 'already_extended'
-              ? 'You already got extra time on this task.'
-              : 'This task is no longer yours.',
+            result.error === 'no_extensions_left'
+              ? `You already got extra time ${MAX_EXTENSIONS} times on this task.`
+              : result.error === 'too_early'
+                ? 'More time can be asked for in the last two minutes.'
+                : 'This task is no longer yours.',
         },
         { status: 409 },
       );
@@ -197,10 +202,27 @@ export async function action({ request, params }: Route.ActionArgs) {
  * skip form, the working time and the autosave start fresh for every task.
  */
 export default function Work(props: Route.ComponentProps) {
-  return <WorkPage key={props.loaderData.assignment.id} {...props} />;
+  const { assignment, task, doneToday } = props.loaderData;
+  // After "Submit and next" the new task is said in a live region that stays
+  // on the page, and focus goes to the task.
+  const firstId = useRef(assignment.id);
+  const next = assignment.id !== firstId.current;
+  const [said, setSaid] = useState('');
+  useEffect(() => {
+    if (assignment.id === firstId.current) return;
+    setSaid(`Next task loaded, reference ${task.ref}. ${doneToday} done today.`);
+  }, [assignment.id, task.ref, doneToday]);
+  return (
+    <>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
+      <WorkPage key={assignment.id} {...props} next={next} />
+    </>
+  );
 }
 
-function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
+function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { next: boolean }) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
   // A text without entities or an image without objects is submitted as it
@@ -210,6 +232,9 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
+  // closing the skip form puts the cursor back where it was (before the
+  // effect below moves it into the form)
+  useRestoreFocus(skipping);
   useEffect(() => {
     if (skipping) skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
   }, [skipping]);
@@ -234,6 +259,10 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     },
   });
   const submitRef = useRef<HTMLButtonElement>(null);
+  const taskRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (next) taskRef.current?.focus({ preventScroll: true });
+  }, [next]);
   const skipRef = useRef<HTMLButtonElement>(null);
 
   // The keys of this page are rows of the key map (domain/hotkeys.ts). While
@@ -261,9 +290,9 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             >
               {project.name}
             </Link>
-            <span className="ml-2 text-xs text-slate-400">{task.batch}</span>
+            <span className="ml-2 text-xs text-slate-500">{task.batch}</span>
             <span
-              className="ml-2 font-mono text-xs text-slate-400"
+              className="ml-2 font-mono text-xs text-slate-500"
               title="Quote this reference when you report a problem with this task"
             >
               ref {task.ref}
@@ -287,7 +316,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
         <TimeWarning
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}
-          canExtend={assignment.canExtend}
+          extensionsLeft={assignment.extensionsLeft}
         />
         {instructionsChanged && (
           <Alert tone="info">
@@ -295,17 +324,19 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             you continue.
           </Alert>
         )}
-        <Card>
-          <LabelingInterface
-            key={assignment.id}
-            schema={schema}
-            data={task.data}
-            value={answer}
-            onChange={setAnswer}
-            onImageSize={setImageSize}
-            viewKey={assignment.id}
-          />
-        </Card>
+        <section ref={taskRef} tabIndex={-1} aria-label="Task" className="focus:outline-none">
+          <Card>
+            <LabelingInterface
+              key={assignment.id}
+              schema={schema}
+              data={task.data}
+              value={answer}
+              onChange={setAnswer}
+              onImageSize={setImageSize}
+              viewKey={assignment.id}
+            />
+          </Card>
+        </section>
         <TaskContext schema={schema} data={task.data} />
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
@@ -353,6 +384,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
           <Form
             ref={skipForm}
             method="post"
+            onKeyDown={noImplicitSubmit}
             className="space-y-3 rounded-lg bg-white p-4 ring-1 ring-slate-200"
           >
             <fieldset className="space-y-1">
@@ -366,6 +398,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             </fieldset>
             <textarea
               name="detail"
+              aria-label="Details"
               rows={2}
               placeholder="Details (required for Other)"
               className="block w-full rounded-md px-3 py-2 text-sm ring-1 ring-slate-300"

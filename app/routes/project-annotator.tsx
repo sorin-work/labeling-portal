@@ -107,7 +107,7 @@ export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
                   className="min-w-0 flex-1 truncate hover:text-indigo-700"
                 >
                   {w.externalId && (
-                    <span className="mr-2 font-mono text-xs text-slate-400">{w.externalId}</span>
+                    <span className="mr-2 font-mono text-xs text-slate-500">{w.externalId}</span>
                   )}
                   {w.preview}
                 </Link>

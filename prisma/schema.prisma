@@ -319,8 +319,10 @@ model Assignment {
   status         AssignmentStatus @default(ACTIVE)
   claimedAt      DateTime         @default(now())
   expiresAt      DateTime
-  /// set when the annotator asked for more time (allowed once per claim)
+  /// when the annotator last asked for more time
   extendedAt     DateTime?
+  /// how often the annotator asked for more time on this claim (MAX_EXTENSIONS at most)
+  extensions     Int              @default(0)
   submittedAt    DateTime?
   /// the project's rate and pay mode when the work was first submitted;
   /// payouts and earnings read these, never the project's current values

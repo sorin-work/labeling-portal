@@ -6,6 +6,7 @@ import {
   boxBetween,
   centredBox,
   clampView,
+  describeBox,
   droppedOutside,
   FIT,
   growBox,
@@ -41,6 +42,7 @@ import {
   type History,
 } from '~/domain/history';
 import { interfaceShortcut, isNativeKey, isTextEntry, labelKeys } from '~/domain/hotkeys';
+import { BOX_COLORS } from '~/domain/palette';
 import type { BboxSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
@@ -48,8 +50,6 @@ import { cx } from '../ui';
 import type { LabelingProps } from './index';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
-
-const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899'];
 
 const NO_BOXES: Box[] = [];
 
@@ -143,10 +143,15 @@ export function BoundingBoxes({
     schema.labels[0],
     schema.labels,
   );
-  const colorOf = (label: string) => COLORS[schema.labels.indexOf(label) % COLORS.length];
+  const colorOf = (label: string) => BOX_COLORS[schema.labels.indexOf(label) % BOX_COLORS.length];
   const keys = labelKeys(schema.labels.length);
 
   // ---------- the answer and its history ----------
+
+  /** What a screen reader is told after a change: one live region for the picture. */
+  const [said, setSaid] = useState('');
+  const describe = (list: Box[], index: number) =>
+    list[index] && size ? describeBox(storedBox(list[index], size), index, list.length) : '';
 
   const boxes = value?.boxes ?? NO_BOXES;
   const [history, setHistory] = useState<History<Editing>>(() =>
@@ -183,15 +188,19 @@ export function BoundingBoxes({
       h.present.selected === index ? h : amend(h, { ...h.present, selected: index }),
     );
   /** Undo and redo. Focus follows the selection the step brings back. */
-  const stepTo = (to: History<Editing>) => {
+  const stepTo = (to: History<Editing>, what: 'Undone' | 'Redone') => {
     wantFocus.current = focusedBox() !== null;
-    return apply(to);
+    if (!apply(to)) return false;
+    const count = to.present.boxes.length;
+    setSaid(`${what}. ${count} box${count === 1 ? '' : 'es'}.`);
+    return true;
   };
 
   // ---------- focus: the box that has focus is the selected one ----------
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const boxRefs = useRef(new Map<number, SVGGElement>());
+  const [focused, setFocused] = useState<number | null>(null);
   const wantFocus = useRef(false);
   const focusedBox = (): number | null => {
     for (const [index, element] of boxRefs.current) {
@@ -238,6 +247,13 @@ export function BoundingBoxes({
     viewChanged.current = true;
     setView(next);
   };
+  const zoomPercent = Math.round(shown.zoom * 100);
+  const lastZoom = useRef(zoomPercent);
+  useEffect(() => {
+    if (zoomPercent === lastZoom.current) return;
+    lastZoom.current = zoomPercent;
+    if (viewChanged.current) setSaid(`Zoom ${zoomPercent}%`);
+  }, [zoomPercent]);
 
   /** Where the pointer is over the picture, in screen pixels, for zooming around it. */
   const pointer = useRef<Point | null>(null);
@@ -402,15 +418,14 @@ export function BoundingBoxes({
     if (d.intent === 'draw') {
       if (rect.w < schema.minBoxSize || rect.h < schema.minBoxSize) return;
       wantFocus.current = true;
-      edit([...boxes, { ...rect, label: active }], boxes.length);
+      const added = [...boxes, { ...rect, label: active }];
+      if (edit(added, boxes.length)) setSaid(`Added ${describe(added, boxes.length)}`);
       return;
     }
     // let go outside the picture: the box goes back where it was
     if (droppedOutside(at.screen, at.viewport)) return;
-    edit(
-      boxes.map((box, i) => (i === d.box ? { ...box, ...rect } : box)),
-      d.box,
-    );
+    const dropped = boxes.map((box, i) => (i === d.box ? { ...box, ...rect } : box));
+    if (edit(dropped, d.box)) setSaid(describe(dropped, d.box));
   };
 
   // Escape puts a dragged box back, and Space held over the picture turns a
@@ -457,21 +472,33 @@ export function BoundingBoxes({
 
   // ---------- the keys ----------
 
+  const relabel = (index: number, label: string) => {
+    const next = boxes.map((box, i) => (i === index ? { ...box, label } : box));
+    if (edit(next, index)) setSaid(`Box ${index + 1} is now ${label}.`);
+  };
+
+  /** From the list under the picture: the box takes focus, and the keys act on it. */
+  const focusBox = (index: number) => {
+    select(index);
+    boxRefs.current.get(index)?.focus({ preventScroll: true });
+  };
+
   const removeBox = (index: number) => {
     const next = boxes.filter((_, i) => i !== index);
     // keyboard: focus goes on to the box that takes its place
     const fromKeyboard = focusedBox() !== null;
     wantFocus.current = fromKeyboard;
-    edit(next, fromKeyboard && next.length > 0 ? Math.min(index, next.length - 1) : null);
+    const gone = boxes[index];
+    if (edit(next, fromKeyboard && next.length > 0 ? Math.min(index, next.length - 1) : null)) {
+      setSaid(`Removed the ${gone.label} box. ${shortcut('undo')} puts it back.`);
+    }
   };
 
   const addInView = () => {
     if (!size) return;
     wantFocus.current = true;
-    edit(
-      [...boxes, { ...centredBox(shown, size, schema.minBoxSize), label: active }],
-      boxes.length,
-    );
+    const added = [...boxes, { ...centredBox(shown, size, schema.minBoxSize), label: active }];
+    if (edit(added, boxes.length)) setSaid(`Added ${describe(added, boxes.length)}`);
   };
 
   /** `arrow` counts left, right, up, down, as the key map lists them. */
@@ -489,11 +516,10 @@ export function BoundingBoxes({
     const next = resizing
       ? growBox(boxes[index], dx, dy, size, schema.minBoxSize)
       : moveBox(boxes[index], dx, dy, size);
-    edit(
-      boxes.map((box, i) => (i === index ? next : box)),
-      index,
-      `${resizing ? 'resize' : 'nudge'}:${index}`,
-    );
+    const nudged = boxes.map((box, i) => (i === index ? next : box));
+    if (edit(nudged, index, `${resizing ? 'resize' : 'nudge'}:${index}`)) {
+      setSaid(describe(nudged, index));
+    }
     return true;
   };
 
@@ -513,9 +539,9 @@ export function BoundingBoxes({
         changeView(FIT);
         return true;
       case 'undo':
-        return stepTo(undo(history));
+        return stepTo(undo(history), 'Undone');
       case 'redo':
-        return stepTo(redo(history));
+        return stepTo(redo(history), 'Redone');
       case 'new':
         addInView();
         return true;
@@ -526,6 +552,7 @@ export function BoundingBoxes({
       case 'resizeMode':
         if (selected === null) return false;
         setResizeFor(resizing ? null : selected);
+        setSaid(resizing ? 'The arrows move the box.' : 'The arrows resize the box.');
         return true;
       case 'remove':
         if (selected === null) return false;
@@ -534,11 +561,7 @@ export function BoundingBoxes({
       case 'label': {
         const label = schema.labels[hit.index];
         if (selected === null) setActive(label);
-        else
-          edit(
-            boxes.map((box, i) => (i === selected ? { ...box, label } : box)),
-            selected,
-          );
+        else relabel(selected, label);
         return true;
       }
       default:
@@ -586,7 +609,7 @@ export function BoundingBoxes({
               >
                 <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: colorOf(label) }} />
                 {keys[index] && (
-                  <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>
+                  <kbd className="font-mono text-xs text-slate-500">{keys[index]}</kbd>
                 )}
                 {label}
               </button>
@@ -601,7 +624,7 @@ export function BoundingBoxes({
                 className={toolButton}
                 disabled={!canUndo(history)}
                 title={`Shortcut: ${shortcut('undo')}`}
-                onClick={() => stepTo(undo(history))}
+                onClick={() => stepTo(undo(history), 'Undone')}
               >
                 Undo
               </button>
@@ -610,7 +633,7 @@ export function BoundingBoxes({
                 className={toolButton}
                 disabled={!canRedo(history)}
                 title={`Shortcut: ${shortcut('redo')}`}
-                onClick={() => stepTo(redo(history))}
+                onClick={() => stepTo(redo(history), 'Redone')}
               >
                 Redo
               </button>
@@ -721,11 +744,29 @@ export function BoundingBoxes({
                     data-box={i}
                     tabIndex={readOnly ? undefined : 0}
                     role={readOnly ? undefined : 'button'}
-                    aria-label={`${box.label} box ${i + 1} of ${boxes.length}, ${Math.round(box.w)} by ${Math.round(box.h)} pixels`}
+                    aria-label={describeBox(box, i, boxes.length)}
                     aria-pressed={readOnly ? undefined : selected === i}
-                    onFocus={() => select(i)}
+                    onFocus={() => {
+                      select(i);
+                      setFocused(i);
+                    }}
+                    onBlur={() => setFocused((f) => (f === i ? null : f))}
                     className="outline-none"
                   >
+                    {/* SVG shows no outline: the focus ring is drawn */}
+                    {focused === i && (
+                      <rect
+                        data-focus-ring
+                        x={rect.x - unit * 4}
+                        y={rect.y - unit * 4}
+                        width={rect.w + unit * 8}
+                        height={rect.h + unit * 8}
+                        fill="none"
+                        stroke="#4f46e5"
+                        strokeWidth={unit * 2}
+                        strokeDasharray={`${unit * 4} ${unit * 2}`}
+                      />
+                    )}
                     <rect
                       x={rect.x}
                       y={rect.y}
@@ -785,8 +826,14 @@ export function BoundingBoxes({
         </div>
       </div>
       <p className="text-sm text-slate-500">{hint}</p>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
       {boxes.length > 0 && (
-        <ul className="flex flex-wrap gap-2 text-sm">
+        // The picture in words: every box with its label and position. A box
+        // picked here takes focus on the picture, where the keys move, resize,
+        // relabel and remove it.
+        <ul aria-label="Boxes" className="flex flex-wrap gap-2 text-sm">
           {boxes.map((box, i) => (
             <li
               key={i}
@@ -795,30 +842,46 @@ export function BoundingBoxes({
                 selected === i ? 'ring-2 ring-slate-800' : 'ring-slate-200',
               )}
             >
-              <button
-                type="button"
-                disabled={readOnly}
-                onClick={() => select(i)}
-                className="flex items-center gap-1.5"
-              >
-                <span
-                  className="h-3 w-3 rounded-sm"
-                  style={{ backgroundColor: colorOf(box.label) }}
-                />
-                {box.label}
-                <span className="text-xs text-slate-400">
-                  {Math.round(box.w)}×{Math.round(box.h)}
-                </span>
-              </button>
-              {!readOnly && (
-                <button
-                  type="button"
-                  aria-label={`Remove ${box.label} box`}
-                  onClick={() => removeBox(i)}
-                  className="text-slate-400 hover:text-rose-600"
-                >
-                  ×
-                </button>
+              <span
+                aria-hidden
+                className="h-3 w-3 rounded-sm"
+                style={{ backgroundColor: colorOf(box.label) }}
+              />
+              {readOnly ? (
+                <span>{describeBox(box, i, boxes.length)}</span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => focusBox(i)}
+                    aria-label={`Go to ${describeBox(box, i, boxes.length)}`}
+                    className="flex items-center gap-1.5"
+                  >
+                    {box.label}
+                    <span className="text-xs text-slate-500">
+                      {Math.round(box.x)}, {Math.round(box.y)} · {Math.round(box.w)}×
+                      {Math.round(box.h)}
+                    </span>
+                  </button>
+                  <select
+                    aria-label={`Label of box ${i + 1}`}
+                    value={box.label}
+                    onChange={(event) => relabel(i, event.target.value)}
+                    className="rounded border-0 py-0 pl-1 pr-6 text-xs ring-1 ring-slate-300"
+                  >
+                    {schema.labels.map((label) => (
+                      <option key={label}>{label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={`Remove box ${i + 1}, ${box.label}`}
+                    onClick={() => removeBox(i)}
+                    className="text-slate-500 hover:text-rose-700"
+                  >
+                    ×
+                  </button>
+                </>
               )}
             </li>
           ))}

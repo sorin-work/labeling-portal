@@ -59,7 +59,7 @@ function DisputeList({ projectId, rows }: { projectId: string; rows: Row[] }) {
                 className="block truncate hover:text-indigo-700"
               >
                 {d.externalId && (
-                  <span className="mr-2 font-mono text-xs text-slate-400">{d.externalId}</span>
+                  <span className="mr-2 font-mono text-xs text-slate-500">{d.externalId}</span>
                 )}
                 {d.preview}
               </Link>

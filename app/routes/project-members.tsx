@@ -172,7 +172,7 @@ export default function ProjectMembers({ loaderData }: Route.ComponentProps) {
                 </Badge>
                 <Form method="post">
                   <input type="hidden" name="userId" value={member.userId} />
-                  <Button name="intent" value="remove" variant="ghost" className="text-rose-600">
+                  <Button name="intent" value="remove" variant="ghost" className="text-rose-700">
                     Remove
                   </Button>
                 </Form>
