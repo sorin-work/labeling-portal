@@ -56,18 +56,27 @@ export function parseDraft(raw: FormDataEntryValue | null): DraftInput {
   return { ok: false, reason: 'malformed' };
 }
 
-function fitClassification(schema: TextClassificationSchema, stored: Record<string, unknown>) {
-  if (!Array.isArray(stored.labels)) return null;
-  const labels = [...new Set(stored.labels)].filter(
+/** A draft as the interface can show it, and how many of its parts had to go. */
+export type FittedDraft = { answer: Answer | null; dropped: number };
+
+const NOTHING: FittedDraft = { answer: null, dropped: 0 };
+
+function fitClassification(
+  schema: TextClassificationSchema,
+  stored: Record<string, unknown>,
+): FittedDraft {
+  if (!Array.isArray(stored.labels)) return NOTHING;
+  const known = [...new Set(stored.labels)].filter(
     (label): label is string => typeof label === 'string' && schema.labels.includes(label),
   );
-  return { labels: schema.multiple ? labels : labels.slice(0, 1) };
+  const labels = schema.multiple ? known : known.slice(0, 1);
+  return { answer: { labels }, dropped: stored.labels.length - labels.length };
 }
 
 const spanShape = z.object({ start: z.number().int(), end: z.number().int(), label: z.string() });
 
-function fitNer(schema: NerSchema, data: unknown, stored: Record<string, unknown>) {
-  if (!Array.isArray(stored.spans)) return null;
+function fitNer(schema: NerSchema, data: unknown, stored: Record<string, unknown>): FittedDraft {
+  if (!Array.isArray(stored.spans)) return NOTHING;
   const text = String((isRecord(data) ? data[schema.textField] : null) ?? '');
   const names = schema.entities.map((e) => e.name);
   let spans: Span[] = [];
@@ -78,14 +87,15 @@ function fitNer(schema: NerSchema, data: unknown, stored: Record<string, unknown
     if (start < 0 || end > text.length || start >= end) continue;
     spans = addSpan(spans, span.data);
   }
-  return { spans };
+  return { answer: { spans }, dropped: stored.spans.length - spans.length };
 }
 
-function fitPairwise(schema: PairwiseSchema, stored: Record<string, unknown>) {
+function fitPairwise(schema: PairwiseSchema, stored: Record<string, unknown>): FittedDraft {
   const { preference } = stored;
   const known =
     preference === 'A' || preference === 'B' || (preference === 'tie' && schema.allowTie);
   const scores = isRecord(stored.scores) ? stored.scores : {};
+  let dropped = known || preference === null || preference === undefined ? 0 : 1;
   const pick = (side: unknown) => {
     const picked: Record<string, number> = {};
     if (!isRecord(side)) return picked;
@@ -95,45 +105,58 @@ function fitPairwise(schema: PairwiseSchema, stored: Record<string, unknown>) {
         picked[key] = score;
       }
     }
+    dropped += Object.keys(side).length - Object.keys(picked).length;
     return picked;
   };
   // the preference stays unset until the annotator picks one
-  return {
+  const answer = {
     preference: known ? preference : null,
     scores: { a: pick(scores.a), b: pick(scores.b) },
     rationale: typeof stored.rationale === 'string' ? stored.rationale : '',
   } as PairwiseAnswer;
+  return { answer, dropped };
 }
 
-const positive = z.number().finite().positive();
+const finite = z.number().finite();
+const positive = finite.positive();
 const sizeShape = z.object({ imageWidth: positive, imageHeight: positive });
-const boxShape = z.object({
-  x: z.number().finite(),
-  y: z.number().finite(),
-  w: positive,
-  h: positive,
-  label: z.string(),
-});
+const boxShape = z.object({ x: finite, y: finite, w: finite, h: finite, label: z.string() });
 
-function fitBbox(schema: BboxSchema, stored: Record<string, unknown>) {
+/**
+ * Boxes are cut to the image the way `validateBbox` does it, and a box that
+ * the current schema would refuse (unknown label, smaller than `minBoxSize`)
+ * is left out. One such box would otherwise block the whole submit.
+ */
+function fitBbox(schema: BboxSchema, stored: Record<string, unknown>): FittedDraft {
   const size = sizeShape.safeParse(stored);
-  if (!size.success || !Array.isArray(stored.boxes)) return null;
+  if (!size.success || !Array.isArray(stored.boxes)) return NOTHING;
+  const { imageWidth, imageHeight } = size.data;
   const boxes: Box[] = [];
   for (const item of stored.boxes) {
     const box = boxShape.safeParse(item);
-    if (box.success && schema.labels.includes(box.data.label)) boxes.push(box.data);
+    if (!box.success || !schema.labels.includes(box.data.label)) continue;
+    const x = Math.max(0, box.data.x);
+    const y = Math.max(0, box.data.y);
+    const w = Math.min(box.data.w, imageWidth - x);
+    const h = Math.min(box.data.h, imageHeight - y);
+    if (w < schema.minBoxSize || h < schema.minBoxSize) continue;
+    boxes.push({ x, y, w, h, label: box.data.label });
   }
-  return { boxes, ...size.data };
+  return {
+    answer: { boxes, imageWidth, imageHeight },
+    dropped: stored.boxes.length - boxes.length,
+  };
 }
 
 /**
  * Reads a stored draft back for the interface. Drafts are not validated when
  * they are saved and the schema can change afterwards, so this keeps what
- * still fits the schema and drops the rest. Returns null when the draft has
- * the wrong shape altogether; the interface then starts empty.
+ * still fits the schema, drops the rest and counts what it dropped. The
+ * answer is null when the draft has the wrong shape altogether; the interface
+ * then starts empty.
  */
-export function fitDraft(schema: TaskSchema, data: unknown, stored: unknown): Answer | null {
-  if (!isRecord(stored)) return null;
+export function fitDraft(schema: TaskSchema, data: unknown, stored: unknown): FittedDraft {
+  if (!isRecord(stored)) return NOTHING;
   switch (schema.kind) {
     case 'text_classification':
       return fitClassification(schema, stored);
@@ -144,6 +167,21 @@ export function fitDraft(schema: TaskSchema, data: unknown, stored: unknown): An
     case 'bbox':
       return fitBbox(schema, stored);
   }
+}
+
+const DRAFT_PARTS: Record<TaskSchema['kind'], [string, string]> = {
+  text_classification: ['label', 'labels'],
+  ner: ['span', 'spans'],
+  pairwise: ['choice', 'choices'],
+  bbox: ['box', 'boxes'],
+};
+
+/** What to tell the annotator when parts of a restored draft were left out. */
+export function droppedNote(schema: TaskSchema, dropped: number): string | null {
+  if (dropped <= 0) return null;
+  const [one, many] = DRAFT_PARTS[schema.kind];
+  const what = dropped === 1 ? `One ${one}` : `${dropped} ${many}`;
+  return `${what} from your draft no longer ${dropped === 1 ? 'fits' : 'fit'} this project's settings and ${dropped === 1 ? 'was' : 'were'} left out. Check the answer before you submit.`;
 }
 
 /**
@@ -166,7 +204,7 @@ export function restoreTestAnswers(
   if (!isRecord(stored) || stored.attempt !== attempt || !isRecord(stored.answers)) return {};
   const answers: Record<string, Answer> = {};
   for (const task of tasks) {
-    const fitted = fitDraft(schema, task.data, stored.answers[task.id]);
+    const fitted = fitDraft(schema, task.data, stored.answers[task.id]).answer;
     if (fitted) answers[task.id] = fitted;
   }
   return answers;

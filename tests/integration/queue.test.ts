@@ -443,6 +443,31 @@ describe('drafts', () => {
     expect(statusOf(submitted)).toBe(400);
   });
 
+  it('leaves out a box the schema refuses since the draft was saved, and says so', async () => {
+    const org = await createOrg();
+    const schema = SCHEMA_TEMPLATES.bbox;
+    const [label] = schema.labels;
+    const project = await createTestProject(org.id, { schema });
+    await createTasks(project.id, [{ [schema.imageField]: '/demo/street-1.svg' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const cookie = await cookieFor(ann, org.id);
+    const claim = await claimNextTask(project, ann.id);
+    const id = claim.ok ? claim.assignment.id : '';
+    const big = { x: 10, y: 10, w: 80, h: 60, label };
+    const small = { x: 200, y: 10, w: 12, h: 12, label };
+    const draft = { imageWidth: 640, imageHeight: 400, boxes: [big, small] };
+    await save(id, cookie, { draft: JSON.stringify(draft) });
+    expect(await open(id, cookie)).toMatchObject({ draft, draftNote: null });
+
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { schema: { ...schema, minBoxSize: 20 } },
+    });
+    const page = await open(id, cookie);
+    expect(page.draft).toEqual({ ...draft, boxes: [big] });
+    expect(page).toMatchObject({ draftNote: expect.stringMatching(/^One box from your draft/) });
+  });
+
   it('clamps the working time, never lowers it and keeps the draft on a time-only save', async () => {
     const { id, cookie } = await claimed(2);
     await save(id, cookie, { draft: '{"labels":["positive"]}', activeSeconds: '9999' });

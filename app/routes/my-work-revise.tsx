@@ -7,7 +7,7 @@ import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
-import { fitDraft } from '~/domain/drafts';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -41,6 +41,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
   const schema = projectSchema(assignment.project);
+  // changes that were under way before a reload
+  const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   return {
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
@@ -49,8 +51,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     schema,
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
-    // changes that were under way before a reload
-    draft: fitDraft(schema, assignment.task.data, assignment.draft),
+    draft: draft.answer,
+    draftNote: droppedNote(schema, draft.dropped),
     feedback: assignment.reviews[0]?.feedback ?? '',
   };
 }
@@ -86,7 +88,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
     restored: loaderData.draft !== null,
     paused: navigation.formData != null,
     onRecover: (unsaved) => {
-      const fitted = fitDraft(schema, taskData, unsaved.draft);
+      const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
       if (fitted) setValue(fitted);
     },
   });
@@ -146,6 +148,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
         </div>
       )}
       {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {loaderData.draftNote && <Alert tone="info">{loaderData.draftNote}</Alert>}
       <Card>
         <LabelingInterface schema={schema} data={taskData} value={value} onChange={setValue} />
       </Card>

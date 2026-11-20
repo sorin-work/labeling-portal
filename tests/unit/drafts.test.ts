@@ -7,6 +7,7 @@ import {
   DRAFT_SAVE_AFTER_MS,
   DRAFT_SAVE_AT_LATEST_MS,
   DRAFT_SAVE_SECONDS,
+  droppedNote,
   fitDraft,
   packUnsaved,
   parseDraft,
@@ -61,7 +62,7 @@ describe('fitDraft', () => {
     const [first] = pairwise.dimensions;
     const stored = { preference: null, scores: { a: { [first.key]: 4 }, b: {} }, rationale: 'B ' };
     expect(validateAnswer(pairwise, {}, stored).ok).toBe(false);
-    expect(fitDraft(pairwise, {}, stored)).toEqual(stored);
+    expect(fitDraft(pairwise, {}, stored)).toEqual({ answer: stored, dropped: 0 });
   });
 
   it('drops pairwise parts the schema does not know', () => {
@@ -71,17 +72,22 @@ describe('fitDraft', () => {
       {},
       { preference: 'tie', scores: { a: { [first.key]: 9, gone: 3 }, b: 'x' }, rationale: 7 },
     );
-    expect(fitted).toEqual({ preference: null, scores: { a: {}, b: {} }, rationale: '' });
+    expect(fitted).toEqual({
+      answer: { preference: null, scores: { a: {}, b: {} }, rationale: '' },
+      dropped: 3,
+    });
   });
 
   it('keeps known labels in the order they were picked', () => {
     expect(fitDraft(multi, {}, { labels: ['negative', 'gone', 'positive', 'negative'] })).toEqual({
-      labels: ['negative', 'positive'],
+      answer: { labels: ['negative', 'positive'] },
+      dropped: 2,
     });
     expect(fitDraft(single, {}, { labels: ['negative', 'positive'] })).toEqual({
-      labels: ['negative'],
+      answer: { labels: ['negative'] },
+      dropped: 1,
     });
-    expect(fitDraft(single, {}, { labels: [] })).toEqual({ labels: [] });
+    expect(fitDraft(single, {}, { labels: [] })).toEqual({ answer: { labels: [] }, dropped: 0 });
   });
 
   it('keeps spans that still fit the text and the entity types', () => {
@@ -98,10 +104,13 @@ describe('fitDraft', () => {
     });
     // overlapping spans replace each other, as they do while labeling
     expect(fitted).toEqual({
-      spans: [
-        { start: 0, end: 3, label: 'PERSON' },
-        { start: 17, end: 24, label: 'PERSON' },
-      ],
+      answer: {
+        spans: [
+          { start: 0, end: 3, label: 'PERSON' },
+          { start: 17, end: 24, label: 'PERSON' },
+        ],
+      },
+      dropped: 4,
     });
   });
 
@@ -118,18 +127,61 @@ describe('fitDraft', () => {
       ],
     };
     expect(fitDraft(bbox, {}, stored)).toEqual({
-      imageWidth: 640,
-      imageHeight: 480,
-      boxes: [{ x: 10, y: 20, w: 100, h: 50, label }],
+      answer: {
+        imageWidth: 640,
+        imageHeight: 480,
+        boxes: [{ x: 10, y: 20, w: 100, h: 50, label }],
+      },
+      dropped: 3,
     });
-    expect(fitDraft(bbox, {}, { boxes: [] })).toBeNull();
+    expect(fitDraft(bbox, {}, { boxes: [] })).toEqual({ answer: null, dropped: 0 });
   });
 
-  it('returns null for a draft of another kind or no draft at all', () => {
-    expect(fitDraft(single, {}, null)).toBeNull();
-    expect(fitDraft(single, {}, 'labels')).toBeNull();
-    expect(fitDraft(single, {}, { spans: [] })).toBeNull();
-    expect(fitDraft(ner, { text: 'x' }, { labels: ['positive'] })).toBeNull();
+  it('cuts boxes to the image and drops the ones the schema now refuses', () => {
+    const [label] = bbox.labels;
+    const strict = { ...bbox, minBoxSize: 20 };
+    const stored = {
+      imageWidth: 200,
+      imageHeight: 100,
+      boxes: [
+        { x: 10, y: 10, w: 15, h: 40, label }, // narrower than the new minimum
+        { x: -5, y: 50, w: 60, h: 80, label }, // hangs over two edges
+        { x: 190, y: 10, w: 40, h: 40, label }, // only 10 wide inside the image
+        { x: 300, y: 10, w: 40, h: 40, label }, // outside altogether
+        { x: 50, y: 20, w: 30, h: 30, label },
+      ],
+    };
+    const fitted = fitDraft(strict, {}, stored);
+    expect(fitted).toEqual({
+      answer: {
+        imageWidth: 200,
+        imageHeight: 100,
+        boxes: [
+          { x: 0, y: 50, w: 60, h: 50, label },
+          { x: 50, y: 20, w: 30, h: 30, label },
+        ],
+      },
+      dropped: 3,
+    });
+    // what is left can be handed in as it is
+    expect(validateAnswer(strict, {}, fitted.answer).ok).toBe(true);
+    expect(validateAnswer(strict, {}, stored).ok).toBe(false);
+  });
+
+  it('has no answer for a draft of another kind or no draft at all', () => {
+    const nothing = { answer: null, dropped: 0 };
+    expect(fitDraft(single, {}, null)).toEqual(nothing);
+    expect(fitDraft(single, {}, 'labels')).toEqual(nothing);
+    expect(fitDraft(single, {}, { spans: [] })).toEqual(nothing);
+    expect(fitDraft(ner, { text: 'x' }, { labels: ['positive'] })).toEqual(nothing);
+  });
+
+  it('says what was left out, in the words of the kind', () => {
+    expect(droppedNote(bbox, 0)).toBeNull();
+    expect(droppedNote(bbox, 1)).toMatch(/^One box from your draft no longer fits .* was left out/);
+    expect(droppedNote(bbox, 3)).toMatch(/^3 boxes from your draft no longer fit .* were left out/);
+    expect(droppedNote(ner, 2)).toMatch(/^2 spans /);
+    expect(droppedNote(single, 1)).toMatch(/^One label /);
   });
 });
 

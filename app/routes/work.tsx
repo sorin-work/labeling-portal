@@ -13,7 +13,7 @@ import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
-import { fitDraft } from '~/domain/drafts';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -63,6 +63,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
   const { project, task } = assignment;
   const schema = projectSchema(project);
+  // unfinished work from before a reload; the page starts from it
+  const draft = fitDraft(schema, task.data, assignment.draft);
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
@@ -80,8 +82,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
       canExtend: assignment.extendedAt === null,
-      // unfinished work from before a reload; the page starts from it
-      draft: fitDraft(schema, task.data, assignment.draft),
+      draft: draft.answer,
+      draftNote: droppedNote(schema, draft.dropped),
       draftSeconds: assignment.draftSeconds,
     },
     project: { id: project.id, name: project.name },
@@ -206,7 +208,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     // submit, skip and release end the claim; a save after them would be refused
     paused: navigation.formData != null,
     onRecover: (unsaved) => {
-      const fitted = fitDraft(schema, task.data, unsaved.draft);
+      const fitted = fitDraft(schema, task.data, unsaved.draft).answer;
       if (fitted) setAnswer(fitted);
       raiseActiveSeconds(unsaved.seconds);
     },
@@ -255,6 +257,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {assignment.draftNote && <Alert tone="info">{assignment.draftNote}</Alert>}
         <TimeWarning
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}
