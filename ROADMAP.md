@@ -511,7 +511,15 @@ often from people who do this work on the big platforms.
     on the `Dispute`;
   - `projectQuality` counts every review row (`reviewed`, `approved`,
     `sentBack`, QA scores) and `reviewerStats` counts decisions. Both leave
-    overturned rows out. `myStats` groups by `reviewStatus` and follows.
+    overturned rows out. `myStats` groups by `reviewStatus` and follows;
+  - `loadExportTasks` in `models/export.server.ts` exports the QA score of
+    the last review that has one (`qa_score` in JSONL and CSV). An overturned
+    review must not supply it;
+  - the pages that show the latest review read `reviews[0]` for feedback and
+    score: `routes/my-work.tsx`, `routes/my-work-revise.tsx` and
+    `routes/project-annotator.tsx`. They show the outcome of the dispute
+    instead. The full histories in `routes/review.tsx` and
+    `routes/task-detail.tsx` keep the row and mark it as overturned.
 - Upholding changes nothing but the status. The annotator sees the note.
 - Tricky: sent-back work can be revised while a dispute is open
   (`resubmitAssignment` puts it back to `PENDING`). Make it one or the other:
@@ -527,9 +535,10 @@ often from people who do this work on the big platforms.
   project with two reviewers does not wait for a manager.
 - Tests: a new `tests/integration/disputes.test.ts` (who may open and resolve,
   an overturned fix restores the annotator's answer in the consensus and the
-  export, an overturned send-back completes the task and is payable from the
-  overturn, an overturned fix keeps its date, upheld changes nothing, no
-  revise while open) and `tests/unit/outcome.test.ts` for `finalAnswer`.
+  export and drops its QA score there, an overturned send-back completes the
+  task and is payable from the overturn, an overturned fix keeps its date,
+  upheld changes nothing, no revise while open) and
+  `tests/unit/outcome.test.ts` for `finalAnswer`.
 
 ### 10. Gold tasks: add, fix and rescore
 
