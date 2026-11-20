@@ -58,6 +58,96 @@ export async function listBatches(projectId: string) {
   });
 }
 
+type QueueChange = { ok: true } | { ok: false; error: 'not_found' | 'unchanged' };
+
+/**
+ * Sets how early a batch is handed out: batches with a higher number come
+ * first. It changes which task the next claim gets and nothing else: claims
+ * that exist keep their task.
+ */
+export async function setBatchPriority(
+  projectId: string,
+  batchId: string,
+  actorId: string,
+  priority: number,
+  now = new Date(),
+): Promise<QueueChange> {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
+    if (!batch) return { ok: false, error: 'not_found' };
+    const changed = await tx.batch.updateMany({
+      where: { id: batchId, priority: { not: priority } },
+      data: { priority },
+    });
+    if (changed.count === 0) return { ok: false, error: 'unchanged' };
+    await tx.activity.create({
+      data: {
+        projectId,
+        actorId,
+        action: 'batch.priority',
+        detail: { name: batch.name, from: batch.priority, to: priority },
+        createdAt: now,
+      },
+    });
+    return { ok: true };
+  });
+}
+
+/**
+ * Pauses a batch or resumes it. A paused batch hands out nothing new from the
+ * next claim on. Tasks that are being worked on can be finished, and nothing
+ * else about the batch changes, so resuming picks up exactly where it was:
+ * tasks that have some of their answers get the rest then.
+ */
+export async function setBatchPaused(
+  projectId: string,
+  batchId: string,
+  actorId: string,
+  paused: boolean,
+  now = new Date(),
+): Promise<QueueChange> {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
+    if (!batch) return { ok: false, error: 'not_found' };
+    // the write names the state it expects, so two managers pressing the
+    // button at once leave one entry in the activity log
+    const changed = await tx.batch.updateMany({
+      where: { id: batchId, pausedAt: paused ? null : { not: null } },
+      data: { pausedAt: paused ? now : null },
+    });
+    if (changed.count === 0) return { ok: false, error: 'unchanged' };
+    await tx.activity.create({
+      data: {
+        projectId,
+        actorId,
+        action: paused ? 'batch.paused' : 'batch.resumed',
+        detail: { name: batch.name },
+        createdAt: now,
+      },
+    });
+    return { ok: true };
+  });
+}
+
+/**
+ * What is going on in a batch right now, for its page: open tasks, how many
+ * of those already have some answers (they wait while the batch is paused),
+ * and claims that are being worked on.
+ */
+export async function batchStanding(batchId: string, now = new Date()) {
+  const regular = { batchId, status: 'OPEN', isGold: false, isQualification: false } as const;
+  const [open, partial, claims] = await Promise.all([
+    prisma.task.count({ where: regular }),
+    prisma.task.count({
+      where: { ...regular, assignments: { some: { status: 'SUBMITTED' } } },
+    }),
+    prisma.assignment.count({
+      where: { task: { batchId }, status: 'ACTIVE', expiresAt: { gt: now } },
+    }),
+  ]);
+  return { open, partial, claims };
+}
+
 export type DeleteBatchResult = { ok: true; tasks: number } | { ok: false; error: string };
 
 /**
