@@ -1,5 +1,6 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
+import { clampActiveSeconds, revisionSeconds } from '~/domain/active-time';
 import type { Answer } from '~/domain/answers';
 import { scoreAgainstGold } from '~/domain/gold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
@@ -151,12 +152,7 @@ async function ownActive(assignmentId: string, userId: string) {
   return { assignment };
 }
 
-/** Time is reported by the browser; never credit more than has actually passed. */
-export function clampActiveSeconds(reported: number, claimedAt: Date, now: Date): number {
-  const elapsed = Math.max(0, Math.floor((now.getTime() - claimedAt.getTime()) / 1000));
-  if (!Number.isFinite(reported) || reported < 0) return 0;
-  return Math.min(Math.floor(reported), elapsed);
-}
+export { clampActiveSeconds };
 
 /**
  * Whether a new submission in a project that reviews work goes to a reviewer.
@@ -287,22 +283,39 @@ export async function skipAssignment(
   return skipped.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 
+/** What crediting a revision needs to know about the submission. */
+const REVISION_FIELDS = {
+  reviewedAt: true,
+  submittedAt: true,
+  activeSeconds: true,
+  draftSeconds: true,
+  project: { select: { timeLimitMinutes: true } },
+} satisfies Prisma.AssignmentSelect;
+
+type Revised = Prisma.AssignmentGetPayload<{ select: typeof REVISION_FIELDS }>;
+
 /**
- * Revising starts when the reviewer sends the work back. No more time than
- * has passed since then can be spent on it.
+ * The time a revision is credited, for the resubmission and for the draft
+ * that keeps it across a reload alike. Revising starts when the reviewer
+ * sends the work back, and `revisionSeconds` holds it to the project's time
+ * limit and to the total an assignment may be credited.
  */
-function revisingSince(
-  assignment: { reviewedAt: Date | null; submittedAt: Date | null } | null,
-): Date {
-  return assignment?.reviewedAt ?? assignment?.submittedAt ?? new Date();
+function creditedRevision(assignment: Revised, reported: number, now: Date): number {
+  return revisionSeconds({
+    reported,
+    reviewedAt: assignment.reviewedAt ?? assignment.submittedAt ?? now,
+    now,
+    limitSeconds: assignment.project.timeLimitMinutes * 60,
+    credited: assignment.activeSeconds,
+  });
 }
 
 /**
  * Replaces the answer on a submission a reviewer sent back and puts it in the
  * review queue again. Only the annotator who made it can do this, and not
  * while they dispute the decision: it is revise or dispute, never both. The
- * time spent revising is added to the active time, capped at the time since
- * the review. The rate stays the one frozen at the first submission.
+ * time spent revising is added to the active time, within the bounds of
+ * `revisionSeconds`. The rate stays the one frozen at the first submission.
  */
 export async function resubmitAssignment(
   assignmentId: string,
@@ -318,18 +331,13 @@ export async function resubmitAssignment(
       status: 'SUBMITTED',
       reviewStatus: 'SENT_BACK',
     };
-    const current = await tx.assignment.findFirst({
-      where: sentBack,
-      select: { reviewedAt: true, submittedAt: true, draftSeconds: true },
-    });
+    const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
     // the page counts on from the time saved with the draft, so the form has
     // at least that much; the larger one counts if it does not
     const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
-    const revising = clampActiveSeconds(
-      Math.max(reported, current?.draftSeconds ?? 0),
-      revisingSince(current),
-      now,
-    );
+    const revising = current
+      ? creditedRevision(current, Math.max(reported, current.draftSeconds), now)
+      : 0;
     const result = await tx.assignment.updateMany({
       // still sent back: a form posted twice adds its time only once
       where: sentBack,
@@ -401,8 +409,8 @@ export async function saveDraft(
  * the guard is the one `resubmitAssignment` uses: the annotator's own
  * submission, while it is sent back and not under dispute. Work that is
  * disputed cannot be revised, so no revision of it is saved either. The time
- * spent revising is kept with the draft, capped at the time since the review,
- * and never goes down.
+ * spent revising is kept with the draft, within the same bounds as a
+ * resubmission credits it, and never goes down.
  */
 export async function saveRevisionDraft(
   assignmentId: string,
@@ -416,10 +424,10 @@ export async function saveRevisionDraft(
     if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
     const current = await tx.assignment.findFirst({
       where: { id: assignmentId, userId },
-      select: { reviewedAt: true, submittedAt: true },
+      select: REVISION_FIELDS,
     });
     if (!current) return { ok: false, error: 'not_found' };
-    const seconds = clampActiveSeconds(input.activeSeconds, revisingSince(current), now);
+    const seconds = creditedRevision(current, input.activeSeconds, now);
     const draft =
       input.draft === undefined
         ? Prisma.empty
