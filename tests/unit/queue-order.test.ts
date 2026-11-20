@@ -1,26 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  goldGapRange,
+  goldDraw,
   MAX_BATCH_PRIORITY,
   parseBatchPriority,
   parseGoldEvery,
   parseQueueOrder,
 } from '~/domain/queue-order';
 
-describe('gold spacing range', () => {
-  it('averages N and is never a fixed period', () => {
-    for (const n of [2, 3, 5, 10, 25, 500]) {
-      const { lo, hi } = goldGapRange(n);
-      expect((lo + hi) / 2).toBeCloseTo(n, 0);
-      expect(hi).toBeGreaterThan(lo);
-      expect(lo).toBeGreaterThanOrEqual(1);
+describe('gold draw', () => {
+  it('gives each claim a chance of one in N', () => {
+    for (const n of [2, 3, 10, 500]) {
+      expect(goldDraw(n).below / 2 ** 32).toBeCloseTo(1 / n, 6);
     }
   });
 
-  it('spreads by half of N on each side', () => {
-    expect(goldGapRange(10)).toEqual({ lo: 5, hi: 15 });
-    expect(goldGapRange(2)).toEqual({ lo: 1, hi: 3 });
+  it('caps gold at twice the expected number over a window of 5N, below all of it', () => {
+    expect(goldDraw(10)).toMatchObject({ window: 50, max: 10 });
+    expect(goldDraw(2)).toMatchObject({ window: 10, max: 9 });
   });
 });
 
