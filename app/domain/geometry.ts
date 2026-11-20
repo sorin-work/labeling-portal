@@ -34,6 +34,26 @@ export function clampPoint(point: Point, image: Size): Point {
   return { x: clamp(point.x, 0, image.w), y: clamp(point.y, 0, image.h) };
 }
 
+/** Box coordinates are kept to a tenth of an image pixel. */
+export const BOX_DIGITS = 1;
+
+/**
+ * A box the way it is stored: coordinates rounded to `BOX_DIGITS` and the box
+ * cut to the image. The interface, `validateBbox` and the draft reader all
+ * use this, so a box the interface keeps is never too small for the server.
+ */
+export function storedBox<T extends Rect>(box: T, image: Size): T {
+  const x = Math.max(0, round(box.x, BOX_DIGITS));
+  const y = Math.max(0, round(box.y, BOX_DIGITS));
+  return {
+    ...box,
+    x,
+    y,
+    w: round(Math.min(round(box.w, BOX_DIGITS), image.w - x), BOX_DIGITS),
+    h: round(Math.min(round(box.h, BOX_DIGITS), image.h - y), BOX_DIGITS),
+  };
+}
+
 /** Shifts a box and keeps all of it inside the image. Its size does not change. */
 export function moveBox<T extends Rect>(box: T, dx: number, dy: number, image: Size): T {
   return {
@@ -67,12 +87,15 @@ function span(
   limit: number,
   min: number,
 ): [start: number, length: number] {
-  let edge = clamp(moving, 0, limit);
-  if (Math.abs(edge - fixed) < min) {
+  const edge = clamp(moving, 0, limit);
+  if (Math.abs(edge - fixed) < min && min <= limit) {
     let after = edge === fixed ? wasAfter : edge > fixed;
     if (after && fixed + min > limit) after = false;
     else if (!after && fixed - min < 0) after = true;
-    edge = clamp(after ? fixed + min : fixed - min, 0, limit);
+    // The length is set, not worked out from the two edges: `(fixed + min) -
+    // fixed` can come out a hair under `min` in floating point, and the box
+    // would then be refused as too small.
+    return after ? [fixed, min] : [fixed - min, min];
   }
   return edge > fixed ? [fixed, edge - fixed] : [edge, fixed - edge];
 }

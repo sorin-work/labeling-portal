@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { validateBbox } from '~/domain/answers';
+import { fitDraft } from '~/domain/drafts';
+
 import {
   boxBetween,
   centredBox,
@@ -20,6 +23,7 @@ import {
   parseView,
   pointerIntent,
   resizeBox,
+  storedBox,
   toImage,
   toScreen,
   viewTransform,
@@ -125,6 +129,63 @@ describe('resizeBox', () => {
         expect(out.y + out.h).toBeLessThanOrEqual(image.h);
       }
     }
+  });
+});
+
+describe('a resize at the minimum, with fractional edges', () => {
+  const schema = { kind: 'bbox' as const, imageField: 'image', labels: ['car'], minBoxSize: 4 };
+
+  it('comes out exactly at the minimum, where the edge sum would fall short', () => {
+    // 0.1 + 4 - 0.1 is 3.9999999999999996 in floating point
+    const fractional = { x: 0.1, y: 0.7, w: 30, h: 30, label: 'car' };
+    const e = resizeBox(fractional, 'e', { x: 0.2, y: 0 }, image, 4);
+    expect(e.w).toBe(4);
+    expect(e.x).toBe(0.1);
+    const s = resizeBox(fractional, 'se', { x: 0.1, y: 0.7 }, image, 4);
+    expect([s.w, s.h]).toEqual([4, 4]);
+    const w = resizeBox({ ...fractional, x: 795.7, w: 4.2 }, 'w', { x: 799.6, y: 0 }, image, 4);
+    expect(w.w).toBe(4);
+  });
+
+  it('is never refused or dropped once stored', () => {
+    // a small property test: random boxes, handles and targets
+    let seed = 42;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed / 2 ** 31;
+    };
+    for (let i = 0; i < 2000; i += 1) {
+      const w = 4 + random() * 200;
+      const h = 4 + random() * 100;
+      const start = {
+        x: random() * (image.w - w),
+        y: random() * (image.h - h),
+        w,
+        h,
+        label: 'car',
+      };
+      const handle = HANDLES[Math.floor(random() * HANDLES.length)];
+      const to = { x: random() * image.w * 1.2 - 40, y: random() * image.h * 1.2 - 20 };
+      const out = storedBox(resizeBox(start, handle, to, image, 4), image);
+      expect(out.w).toBeGreaterThanOrEqual(4);
+      expect(out.h).toBeGreaterThanOrEqual(4);
+      const answer = { boxes: [out], imageWidth: image.w, imageHeight: image.h };
+      expect(validateBbox(schema, answer)).toEqual({ ok: true, answer });
+      expect(fitDraft(schema, {}, answer)).toEqual({ answer, dropped: 0 });
+    }
+  });
+});
+
+describe('storedBox', () => {
+  it('rounds to a tenth of a pixel and cuts the box to the image', () => {
+    expect(storedBox({ x: 10.04, y: -2, w: 5.96, h: 3.99999, label: 'car' }, image)).toEqual({
+      x: 10,
+      y: 0,
+      w: 6,
+      h: 4,
+      label: 'car',
+    });
+    expect(storedBox({ x: 796.1, y: 0, w: 10, h: 10 }, image).w).toBe(3.9);
   });
 });
 
