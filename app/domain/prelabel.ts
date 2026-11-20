@@ -51,17 +51,72 @@ const termLists = z
     `At most ${MAX_TERMS} words and phrases in all`,
   );
 
-/** Where a literal term occurs in a text, as whole words, case not minded. */
-function occurrences(text: string, phrase: string): Array<[number, number]> {
-  const haystack = text.slice(0, MAX_SCAN).toLowerCase();
-  const needle = phrase.toLowerCase();
-  const found: Array<[number, number]> = [];
-  const wordChar = /[\p{L}\p{N}]/u;
-  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
-    const end = at + needle.length;
-    const before = at === 0 ? '' : haystack[at - 1];
-    const after = end >= haystack.length ? '' : haystack[end];
-    if (!wordChar.test(before) && !wordChar.test(after)) found.push([at, end]);
+/** A rule never places more spans than this in one task, and stops there. */
+export const MAX_SPANS = 1_000;
+
+/**
+ * A bound on the work one task can cost: term comparisons. With the caps on
+ * terms this is never reached by a real list, but it makes the cost of one
+ * task fixed whatever a manager writes, so the run's time limit holds.
+ */
+const MAX_COMPARISONS = 2_000_000;
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const isWordChar = (ch: string | undefined) => ch !== undefined && WORD_CHAR.test(ch);
+
+export type Match = { start: number; end: number; label: string };
+
+/**
+ * Finds the terms in a text in one pass from left to right: whole words,
+ * case not minded, the longest term first where several start at the same
+ * place, and never two that overlap. A match is compared on the text itself,
+ * so its offsets are offsets into the text even where lower case changes the
+ * length of a character ("İ" becomes two). Terms are deduplicated (case not
+ * minded; the first label listed wins), indexed by their first character,
+ * and the scan stops after `MAX_SPANS` matches or `MAX_COMPARISONS`.
+ */
+export function findTerms(
+  text: string,
+  lists: ReadonlyArray<{ label: string; terms: readonly string[] }>,
+): Match[] {
+  const scanned = text.slice(0, MAX_SCAN);
+  const seen = new Set<string>();
+  const byFirst = new Map<string, Array<{ term: string; lower: string; label: string }>>();
+  for (const { label, terms } of lists) {
+    for (const term of terms) {
+      const lower = term.toLowerCase();
+      if (term.length === 0 || seen.has(lower)) continue;
+      seen.add(lower);
+      const first = term[0].toLowerCase();
+      byFirst.set(first, [...(byFirst.get(first) ?? []), { term, lower, label }]);
+    }
+  }
+  for (const list of byFirst.values()) list.sort((a, b) => b.term.length - a.term.length);
+
+  const found: Match[] = [];
+  let comparisons = 0;
+  let i = 0;
+  while (i < scanned.length) {
+    // only where a word starts
+    if (i > 0 && isWordChar(scanned[i - 1]) && isWordChar(scanned[i])) {
+      i += 1;
+      continue;
+    }
+    let placed = false;
+    for (const candidate of byFirst.get(scanned[i].toLowerCase()) ?? []) {
+      comparisons += 1;
+      if (comparisons > MAX_COMPARISONS) return found;
+      const end = i + candidate.term.length;
+      if (end > scanned.length || isWordChar(scanned[end])) continue;
+      if (scanned.slice(i, end).toLowerCase() !== candidate.lower) continue;
+      found.push({ start: i, end, label: candidate.label });
+      if (found.length >= MAX_SPANS) return found;
+      // left to right: the next match starts after this one, so none overlap
+      i = end;
+      placed = true;
+      break;
+    }
+    if (!placed) i += 1;
   }
   return found;
 }
@@ -83,11 +138,12 @@ const keywords: PrelabelRule<KeywordsConfig> = {
   run(schema, data, config) {
     if (schema.kind !== 'text_classification') return null;
     const text = String(data[schema.textField] ?? '');
+    const matches = findTerms(
+      text,
+      schema.labels.map((label) => ({ label, terms: config.labels[label] ?? [] })),
+    );
     const hits = schema.labels
-      .map((label) => ({
-        label,
-        count: (config.labels[label] ?? []).reduce((n, w) => n + occurrences(text, w).length, 0),
-      }))
+      .map((label) => ({ label, count: matches.filter((m) => m.label === label).length }))
       .filter((h) => h.count > 0);
     if (hits.length === 0) return null;
     if (schema.multiple) return { labels: hits.map((h) => h.label) };
@@ -101,8 +157,9 @@ type PhrasesConfig = z.infer<typeof phrasesConfig>;
 
 /**
  * Entities by phrase lists: every whole-word occurrence of a phrase becomes a
- * span of its type. Longer phrases are placed first and a span never overlaps
- * another, because the answer's validator refuses overlapping spans.
+ * span of its type (`findTerms`). Where several phrases start at the same
+ * place the longest wins, and a span never overlaps another, because the
+ * answer's validator refuses overlapping spans.
  */
 const phrases: PrelabelRule<PhrasesConfig> = {
   name: 'phrases',
@@ -113,19 +170,12 @@ const phrases: PrelabelRule<PhrasesConfig> = {
   run(schema, data, config) {
     if (schema.kind !== 'ner') return null;
     const text = String(data[schema.textField] ?? '');
-    const candidates = schema.entities
-      .flatMap((entity) =>
-        (config.entities[entity.name] ?? []).flatMap((phrase) =>
-          occurrences(text, phrase).map(([start, end]) => ({ start, end, label: entity.name })),
-        ),
-      )
-      .sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
-    const spans: Array<{ start: number; end: number; label: string }> = [];
-    for (const c of candidates) {
-      if (spans.every((s) => c.end <= s.start || c.start >= s.end)) spans.push(c);
-    }
+    const spans = findTerms(
+      text,
+      schema.entities.map((e) => ({ label: e.name, terms: config.entities[e.name] ?? [] })),
+    );
     if (spans.length === 0) return null;
-    return { spans: spans.sort((a, b) => a.start - b.start) };
+    return { spans };
   },
 };
 

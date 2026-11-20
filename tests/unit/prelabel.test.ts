@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  findTerms,
   MAX_SCAN,
+  MAX_SPANS,
   MAX_TERMS,
   parsePrediction,
   parsePrelabel,
@@ -58,15 +60,15 @@ describe('phrase rule', () => {
     ORG: ['York University'],
   });
 
-  it('marks whole-word phrases, the longest first, never overlapping', () => {
+  it('marks whole-word phrases from left to right, the longest where several start together', () => {
     const text = 'Ada Lovelace met Ada in London and New York University.';
     expect(suggest(ner, { text }, config)).toEqual({
       spans: [
         { start: 0, end: 12, label: 'PERSON' },
         { start: 17, end: 20, label: 'PERSON' },
         { start: 24, end: 30, label: 'LOCATION' },
-        // "York University" is longer than "New York" and wins the overlap
-        { start: 39, end: 54, label: 'ORG' },
+        // left to right: "New York" starts first, so "York University" does not fit
+        { start: 35, end: 43, label: 'LOCATION' },
       ],
     });
   });
@@ -127,5 +129,43 @@ describe('suggestions are answers the schema accepts, or nothing', () => {
       ok: true,
       answer: { preference: 'B' },
     });
+  });
+});
+
+describe('matching cost and offsets', () => {
+  it('stays fast on the worst list: 500 copies of one short word over a long text', () => {
+    const config = phrases({ PERSON: Array.from({ length: MAX_TERMS }, () => 'a') });
+    const text = 'a '.repeat(MAX_SCAN / 2);
+    const started = performance.now();
+    const result = suggest(ner, { text }, config);
+    expect(performance.now() - started).toBeLessThan(1000);
+    // at most MAX_SPANS spans, then the rule stops
+    expect((result as { spans: unknown[] }).spans).toHaveLength(MAX_SPANS);
+  });
+
+  it('stays fast with many different terms that never match', () => {
+    const config = phrases({ PERSON: Array.from({ length: MAX_TERMS }, (_, i) => `a${i}x`) });
+    const started = performance.now();
+    expect(suggest(ner, { text: 'a '.repeat(MAX_SCAN / 2) }, config)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it('keeps offsets into the text where lower case changes a length', () => {
+    const text = 'İİİ went to Lagos';
+    const found = findTerms(text, [{ label: 'LOCATION', terms: ['lagos'] }]);
+    expect(found).toEqual([{ start: 12, end: 17, label: 'LOCATION' }]);
+    expect(text.slice(12, 17)).toBe('Lagos');
+  });
+
+  it('counts a keyword once per place, and the same word in two lists for the first', () => {
+    expect(
+      findTerms('great, Great!', [
+        { label: 'positive', terms: ['great', 'GREAT'] },
+        { label: 'negative', terms: ['great'] },
+      ]),
+    ).toEqual([
+      { start: 0, end: 5, label: 'positive' },
+      { start: 7, end: 12, label: 'positive' },
+    ]);
   });
 });
