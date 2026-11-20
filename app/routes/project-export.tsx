@@ -1,8 +1,12 @@
+import { Link } from 'react-router';
+
 import { Button, Card } from '~/components/ui';
+import { conllBlock, exportFormatsFor } from '~/domain/export';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
-import { requireProject } from '~/models/projects.server';
+import { exportTasks } from '~/models/export.server';
+import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/project-export';
 
@@ -24,39 +28,45 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     }),
     prisma.task.count({ where: { projectId: project.id, isGold: false, isQualification: false } }),
   ]);
-  return { projectId: project.id, kind: project.kind, complete, total, batches };
+  const schema = projectSchema(project);
+  // Spans are character offsets and need not end where a token ends. The
+  // CoNLL export widens such spans to whole tokens; this counts them, when
+  // asked, by doing what the export does without writing it.
+  let alignment: { spans: number; misaligned: number } | null = null;
+  if (schema.kind === 'ner' && new URL(request.url).searchParams.get('check') === 'conll') {
+    alignment = { spans: 0, misaligned: 0 };
+    const tasks = exportTasks(project, { scope: 'all', annotators: 'pseudonym', needs: 'labels' });
+    for await (const task of tasks) {
+      const block = conllBlock(schema, task);
+      alignment.spans += block?.spans ?? 0;
+      alignment.misaligned += block?.misaligned ?? 0;
+    }
+  }
+  return {
+    projectId: project.id,
+    // the component only gets what it shows; the writers stay on the server
+    formats: exportFormatsFor(schema.kind).map(({ name, label, hint }) => ({ name, label, hint })),
+    entities: schema.kind === 'ner',
+    alignment,
+    complete,
+    total,
+    batches,
+  };
 }
 
 export default function ProjectExport({ loaderData }: Route.ComponentProps) {
-  const { projectId, kind, complete, total, batches } = loaderData;
-  const formats = [
-    {
-      value: 'jsonl',
-      label: 'JSON Lines',
-      hint: 'One task per line with every accepted annotation.',
-    },
-    { value: 'csv', label: 'CSV', hint: 'One row per annotation, plus a consensus row.' },
-    ...(kind === 'BBOX'
-      ? [
-          {
-            value: 'coco',
-            label: 'COCO',
-            hint: 'Object detection dataset from the consensus boxes.',
-          },
-        ]
-      : []),
-  ];
+  const { projectId, formats, entities, alignment, complete, total, batches } = loaderData;
   return (
     <Card className="max-w-2xl">
       <form method="get" action={`/projects/${projectId}/download`} className="space-y-5">
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm font-medium">Format</legend>
           {formats.map((f, i) => (
-            <label key={f.value} className="flex items-start gap-2 text-sm">
+            <label key={f.name} className="flex items-start gap-2 text-sm">
               <input
                 type="radio"
                 name="format"
-                value={f.value}
+                value={f.name}
                 defaultChecked={i === 0}
                 className="mt-1"
               />
@@ -95,9 +105,57 @@ export default function ProjectExport({ loaderData }: Route.ComponentProps) {
             </select>
           </label>
         )}
-        <p className="text-xs text-slate-500">Gold and qualification tasks are never exported.</p>
+        <fieldset className="space-y-2">
+          <legend className="mb-1 text-sm font-medium">Annotators</legend>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="annotators"
+              value="pseudonym"
+              defaultChecked
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">Pseudonyms</span>
+              <span className="block text-slate-500">
+                A name like ann_3f9a1c2e that is the same in every export of this project and says
+                nothing about the person.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="radio" name="annotators" value="email" className="mt-1" />
+            <span>
+              <span className="font-medium">Email addresses</span>
+              <span className="block text-slate-500">
+                Only for files that stay with people who may see who did the work.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+        <p className="text-xs text-slate-500">
+          Gold and qualification tasks are never exported. Text files are UTF-8 and dates are ISO
+          8601 in UTC.
+        </p>
         <Button type="submit">Download</Button>
       </form>
+      {entities && (
+        <div className="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-600">
+          <p>
+            The CoNLL export tags whole tokens. A span that ends inside a word is widened to the
+            whole word.
+          </p>
+          {alignment ? (
+            <p className="mt-1 font-medium text-slate-800">
+              {alignment.misaligned} of {alignment.spans} labeled spans do not line up with tokens.
+            </p>
+          ) : (
+            <Link to="?check=conll" className="mt-1 inline-block text-indigo-700 hover:underline">
+              Count the spans that do not line up
+            </Link>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
