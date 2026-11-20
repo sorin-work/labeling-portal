@@ -641,51 +641,60 @@ export async function resubmitAssignment(
   input: { answer: Prisma.InputJsonValue; activeSeconds: number },
   now = new Date(),
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
-  return prisma.$transaction(async (tx) => {
-    // the task row before the assignment row, as everywhere (lockTaskOfAssignment)
-    await lockTaskOfAssignment(tx, assignmentId);
-    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
-    const sentBack: Prisma.AssignmentWhereInput = {
-      id: assignmentId,
-      userId,
-      status: 'SUBMITTED',
-      reviewStatus: 'SENT_BACK',
-    };
-    const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
-    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId, now) : null;
-    // the page counts on from the time saved with the draft, so the form has
-    // at least that much; the larger one counts if it does not
-    const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
-    const credit =
-      current && clock
-        ? creditTime({
-            reported: Math.max(reported, current.draftSeconds),
-            start: revisingSince(current, now),
-            now,
-            credited: clock.credited,
-            cap: revisionCap(limitSeconds(current), current.activeSeconds),
-          })
-        : { seconds: 0, pieces: [] };
-    const result = await tx.assignment.updateMany({
-      // still sent back: a form posted twice adds its time only once
-      where: sentBack,
-      data: {
-        answer: input.answer,
-        reviewStatus: 'PENDING',
-        submittedAt: now,
-        reviewedAt: null,
-        payableAt: null,
-        activeSeconds: { increment: credit.seconds },
-        ...NO_DRAFT,
-      },
-    });
-    if (result.count > 0) await recordCredit(tx, clock, credit, now);
-    if (result.count === 0) {
-      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
-      return { ok: false, error: exists ? 'not_active' : 'not_found' };
-    }
-    return { ok: true };
+  // which organisation's clock to take, read without a lock: the project of
+  // an assignment never changes
+  const owner = await prisma.assignment.findFirst({
+    where: { id: assignmentId, userId },
+    select: { project: { select: { orgId: true } } },
   });
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      // the full order (docs/architecture.md): the person's clock, then the
+      // task row, then the assignment row
+      const clock = owner ? await lockWorkClock(tx, owner.project.orgId, userId, now) : null;
+      await lockTaskOfAssignment(tx, assignmentId);
+      if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+      const sentBack: Prisma.AssignmentWhereInput = {
+        id: assignmentId,
+        userId,
+        status: 'SUBMITTED',
+        reviewStatus: 'SENT_BACK',
+      };
+      const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
+      // the page counts on from the time saved with the draft, so the form has
+      // at least that much; the larger one counts if it does not
+      const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
+      const credit =
+        current && clock
+          ? creditTime({
+              reported: Math.max(reported, current.draftSeconds),
+              start: revisingSince(current, now),
+              now,
+              credited: clock.credited,
+              cap: revisionCap(limitSeconds(current), current.activeSeconds),
+            })
+          : { seconds: 0, pieces: [] };
+      const result = await tx.assignment.updateMany({
+        // still sent back: a form posted twice adds its time only once
+        where: sentBack,
+        data: {
+          answer: input.answer,
+          reviewStatus: 'PENDING',
+          submittedAt: now,
+          reviewedAt: null,
+          payableAt: null,
+          activeSeconds: { increment: credit.seconds },
+          ...NO_DRAFT,
+        },
+      });
+      if (result.count > 0) await recordCredit(tx, clock, credit, now);
+      if (result.count === 0) {
+        const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+        return { ok: false, error: exists ? 'not_active' : 'not_found' };
+      }
+      return { ok: true };
+    }),
+  );
 }
 
 /** Hands a claim back without an answer so someone else can take it. */
