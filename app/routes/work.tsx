@@ -12,7 +12,13 @@ import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
-import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import {
+  emptyAnswer,
+  parseAnswerJson,
+  validateAnswer,
+  type Answer,
+  type ImageSize,
+} from '~/domain/answers';
 import { fitDraft } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
@@ -183,6 +189,10 @@ export default function Work(props: Route.ComponentProps) {
 function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
+  // A text without entities or an image without objects is submitted as it
+  // is: nothing marked is the answer. For boxes that needs the loaded image.
+  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
+  const toSubmit = answer ?? emptyAnswer(schema, imageSize);
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
@@ -273,18 +283,19 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             data={task.data}
             value={answer}
             onChange={setAnswer}
+            onImageSize={setImageSize}
           />
         </Card>
         <TaskContext schema={schema} data={task.data} />
         <Form method="post" className="flex flex-wrap items-center gap-2">
-          <input type="hidden" name="answer" value={answer ? JSON.stringify(answer) : ''} />
+          <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
           <Button
             ref={submitRef}
             type="submit"
             name="intent"
             value="submit"
-            disabled={busy || !answer}
+            disabled={busy || !toSubmit}
             title="Ctrl+Enter"
           >
             Submit and next

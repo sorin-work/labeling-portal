@@ -150,6 +150,28 @@ export function validateAnswer(schema: TaskSchema, data: unknown, input: unknown
   }
 }
 
+export type ImageSize = { width: number; height: number };
+
+/**
+ * The answer that says "nothing to label here", for the kinds where that is
+ * an answer: a text without entities, an image without objects. Gold scoring
+ * and consensus count two such answers as full agreement. A classification
+ * needs a label and a comparison needs a preference, so they have none. For
+ * boxes the answer carries the image size, which is only known once the
+ * image has loaded.
+ */
+export function emptyAnswer(schema: TaskSchema, image?: ImageSize | null): Answer | null {
+  switch (schema.kind) {
+    case 'ner':
+      return { spans: [] };
+    case 'bbox':
+      return image ? { boxes: [], imageWidth: image.width, imageHeight: image.height } : null;
+    case 'text_classification':
+    case 'pairwise':
+      return null;
+  }
+}
+
 /** Decodes the JSON an interface posts in its hidden `answer` field. */
 export function parseAnswerJson(raw: FormDataEntryValue | null): unknown {
   if (typeof raw !== 'string' || raw === '') return null;

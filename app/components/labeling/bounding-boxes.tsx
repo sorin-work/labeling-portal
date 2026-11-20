@@ -19,6 +19,7 @@ export function BoundingBoxes({
   value,
   onChange,
   readOnly,
+  onImageSize,
 }: LabelingProps<BboxSchema, BboxAnswer>) {
   const src = String(data[schema.imageField] ?? '');
   const imageRef = useRef<HTMLImageElement>(null);
@@ -26,10 +27,15 @@ export function BoundingBoxes({
   // A cached image can finish loading before React is listening for onLoad
   // (a reload), so ask the element as well. Until the image has been measured,
   // an answer that is already there (a restored draft) knows the size.
+  const reportSize = useRef(onImageSize);
+  useEffect(() => {
+    reportSize.current = onImageSize;
+  });
   useEffect(() => {
     const image = imageRef.current;
     if (image?.complete && image.naturalWidth > 0) {
       setMeasured({ w: image.naturalWidth, h: image.naturalHeight });
+      reportSize.current?.({ width: image.naturalWidth, height: image.naturalHeight });
     }
   }, [src]);
   const size = measured ?? (value ? { w: value.imageWidth, h: value.imageHeight } : null);
@@ -150,12 +156,11 @@ export function BoundingBoxes({
           alt="Task to label"
           className="block max-h-[70vh] max-w-full"
           draggable={false}
-          onLoad={(event) =>
-            setMeasured({
-              w: event.currentTarget.naturalWidth,
-              h: event.currentTarget.naturalHeight,
-            })
-          }
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            setMeasured({ w: naturalWidth, h: naturalHeight });
+            onImageSize?.({ width: naturalWidth, height: naturalHeight });
+          }}
         />
         {size && (
           <svg

@@ -4,7 +4,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
-import type { Answer } from '~/domain/answers';
+import { emptyAnswer, type Answer, type ImageSize } from '~/domain/answers';
 import { restoreTestAnswers } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
@@ -62,9 +62,33 @@ export async function action({ request, params }: Route.ActionArgs) {
   );
 }
 
+/**
+ * A question counts as answered once something was marked. Where nothing to
+ * mark is a possible answer (entities, boxes), it has to be said explicitly,
+ * so an untouched question is not handed in by accident.
+ */
+function NothingToLabel({
+  shown,
+  empty,
+  onPick,
+}: {
+  shown: boolean;
+  empty: Answer | null;
+  onPick: (value: Answer) => void;
+}) {
+  if (!shown || !empty) return null;
+  return (
+    <Button type="button" variant="secondary" className="mt-3" onClick={() => onPick(empty)}>
+      Nothing to label here
+    </Button>
+  );
+}
+
 export default function Qualification({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
+  // image sizes of box questions, needed to answer "nothing in this image"
+  const [sizes, setSizes] = useState<Record<string, ImageSize>>({});
   const navigation = useNavigation();
 
   // The test has no row to keep a draft on, so the answers so far stay in this
@@ -136,6 +160,12 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
                   data={task.data}
                   value={answers[task.id] ?? null}
                   onChange={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
+                  onImageSize={(size) => setSizes((prev) => ({ ...prev, [task.id]: size }))}
+                />
+                <NothingToLabel
+                  shown={!answers[task.id]}
+                  empty={emptyAnswer(schema, sizes[task.id])}
+                  onPick={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
                 />
               </Card>
             ))}
