@@ -38,6 +38,16 @@
   layouts where the digits need Shift and on the number pad. On the
   qualification test they act on one question, the one that was clicked or
   holds the focus, and that question is marked
+- Boxes can be moved by dragging and resized from eight handles, and with the
+  keyboard: Tab walks through the boxes, the arrows move the one that has
+  focus (Shift for ten pixels), `r` makes them resize it, `n` puts a new box
+  in the middle of the view
+- Zoom and pan for box images: the wheel, `+`, `-` and `f`, buttons, and
+  Space with a drag. Reviewers and managers get the same zoomable picture
+  without the editing. Zoom is kept for the session and is never part of an
+  answer
+- Undo and redo for boxes (Ctrl+Z, Ctrl+Shift+Z and buttons): drawing,
+  moving, resizing, relabelling and removing
 
 ### Review and quality
 
