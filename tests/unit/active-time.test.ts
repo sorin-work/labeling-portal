@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   clampActiveSeconds,
+  CREDIT_WINDOW_MS,
+  creditHorizon,
   creditTime,
+  mergeIntervals,
+  type Interval,
   MAX_CREDITED_LIMITS,
   revisionCap,
   revisionSeconds,
@@ -93,65 +97,97 @@ describe('revisionCap', () => {
 
 describe('creditTime', () => {
   const at = (minutes: number) => minutesLater(minutes);
+  const span = (from: number, to: number) => ({ start: at(from), end: at(to) });
+
+  /** Credits one piece of work after another, keeping the stretches as the server does. */
+  function credits(
+    work: Array<{ reported: number; start: number; now: number; cap?: number }>,
+  ): number[] {
+    let credited: Interval[] = [];
+    return work.map(({ reported, start, now, cap }) => {
+      const credit = creditTime({ reported, start: at(start), now: at(now), credited, cap });
+      credited = mergeIntervals([...credited, ...credit.pieces]);
+      return credit.seconds;
+    });
+  }
 
   it('credits three revisions sent back together no more than the time that passed once', () => {
-    // three submissions sent back at the same moment, all handed in twenty minutes later
-    let creditedUntil: Date | null = null;
-    const credits = [];
-    for (let i = 0; i < 3; i++) {
-      const credit = creditTime({ reported: 1200, start: at(0), now: at(20), creditedUntil });
-      credits.push(credit.seconds);
-      creditedUntil = credit.creditedUntil;
-    }
-    expect(credits).toEqual([1200, 0, 0]);
-    expect(creditedUntil).toEqual(at(20));
+    const together = { reported: 1200, start: 0, now: 20 };
+    expect(credits([together, together, together])).toEqual([1200, 0, 0]);
   });
 
-  it('shares the time that passed between pieces of work, without overlap', () => {
-    const first = creditTime({ reported: 600, start: at(0), now: at(20), creditedUntil: null });
-    expect(first).toEqual({ seconds: 600, creditedUntil: at(10) });
-    const second = creditTime({
+  it('pays a claim in full when later-started work was handed in first', () => {
+    // claimed at 0; a send-back from minute 10 revised and handed in at 15;
+    // the claim handed in at 30 after 25 minutes of work
+    expect(
+      credits([
+        { reported: 300, start: 10, now: 15, cap: LIMIT },
+        { reported: 1500, start: 0, now: 30 },
+      ]),
+    ).toEqual([300, 1500]);
+  });
+
+  it('pays each minute of overlapping windows once', () => {
+    const paid = credits([
+      { reported: 1200, start: 0, now: 20 },
+      { reported: 1200, start: 10, now: 25 },
+      { reported: 1200, start: 0, now: 30 },
+    ]);
+    // 20 minutes, then the 5 free ones of the second window, then the last 5
+    expect(paid).toEqual([1200, 300, 300]);
+    expect(paid.reduce((a, b) => a + b, 0)).toBe(30 * 60);
+  });
+
+  it('takes the earliest free time of the window, and stores what it took', () => {
+    const credit = creditTime({
       reported: 900,
       start: at(0),
-      now: at(20),
-      creditedUntil: first.creditedUntil,
+      now: at(30),
+      credited: [span(5, 10), span(12, 20)],
     });
-    // ten minutes were left of the twenty
-    expect(second).toEqual({ seconds: 600, creditedUntil: at(20) });
+    expect(credit.seconds).toBe(900);
+    expect(credit.pieces).toEqual([span(0, 5), span(10, 12), span(20, 28)]);
   });
 
-  it('does not credit a revision for minutes already paid on a claim', () => {
-    // a claim from minute 0, handed in at minute 20 after 20 minutes of work
-    const claim = creditTime({ reported: 1200, start: at(0), now: at(20), creditedUntil: null });
-    // a revision sent back at minute 0 and handed in at minute 25
-    const revision = creditTime({
-      reported: 1500,
-      start: at(0),
-      now: at(25),
-      creditedUntil: claim.creditedUntil,
-      cap: LIMIT,
-    });
-    expect(claim.seconds + revision.seconds).toBe(25 * 60);
-    expect(revision.seconds).toBe(300);
+  it('counts nothing from before the work could start, or before the horizon', () => {
+    expect(creditTime({ reported: 9999, start: at(50), now: at(60), credited: [] }).seconds).toBe(
+      600,
+    );
+    const now = at(2 * 24 * 60);
+    const old = creditTime({ reported: 1e9, start: at(0), now, credited: [] });
+    expect(old.seconds).toBe(CREDIT_WINDOW_MS / 1000);
+    expect(old.pieces[0].start).toEqual(creditHorizon(now));
   });
 
-  it('counts nothing from before the work could start', () => {
-    const credit = creditTime({ reported: 9999, start: at(50), now: at(60), creditedUntil: at(0) });
-    expect(credit).toEqual({ seconds: 600, creditedUntil: at(60) });
-  });
-
-  it('holds to the cap and leaves the clock alone when nothing is credited', () => {
+  it('holds to the cap and takes nothing when nothing is credited', () => {
     expect(
-      creditTime({ reported: 9999, start: at(0), now: at(60), creditedUntil: null, cap: 120 }),
-    ).toEqual({ seconds: 120, creditedUntil: at(2) });
+      creditTime({ reported: 9999, start: at(0), now: at(60), credited: [], cap: 120 }),
+    ).toEqual({ seconds: 120, pieces: [span(0, 2)] });
     for (const reported of [0, -5, Number.NaN]) {
-      expect(creditTime({ reported, start: at(0), now: at(60), creditedUntil: at(30) })).toEqual({
+      expect(creditTime({ reported, start: at(0), now: at(60), credited: [] })).toEqual({
         seconds: 0,
-        creditedUntil: at(30),
+        pieces: [],
       });
     }
     expect(
-      creditTime({ reported: 60, start: at(0), now: at(60), creditedUntil: null, cap: Number.NaN }),
-    ).toEqual({ seconds: 0, creditedUntil: null });
+      creditTime({ reported: 60, start: at(0), now: at(60), credited: [], cap: Number.NaN }),
+    ).toEqual({ seconds: 0, pieces: [] });
+    // a window that is all taken
+    expect(
+      creditTime({ reported: 60, start: at(0), now: at(60), credited: [span(0, 60)] }),
+    ).toEqual({ seconds: 0, pieces: [] });
+  });
+});
+
+describe('mergeIntervals', () => {
+  const span = (from: number, to: number) => ({
+    start: minutesLater(from),
+    end: minutesLater(to),
+  });
+
+  it('sorts, joins overlapping and touching stretches and drops empty ones', () => {
+    expect(
+      mergeIntervals([span(20, 30), span(0, 5), span(5, 10), span(8, 12), span(40, 40)]),
+    ).toEqual([span(0, 12), span(20, 30)]);
   });
 });

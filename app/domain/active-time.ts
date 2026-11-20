@@ -53,11 +53,45 @@ export function revisionSeconds(input: {
   return Math.min(passed, revisionCap(input.limitSeconds, input.credited));
 }
 
+export type Interval = { start: Date; end: Date };
+
+/**
+ * How far back a credit may reach. A claim lives at most two time limits
+ * (one extension), and a time limit is at most 480 minutes, so every claim
+ * fits. A revision has no deadline and is credited only in the last day
+ * before it is handed in. Intervals that end before this far back can never
+ * matter again and are removed.
+ */
+export const CREDIT_WINDOW_MS = 24 * 60 * 60_000;
+
+/** The earliest moment a credit made at `now` can use, and before which stored intervals are dropped. */
+export function creditHorizon(now: Date): Date {
+  return new Date(now.getTime() - CREDIT_WINDOW_MS);
+}
+
+/** Intervals sorted by start, with overlapping and touching ones joined. */
+export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
+  const sorted = intervals
+    .filter((i) => i.end > i.start)
+    .map((i) => ({ start: i.start, end: i.end }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+  const merged: Interval[] = [];
+  for (const next of sorted) {
+    const last = merged.at(-1);
+    if (last && next.start <= last.end) {
+      if (next.end > last.end) last.end = next.end;
+    } else {
+      merged.push(next);
+    }
+  }
+  return merged;
+}
+
 export type Credit = {
   /** the seconds the work is credited */
   seconds: number;
-  /** up to when the person's time is accounted for afterwards */
-  creditedUntil: Date | null;
+  /** the stretches of time this credit takes, to be stored with the others */
+  pieces: Interval[];
 };
 
 /**
@@ -67,16 +101,18 @@ export type Credit = {
  * Wall-clock time is one resource per person. Three submissions that were
  * sent back at 09:30 and are all resubmitted at 09:50 hold twenty minutes of
  * work between them, not sixty, and a revision cannot be done in the same
- * minutes as a claim. So the person has a moment up to which their time has
- * been credited (`creditedUntil`, on their membership), and a piece of work
- * is credited from the later of that moment and its own start, up to now:
+ * minutes as a claim. So the stretches of a person's time that have been
+ * credited are kept (`credited`), and a piece of work is credited from its
+ * own window, from `start` (the claim, or the review that sent it back, and
+ * not before `creditHorizon`) to now, minus what has been credited already:
  *
- *   - `start` is when the work could begin: the claim, or the review that
- *     sent it back. Nothing before it counts for this work.
- *   - Crediting moves the moment forward by what was credited, from where
- *     the credit began. Every credit is therefore an interval of its own,
- *     inside the time the work was open, and no two overlap. The sum can
- *     never be more than the time that has passed.
+ *   - The free time of the window is taken from its earliest part on. Work
+ *     that started later cannot use that part, so taking it first leaves the
+ *     most for the work still open: a claim from 09:00 handed in at 09:30,
+ *     after a revision of 09:10 to 09:15 was credited, still gets its 1500
+ *     seconds.
+ *   - What is credited is stored (`pieces`). No two credits overlap, so the
+ *     sum can never be more than the time that has passed.
  *   - `cap` is a limit the work has of its own, as a revision does.
  */
 export function creditTime(input: {
@@ -84,13 +120,41 @@ export function creditTime(input: {
   reported: number;
   start: Date;
   now: Date;
-  creditedUntil: Date | null;
+  credited: readonly Interval[];
   cap?: number;
 }): Credit {
-  const { start, now, creditedUntil } = input;
-  const from = creditedUntil !== null && creditedUntil > start ? creditedUntil : start;
+  const { now } = input;
+  const horizon = creditHorizon(now);
+  const from = input.start > horizon ? input.start : horizon;
+  if (now <= from) return { seconds: 0, pieces: [] };
+  // the free stretches of the window, earliest first
+  const free: Interval[] = [];
+  let cursor = from;
+  for (const taken of mergeIntervals(input.credited)) {
+    if (taken.end <= cursor) continue;
+    if (taken.start >= now) break;
+    if (taken.start > cursor) free.push({ start: cursor, end: taken.start });
+    if (taken.end > cursor) cursor = taken.end;
+  }
+  if (cursor < now) free.push({ start: cursor, end: now });
+  const freeMs = free.reduce((sum, i) => sum + (i.end.getTime() - i.start.getTime()), 0);
+
   const cap = input.cap === undefined ? Infinity : Number.isFinite(input.cap) ? input.cap : 0;
-  const seconds = Math.max(0, Math.min(clampActiveSeconds(input.reported, from, now), cap));
-  if (seconds === 0) return { seconds, creditedUntil };
-  return { seconds, creditedUntil: new Date(from.getTime() + seconds * 1000) };
+  const seconds = Math.max(
+    0,
+    Math.min(
+      clampActiveSeconds(input.reported, from, now),
+      Math.floor(cap),
+      Math.floor(freeMs / 1000),
+    ),
+  );
+  const pieces: Interval[] = [];
+  let left = seconds * 1000;
+  for (const gap of free) {
+    if (left <= 0) break;
+    const length = Math.min(left, gap.end.getTime() - gap.start.getTime());
+    pieces.push({ start: gap.start, end: new Date(gap.start.getTime() + length) });
+    left -= length;
+  }
+  return { seconds, pieces };
 }
