@@ -12,7 +12,8 @@ What the app does today is in the [README](README.md) and the notes under
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
-- **Shipped**: built. What was done and what is still open is at the end.
+- **Shipped**: built. The notes at the end say what was built, how it differs
+  from the design and what is still open.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
@@ -34,7 +35,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | #   | Item                                         | Group   | Area          | Size | Depends on |
 | --- | -------------------------------------------- | ------- | ------------- | ---- | ---------- |
 | 1   | Drafts that survive a reload                 | Next    | labeling      | S    | -          |
-| 2   | Safe schema edits once work exists           | Next    | projects      | S    | -          |
+| 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
@@ -107,58 +108,6 @@ counter runs on across tasks.
   assignment, refused once the claim is no longer active. The reset between
   tasks is component behaviour; a test for it has to wait for the DOM test
   setup of item 8.
-
-### 2. Safe schema edits once work exists
-
-The settings form lets a manager change anything in the task schema at any
-time. `parseProjectForm` only checks that the JSON is a valid schema, and
-`updateProject` writes `kind` and `schema` straight to the row. Removing a
-label that 500 answers use, renaming `textField` after the import, or turning
-a classification project into a box project all save without a word.
-Afterwards review, consensus and export read the old answers with the new
-schema.
-
-- A pure `diffSchema(before, after)` in a new `domain/schema-diff.ts` that
-  returns a list of changes, each marked safe or breaking:
-  - the kind: breaking as soon as the project has a task;
-  - field names (`textField`, `promptField`, `responseAField`,
-    `responseBField`, `imageField`): breaking once tasks exist, because the
-    imported rows only have the old field;
-  - labels, entity types, box labels: adding is safe, removing or renaming is
-    breaking when a stored answer uses the name;
-  - `multiple` from true to false: breaking when an answer has two labels;
-  - `allowTie` from true to false: breaking when an answer is a tie;
-  - rubric dimensions: adding one is breaking once answers exist. Old answers
-    have no score for it, `pairwiseConsensus` can average a missing score as
-    0, and `validatePairwise` refuses a reviewer's fix of an old answer until
-    the new dimension is scored too. Removing one only orphans numbers and
-    can be allowed with a warning;
-  - `minRationaleLength`, `minBoxSize`, colours, descriptions: safe.
-- Whether a name is in use needs the stored answers: `Assignment.answer`,
-  `Review.correctedAnswer`, `Task.goldAnswer`, `Task.consensus` and
-  `QualificationAttempt.answers`. A `schemaUsage(projectId)` in
-  `models/projects.server.ts` can count them with one `$queryRaw` over the
-  JSON columns.
-- The `routes/project-settings.tsx` action answers 400 with `errors.schema`
-  listing what breaks and how many answers are affected. Safe changes save as
-  today. `ProjectForm` already runs `parseTaskSchema` while typing; it can run
-  the diff against the saved schema as well and show it before the save.
-- The way out for a real redesign exists: "Duplicate" (`duplicateProject`)
-  copies the setup into a new draft without tasks. The error should say so.
-- Record the change in the `project.settings` activity entry, whose `detail`
-  is empty today, as `detail.changes.schema = [before, after]` with the two
-  schemas as JSON. This is the one shape for settings changes, a map from
-  field name to `[before, after]`, and item 15 uses it for every other field.
-  The list from `diffSchema` is not stored: the activity page runs the diff on
-  the pair when it describes the entry.
-- Tricky: tasks and answers are separate checks. A draft project with imported
-  tasks and no answers can still be broken by a field rename.
-- Undecided: a "rename this label everywhere" action that rewrites the stored
-  answers in one transaction. Useful, but it touches five JSON columns; I
-  would leave it out of the first version. Also whether an admin may force a
-  breaking change. I lean towards no.
-- Tests: unit tests for `diffSchema` for every kind; integration tests in
-  `tests/integration/projects.test.ts` for a blocked and an allowed save.
 
 ### 3. Hotkeys for every action
 
@@ -1019,6 +968,24 @@ price: people accept what is already filled in.
   tasks, and what a submission records.
 
 ## Shipped
+
+### 2. Safe schema edits once work exists
+
+`diffSchema` in `domain/schema-diff.ts` lists what an edit changes, and
+`updateProject` refuses the save when a change would break stored work: 400
+with `errors.schema`, which counts the tasks or answers affected and points to
+"Duplicate project". The check and the write share one transaction, with the
+counts from `schemaUsage`. The settings form shows the same diff while typing,
+and a saved edit is logged as `detail.changes.schema = [before, after]`, which
+the activity tab words by running the diff again. Different from the design: a
+new rubric dimension is refused only while an answer with scores has none for
+it, so a dimension removed by mistake can be put back, and consensus now
+averages only the dimensions of the current rubric, so the scores a removed
+dimension leaves behind stay out of it. Left out: "rename this label
+everywhere" and a forced save for admins. Still open: the check covers what is
+stored when the save runs. An answer validated against the old schema in the
+same instant can land after it, and closing that needs every place that stores
+an answer to hold the project row while it validates and writes.
 
 ### 4. Review sampling and reviewer reservations
 
