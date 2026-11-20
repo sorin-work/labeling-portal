@@ -227,6 +227,45 @@ describe('queue order', () => {
     expect(await prisma.assignment.count({ where: { task: { isGold: true } } })).toBe(2);
   });
 
+  it('waits for a regular task that is being claimed instead of handing out gold first', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2 });
+    await prisma.project.update({ where: { id: project.id }, data: { goldEvery: 3 } });
+    const [regular] = await createTasks(project.id, rows(1));
+    const gold = await createTasks(project.id, rows(1, 'gold'));
+    await makeGold(gold.map((t) => t.id));
+    const [ann] = await annotators(org.id, project.id, 1);
+    const spaced = await reload(project.id);
+
+    // another claim holds the only regular task at this moment
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${regular.id} FOR UPDATE`;
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    let settled = false;
+    const pending = claimNextTask(spaced, ann.id).then((claim) => {
+      settled = true;
+      return claim;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // a fresh annotator's first task is never gold: the claim waits
+    expect(settled).toBe(false);
+    release();
+    await holder;
+    const claim = await pending;
+    expect(claim.ok && claim.assignment.taskId).toBe(regular.id);
+    expect(await prisma.assignment.count({ where: { taskId: gold[0].id } })).toBe(0);
+  });
+
   it('passes over a task another claim has locked instead of waiting for it', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id);
