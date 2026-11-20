@@ -7,14 +7,25 @@ export function isAccepted(status: ReviewStatus | null | undefined): boolean {
   return status != null && ACCEPTED_STATUSES.includes(status);
 }
 
-type ReviewLike = { decision: string; correctedAnswer: unknown; createdAt: Date | string };
+type Overturnable = { overturnedAt?: Date | string | null };
+
+/** The decisions that still count. One that a dispute overturned does not. */
+export function standingReviews<R extends Overturnable>(reviews: R[]): R[] {
+  return reviews.filter((r) => r.overturnedAt == null);
+}
+
+type ReviewLike = Overturnable & {
+  decision: string;
+  correctedAnswer: unknown;
+  createdAt: Date | string;
+};
 
 /**
  * The answer that counts for a submission: the most recent reviewer correction
- * if there is one, otherwise what the annotator submitted.
+ * that still stands if there is one, otherwise what the annotator submitted.
  */
 export function finalAnswer<T = unknown>(answer: unknown, reviews: ReviewLike[]): T {
-  const fixes = reviews
+  const fixes = standingReviews(reviews)
     .filter((r) => r.decision === 'FIX' && r.correctedAnswer != null)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return (fixes[0]?.correctedAnswer ?? answer) as T;

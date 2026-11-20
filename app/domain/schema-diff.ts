@@ -8,12 +8,13 @@ import {
   type TextClassificationSchema,
 } from './task-schema';
 
-/** The five places an answer is stored, in the order errors list them. */
+/** The six places an answer is stored, in the order errors list them. */
 export const ANSWER_SOURCES = [
   'submission',
   'correction',
   'gold',
   'consensus',
+  'dispute',
   'qualification',
 ] as const;
 export type AnswerSource = (typeof ANSWER_SOURCES)[number];
@@ -26,7 +27,8 @@ export type AnswerCounts = Partial<Record<AnswerSource, number>>;
  * these counts to tell a harmless edit from one that would orphan answers.
  *
  * "Stored answers" are submissions, reviewer corrections, gold answers,
- * consensus answers and the answers of qualification attempts. Every count
+ * consensus answers, the answer a dispute was about (once the submission has
+ * moved on from it) and the answers of qualification attempts. Every count
  * says how many are in each of those places, so that an error can tell the
  * manager where to look.
  */
@@ -95,6 +97,7 @@ const SOURCE_NAMES: Record<AnswerSource, [one: string, many: string]> = {
   correction: ['reviewer correction', 'reviewer corrections'],
   gold: ['gold answer', 'gold answers'],
   consensus: ['consensus answer', 'consensus answers'],
+  dispute: ['disputed answer', 'disputed answers'],
   qualification: ['qualification answer', 'qualification answers'],
 };
 

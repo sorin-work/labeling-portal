@@ -28,6 +28,10 @@ or fix the work.
   they keep working on it, so two reviewers never work on the same one
 - **Review sampling**: review a share of the work instead of all of it. New
   annotators and annotators with low gold accuracy are always reviewed
+- **Disputes**: an annotator can contest a send-back or a correction within a
+  time limit set on the project. Someone other than the reviewer upholds or
+  overturns the decision, and an overturned decision is undone everywhere it
+  counted
 - **Quality**: per-annotator reviewed share, approval rate, QA score, gold
   accuracy, speed and throughput; Cohen's and Fleiss' kappa; consensus answers
   per task
@@ -67,7 +71,7 @@ test. Every demo account uses the password `labeling-demo`:
 | Email                    | Role            | Try                                                                                              |
 | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------ |
 | `admin@example.com`      | Admin           | People, payouts, everything below                                                                |
-| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export                                                         |
+| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export, settle a dispute                                       |
 | `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)                                        |
 | `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project                                |
 | `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work, and Earnings shows a project at two rates |

@@ -107,10 +107,15 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
             Your reviews, last 7 days
           </h2>
-          <div className="grid gap-4 sm:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-5">
             <StatCard label="Reviewed" value={reviewing.reviews} />
             <StatCard label="Sent back" value={reviewing.sentBack} />
             <StatCard label="Fixed" value={reviewing.fixed} />
+            <StatCard
+              label="Overturned"
+              value={reviewing.overturned}
+              hint="After a dispute, not counted in the rest"
+            />
             <StatCard label="Average score given" value={reviewing.avgScore ?? '–'} />
           </div>
         </section>

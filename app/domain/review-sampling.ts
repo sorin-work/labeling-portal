@@ -1,5 +1,7 @@
 import type { ReviewSample } from '@prisma/client';
 
+import { readOptionalNumber } from './form-fields';
+
 /** How many of an annotator's submissions in a project are reviewed before sampling starts. */
 export const ALWAYS_REVIEW_FIRST = 10;
 
@@ -52,7 +54,5 @@ export function describeReviewPolicy(reviewRequired: boolean, samplePercent: num
 
 /** Reads the review share from a form value: 100 when the field is missing. */
 export function readSamplePercent(raw: unknown): number {
-  if (raw === null || raw === undefined) return 100;
-  const text = String(raw).trim();
-  return text === '' ? Number.NaN : Number(text);
+  return readOptionalNumber(raw, 100);
 }

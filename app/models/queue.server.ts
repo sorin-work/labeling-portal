@@ -6,6 +6,7 @@ import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma, utc } from '~/lib/db.server';
 
+import { blockedByDispute } from './disputes.server';
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
@@ -298,51 +299,55 @@ function revisingSince(
 
 /**
  * Replaces the answer on a submission a reviewer sent back and puts it in the
- * review queue again. Only the annotator who made it can do this. The time
- * spent revising is added to the active time, capped at the time since the
- * review. The rate stays the one frozen at the first submission.
+ * review queue again. Only the annotator who made it can do this, and not
+ * while they dispute the decision: it is revise or dispute, never both. The
+ * time spent revising is added to the active time, capped at the time since
+ * the review. The rate stays the one frozen at the first submission.
  */
 export async function resubmitAssignment(
   assignmentId: string,
   userId: string,
   input: { answer: Prisma.InputJsonValue; activeSeconds: number },
   now = new Date(),
-): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
-  const sentBack: Prisma.AssignmentWhereInput = {
-    id: assignmentId,
-    userId,
-    status: 'SUBMITTED',
-    reviewStatus: 'SENT_BACK',
-  };
-  const current = await prisma.assignment.findFirst({
-    where: sentBack,
-    select: { reviewedAt: true, submittedAt: true, draftSeconds: true },
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const sentBack: Prisma.AssignmentWhereInput = {
+      id: assignmentId,
+      userId,
+      status: 'SUBMITTED',
+      reviewStatus: 'SENT_BACK',
+    };
+    const current = await tx.assignment.findFirst({
+      where: sentBack,
+      select: { reviewedAt: true, submittedAt: true, draftSeconds: true },
+    });
+    // the page counts on from the time saved with the draft, so the form has
+    // at least that much; the larger one counts if it does not
+    const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
+    const revising = clampActiveSeconds(
+      Math.max(reported, current?.draftSeconds ?? 0),
+      revisingSince(current),
+      now,
+    );
+    const result = await tx.assignment.updateMany({
+      // still sent back: a form posted twice adds its time only once
+      where: sentBack,
+      data: {
+        answer: input.answer,
+        reviewStatus: 'PENDING',
+        submittedAt: now,
+        reviewedAt: null,
+        activeSeconds: { increment: revising },
+        ...NO_DRAFT,
+      },
+    });
+    if (result.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
   });
-  // the page counts on from the time saved with the draft, so the form has
-  // at least that much; the larger one counts if it does not
-  const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
-  const revising = clampActiveSeconds(
-    Math.max(reported, current?.draftSeconds ?? 0),
-    revisingSince(current),
-    now,
-  );
-  const result = await prisma.assignment.updateMany({
-    // still sent back: a form posted twice adds its time only once
-    where: sentBack,
-    data: {
-      answer: input.answer,
-      reviewStatus: 'PENDING',
-      submittedAt: now,
-      reviewedAt: null,
-      activeSeconds: { increment: revising },
-      ...NO_DRAFT,
-    },
-  });
-  if (result.count === 0) {
-    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
-    return { ok: false, error: exists ? 'not_active' : 'not_found' };
-  }
-  return { ok: true };
 }
 
 /** Hands a claim back without an answer so someone else can take it. */
@@ -394,34 +399,41 @@ export async function saveDraft(
 /**
  * The same for the revise page. That assignment is submitted, not active, so
  * the guard is the one `resubmitAssignment` uses: the annotator's own
- * submission, while it is sent back. The time spent revising is kept with
- * the draft, capped at the time since the review, and never goes down.
+ * submission, while it is sent back and not under dispute. Work that is
+ * disputed cannot be revised, so no revision of it is saved either. The time
+ * spent revising is kept with the draft, capped at the time since the review,
+ * and never goes down.
  */
 export async function saveRevisionDraft(
   assignmentId: string,
   userId: string,
   input: { draft?: Prisma.InputJsonValue; activeSeconds: number },
   now = new Date(),
-): Promise<{ ok: true; draftSeconds: number } | { ok: false; error: AssignmentError }> {
-  const current = await prisma.assignment.findFirst({
-    where: { id: assignmentId, userId },
-    select: { reviewedAt: true, submittedAt: true },
+): Promise<
+  { ok: true; draftSeconds: number } | { ok: false; error: AssignmentError | 'disputed' }
+> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const current = await tx.assignment.findFirst({
+      where: { id: assignmentId, userId },
+      select: { reviewedAt: true, submittedAt: true },
+    });
+    if (!current) return { ok: false, error: 'not_found' };
+    const seconds = clampActiveSeconds(input.activeSeconds, revisingSince(current), now);
+    const draft =
+      input.draft === undefined
+        ? Prisma.empty
+        : Prisma.sql`, "draft" = ${JSON.stringify(input.draft)}::jsonb`;
+    // one statement, for the same reasons as in saveDraft
+    const saved = await tx.$queryRaw<Array<{ draftSeconds: number }>>`
+      UPDATE "Assignment"
+      SET "draftSeconds" = GREATEST("draftSeconds", ${seconds}::int)${draft}
+      WHERE id = ${assignmentId} AND "userId" = ${userId}
+        AND status = 'SUBMITTED' AND "reviewStatus" = 'SENT_BACK'
+      RETURNING "draftSeconds"`;
+    if (saved.length === 0) return { ok: false, error: 'not_active' };
+    return { ok: true, draftSeconds: saved[0].draftSeconds };
   });
-  if (!current) return { ok: false, error: 'not_found' };
-  const seconds = clampActiveSeconds(input.activeSeconds, revisingSince(current), now);
-  const draft =
-    input.draft === undefined
-      ? Prisma.empty
-      : Prisma.sql`, "draft" = ${JSON.stringify(input.draft)}::jsonb`;
-  // one statement, for the same reasons as in saveDraft
-  const saved = await prisma.$queryRaw<Array<{ draftSeconds: number }>>`
-    UPDATE "Assignment"
-    SET "draftSeconds" = GREATEST("draftSeconds", ${seconds}::int)${draft}
-    WHERE id = ${assignmentId} AND "userId" = ${userId}
-      AND status = 'SUBMITTED' AND "reviewStatus" = 'SENT_BACK'
-    RETURNING "draftSeconds"`;
-  if (saved.length === 0) return { ok: false, error: 'not_active' };
-  return { ok: true, draftSeconds: saved[0].draftSeconds };
 }
 
 /**

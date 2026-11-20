@@ -79,6 +79,7 @@ export async function createProject(orgId: string, input: ProjectInput) {
       timeLimitMinutes: input.timeLimitMinutes,
       reviewRequired: input.reviewRequired,
       reviewSamplePercent: input.reviewSamplePercent,
+      disputeWindowDays: input.disputeWindowDays,
       qualificationRequired: input.qualificationRequired,
       qualificationPassPercent: input.qualificationPassPercent,
       payMode: input.payMode,
@@ -102,14 +103,16 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
 /**
  * Counts what the stored work of a project uses from its schema, in one
  * statement so every number comes from the same snapshot. Every count is
- * split by where the answers are stored. It reads the five columns that hold
- * answers: `Assignment.answer`, `Review.correctedAnswer`,
- * `Task.goldAnswer`, `Task.consensus` and `QualificationAttempt.answers` (a
- * map from task id to answer). Attempt answers are kept as they were posted.
- * Only the entries of the project's test questions were validated, so only
- * those count: anything else in the map is whatever the browser sent, and
- * would otherwise block an edit for good. For the same reason nothing here
- * trusts the shape of a value before it is taken apart.
+ * split by where the answers are stored. It reads the six columns that hold
+ * answers: `Assignment.answer`, `Review.correctedAnswer`, `Task.goldAnswer`,
+ * `Task.consensus`, `Dispute.answer` (the answer as it stood when it was
+ * disputed, counted only once the submission has been revised and says
+ * something else) and `QualificationAttempt.answers` (a map from task id to
+ * answer). Attempt answers are kept as they were posted. Only the entries of
+ * the project's test questions were validated, so only those count: anything
+ * else in the map is whatever the browser sent, and would otherwise block an
+ * edit for good. For the same reason nothing here trusts the shape of a value
+ * before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
   type Row = { metric: string; name: string | null; source: AnswerSource | null; count: number };
@@ -125,6 +128,10 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       SELECT 'gold', t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
       SELECT 'consensus', t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
+      UNION ALL
+      SELECT 'dispute', d.answer
+      FROM "Dispute" d JOIN "Assignment" a ON a.id = d."assignmentId"
+      WHERE a."projectId" = ${projectId} AND d.answer IS DISTINCT FROM a.answer
       UNION ALL
       SELECT 'qualification', e.value
       FROM "QualificationAttempt" q
@@ -265,6 +272,7 @@ export async function updateProject(
         timeLimitMinutes: input.timeLimitMinutes,
         reviewRequired: input.reviewRequired,
         reviewSamplePercent: input.reviewSamplePercent,
+        disputeWindowDays: input.disputeWindowDays,
         qualificationRequired: input.qualificationRequired,
         qualificationPassPercent: input.qualificationPassPercent,
         payMode: input.payMode,
@@ -303,6 +311,7 @@ export async function duplicateProject(project: Project) {
       timeLimitMinutes: project.timeLimitMinutes,
       reviewRequired: project.reviewRequired,
       reviewSamplePercent: project.reviewSamplePercent,
+      disputeWindowDays: project.disputeWindowDays,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

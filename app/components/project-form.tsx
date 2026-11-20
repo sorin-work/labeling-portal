@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Form } from 'react-router';
 
+import { DEFAULT_DISPUTE_WINDOW_DAYS } from '~/domain/disputes';
 import { renderMarkdown } from '~/domain/markdown';
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import {
@@ -29,6 +30,7 @@ export type ProjectFormDefaults = {
   timeLimitMinutes: number;
   reviewRequired: boolean;
   reviewSamplePercent: number;
+  disputeWindowDays: number;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -44,6 +46,7 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   timeLimitMinutes: 30,
   reviewRequired: true,
   reviewSamplePercent: 100,
+  disputeWindowDays: DEFAULT_DISPUTE_WINDOW_DAYS,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -241,6 +244,22 @@ export function ProjectForm({
             max={100}
             required
             defaultValue={defaults.reviewSamplePercent}
+          />
+        </Field>
+        <Field
+          label="Dispute window (days)"
+          htmlFor="disputeWindowDays"
+          error={errors?.disputeWindowDays}
+          hint="How long after a review the annotator can dispute it. 0 turns disputes off."
+        >
+          <Input
+            id="disputeWindowDays"
+            name="disputeWindowDays"
+            type="number"
+            min={0}
+            max={90}
+            required
+            defaultValue={defaults.disputeWindowDays}
           />
         </Field>
       </fieldset>
