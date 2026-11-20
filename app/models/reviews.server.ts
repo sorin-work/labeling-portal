@@ -8,7 +8,7 @@ import {
 } from '@prisma/client';
 
 import { holdCutoff } from '~/domain/review-hold';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { refreshTaskStatus } from './tasks.server';
 
@@ -26,14 +26,6 @@ export type ReviewInput = {
 };
 
 type Db = PrismaClient | Prisma.TransactionClient;
-
-/**
- * A date for raw SQL. The columns are timestamps without a zone that hold UTC,
- * and a bare parameter would be converted to the session's time zone first.
- */
-function utc(date: Date): Prisma.Sql {
-  return Prisma.sql`(${date}::timestamptz AT TIME ZONE 'UTC')`;
-}
 
 /** Why a reservation or a decision was refused. */
 export type ReviewRefusal = 'not_pending' | 'held';
@@ -181,6 +173,30 @@ export async function holdReview(
     });
     return { ok: true };
   });
+}
+
+/**
+ * Gives the reviewer who holds a submission another full period. The review
+ * page asks for this while the reviewer is working, and a posted decision
+ * that does not validate does the same. One conditional write: it only
+ * touches a waiting submission whose hold is still theirs, so it cannot take
+ * a submission back from a reviewer who reserved it in the meantime.
+ */
+export async function renewReviewHold(
+  assignmentId: string,
+  reviewerId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const renewed = await prisma.assignment.updateMany({
+    where: {
+      id: assignmentId,
+      status: 'SUBMITTED',
+      reviewStatus: 'PENDING',
+      reviewHeldById: reviewerId,
+    },
+    data: { reviewHeldAt: now },
+  });
+  return renewed.count > 0;
 }
 
 export type RecordedReview =

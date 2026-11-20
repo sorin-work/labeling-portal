@@ -56,7 +56,12 @@ export function classificationConsensus(
   return { answer: { labels }, agreement: round(support, 4), annotators: n };
 }
 
-export function pairwiseConsensus(answers: PairwiseAnswer[]): Consensus {
+/**
+ * `dimensions` are the rubric keys of the schema. With them the merged scores
+ * hold exactly the current rubric, so the scores of a dimension that was
+ * removed from the schema are not averaged into new consensus answers.
+ */
+export function pairwiseConsensus(answers: PairwiseAnswer[], dimensions?: string[]): Consensus {
   const n = answers.length;
   if (n === 0) return { answer: null, agreement: 0, annotators: 0 };
   const ranked = tally<Preference>(answers.map((a) => a.preference));
@@ -64,7 +69,7 @@ export function pairwiseConsensus(answers: PairwiseAnswer[]): Consensus {
   const tied = ranked.length > 1 && ranked[1][1] === count;
 
   const mean = (side: 'a' | 'b') => {
-    const keys = Object.keys(answers[0].scores[side]);
+    const keys = dimensions ?? Object.keys(answers[0].scores[side]);
     return Object.fromEntries(
       keys.map((k) => [k, round(answers.reduce((s, a) => s + (a.scores[side][k] ?? 0), 0) / n)]),
     );
@@ -200,7 +205,10 @@ export function consensus(schema: TaskSchema, answers: Answer[]): Consensus {
     case 'text_classification':
       return classificationConsensus(answers as ClassificationAnswer[], schema.multiple);
     case 'pairwise':
-      return pairwiseConsensus(answers as PairwiseAnswer[]);
+      return pairwiseConsensus(
+        answers as PairwiseAnswer[],
+        schema.dimensions.map((d) => d.key),
+      );
     case 'ner':
       return nerConsensus(answers as NerAnswer[]);
     case 'bbox':

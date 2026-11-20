@@ -4,7 +4,7 @@ import type { Answer } from '~/domain/answers';
 import { scoreAgainstGold } from '~/domain/gold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
 import { isAnnotatorFlagged } from './quality.server';
@@ -47,7 +47,7 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
       OR (
         SELECT count(*) FROM "Assignment" a
         WHERE a."taskId" = t.id
-          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${utc(now)}))
       ) < ${overlap}
     )
   )`;
@@ -197,9 +197,15 @@ export async function submitAssignment(
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
   if (found.assignment.expiresAt <= now) {
-    // the slot may already belong to someone else
-    await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'EXPIRED' } });
-    return { ok: false, error: 'expired' };
+    // Too late: the answer is refused and the claim is marked as expired, but
+    // only while it is still active. When the same form is posted twice
+    // around the deadline, the first post may have been in time and stored,
+    // and that submission must not be turned into an expired claim.
+    const expired = await prisma.assignment.updateMany({
+      where: { id: assignmentId, status: 'ACTIVE' },
+      data: { status: 'EXPIRED' },
+    });
+    return { ok: false, error: expired.count > 0 ? 'expired' : 'not_active' };
   }
 
   // gold tasks are scored against their known answer instead of being reviewed
@@ -231,23 +237,29 @@ export async function submitAssignment(
         )
       : { review: false, sample: null };
 
-  // only a claim that is still active is written, so a form posted twice
-  // cannot replace the first outcome with a second draw
-  const [assignment] = await prisma.assignment.updateManyAndReturn({
-    where: { id: assignmentId, status: 'ACTIVE' },
-    data: {
-      status: 'SUBMITTED',
-      submittedAt: now,
-      answer: input.answer,
-      goldScore,
-      reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
-      reviewSample: sampling.sample,
-      activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
-    },
+  const assignment = await prisma.$transaction(async (tx) => {
+    // only a claim that is still active is written, so a form posted twice
+    // cannot replace the first outcome with a second draw
+    const [submitted] = await tx.assignment.updateManyAndReturn({
+      where: { id: assignmentId, status: 'ACTIVE' },
+      data: {
+        status: 'SUBMITTED',
+        submittedAt: now,
+        answer: input.answer,
+        goldScore,
+        reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
+        reviewSample: sampling.sample,
+        activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+      },
+    });
+    // work that no reviewer will see is accepted at once and can complete the
+    // task, in the same transaction as the write that accepts it
+    if (submitted && !sampling.review && !task.isGold) {
+      await refreshTaskStatus(submitted.taskId, tx, now);
+    }
+    return submitted;
   });
   if (!assignment) return { ok: false, error: 'not_active' };
-  // work that no reviewer will see is accepted at once and can complete the task
-  if (!sampling.review && !task.isGold) await refreshTaskStatus(assignment.taskId, prisma, now);
   return { ok: true, assignment };
 }
 
@@ -258,11 +270,13 @@ export async function skipAssignment(
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
-  await prisma.assignment.update({
-    where: { id: assignmentId },
+  // conditional for the same reason as in submitAssignment: a second post must
+  // not turn a submission that was just stored into a skip
+  const skipped = await prisma.assignment.updateMany({
+    where: { id: assignmentId, status: 'ACTIVE' },
     data: { status: 'SKIPPED', skipReason: reason },
   });
-  return { ok: true };
+  return skipped.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 
 /**
@@ -297,8 +311,11 @@ export async function releaseAssignment(
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
-  await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'RELEASED' } });
-  return { ok: true };
+  const released = await prisma.assignment.updateMany({
+    where: { id: assignmentId, status: 'ACTIVE' },
+    data: { status: 'RELEASED' },
+  });
+  return released.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 
 /**

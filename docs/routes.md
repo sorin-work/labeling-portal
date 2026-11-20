@@ -32,6 +32,10 @@ API. The table lists who can open each page.
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
 
+Saving the settings form answers 400 with `errors.schema` when the schema
+edit would break stored work, and saves nothing from that post. The rules are
+in [architecture](architecture.md#changing-the-schema-once-work-exists).
+
 ## Downloads and probes
 
 These are resource routes that return files or JSON instead of pages.

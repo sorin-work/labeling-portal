@@ -5,7 +5,7 @@ import type { Answer } from '~/domain/answers';
 import { round } from '~/domain/geometry';
 import { isGoldFlagged } from '~/domain/gold';
 import { finalAnswer, standingReviews } from '~/domain/outcome';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { projectSchema } from './projects.server';
 
@@ -225,13 +225,13 @@ export async function dailyThroughput(
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
   const rows = await prisma.$queryRaw<Array<{ day: Date; submitted: bigint; accepted: bigint }>>`
-    SELECT date_trunc('day', a."submittedAt" AT TIME ZONE 'UTC') AS day,
+    SELECT date_trunc('day', a."submittedAt") AS day,
            count(*) AS submitted,
            count(*) FILTER (WHERE a."reviewStatus" IN ('APPROVED', 'FIXED', 'NOT_REQUIRED')) AS accepted
     FROM "Assignment" a
     WHERE a."projectId" = ${projectId}
       AND a.status = 'SUBMITTED'
-      AND a."submittedAt" >= ${start} AND a."submittedAt" < ${end}
+      AND a."submittedAt" >= ${utc(start)} AND a."submittedAt" < ${utc(end)}
     GROUP BY 1`;
   const byDay = new Map(rows.map((r) => [r.day.toISOString().slice(0, 10), r]));
   const result: DayCount[] = [];

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { activeHold, holdCutoff, holdExpiresAt, REVIEW_HOLD_MINUTES } from '~/domain/review-hold';
+import {
+  activeHold,
+  HOLD_RENEW_MINUTES,
+  holdCutoff,
+  holdExpiresAt,
+  REVIEW_HOLD_MINUTES,
+  shouldRenewHold,
+} from '~/domain/review-hold';
 
 const heldAt = new Date('2026-03-01T10:00:00Z');
 const minutesLater = (m: number) => new Date(heldAt.getTime() + m * 60_000);
@@ -34,5 +41,28 @@ describe('review holds', () => {
 
   it('is empty when nobody holds the submission', () => {
     expect(activeHold({ reviewHeldById: null, reviewHeldAt: null }, 'rev-1', heldAt)).toBeNull();
+  });
+});
+
+describe('shouldRenewHold', () => {
+  const now = Date.parse('2026-03-01T10:20:00Z');
+  const minutesAgo = (m: number) => now - m * 60_000;
+
+  it('renews for a reviewer who is at the page and touched it since the last check', () => {
+    expect(shouldRenewHold({ visible: true, lastInputAt: minutesAgo(1) }, now)).toBe(true);
+    expect(
+      shouldRenewHold({ visible: true, lastInputAt: minutesAgo(HOLD_RENEW_MINUTES) }, now),
+    ).toBe(true);
+  });
+
+  it('lets the hold of a tab that was left alone or put away run out', () => {
+    expect(
+      shouldRenewHold({ visible: true, lastInputAt: minutesAgo(HOLD_RENEW_MINUTES + 1) }, now),
+    ).toBe(false);
+    expect(shouldRenewHold({ visible: false, lastInputAt: minutesAgo(1) }, now)).toBe(false);
+  });
+
+  it('checks often enough that a working reviewer never runs out', () => {
+    expect(HOLD_RENEW_MINUTES * 2).toBeLessThan(REVIEW_HOLD_MINUTES);
   });
 });

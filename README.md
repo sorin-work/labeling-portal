@@ -9,7 +9,9 @@ or fix the work.
   with every project scoped to its organisation
 - **Projects**: Markdown instructions with live preview, a JSON task schema,
   annotators per task (overlap), time limit, review of everything, of a
-  sampled share or of nothing, pay rate
+  sampled share or of nothing, pay rate. The schema can still be edited once
+  work exists: edits that would break stored answers are refused, and the
+  form says why before the save
 - **Four labeling interfaces**: text classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
@@ -20,8 +22,8 @@ or fix the work.
   abandoned claims, one extension per claim, skip with a reason, release
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections. "Start reviewing"
-  reserves a submission for one reviewer for 15 minutes, so two reviewers
-  never work on the same one
+  reserves a submission for one reviewer, for 15 minutes and for as long as
+  they keep working on it, so two reviewers never work on the same one
 - **Review sampling**: review a share of the work instead of all of it. New
   annotators and annotators with low gold accuracy are always reviewed
 - **Disputes**: an annotator can contest a send-back or a correction within a
@@ -148,8 +150,8 @@ More detail: [architecture](docs/architecture.md),
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
 - **A submission says another reviewer is on it**: "Start reviewing" reserves
-  a submission for 15 minutes. If that reviewer walked away, it frees up by
-  itself when the time is over.
+  a submission for 15 minutes and keeps it reserved while that reviewer works
+  on it. If they walked away, it frees up by itself 15 minutes later.
 - **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
   and skips itself if the demo organisation already exists. Remove the volume
   with `docker compose down -v` to start over.

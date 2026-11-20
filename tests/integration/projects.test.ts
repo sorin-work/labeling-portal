@@ -11,6 +11,7 @@ import {
   cookieFor,
   createMember,
   createOrg,
+  createTasks,
   createTestProject,
   locationOf,
   makeRequest,
@@ -19,6 +20,7 @@ import {
   resetDb,
   run,
   statusOf,
+  submitWork,
 } from './helpers';
 
 const validForm = {
@@ -86,6 +88,50 @@ describe('projects', () => {
       { reviewSamplePercent: 40, disputeWindowDays: 7 },
       { reviewSamplePercent: 40, disputeWindowDays: 7 },
     ]);
+  });
+
+  it('saves the review share in the same save as a schema edit, or not at all', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const cookie = await cookieFor(pm, org.id);
+    const project = await createTestProject(org.id);
+    await createTasks(project.id, [{ text: 'x' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await submitWork(project, ann.id, { labels: ['positive'] });
+    const path = `/projects/${project.id}/settings`;
+    const params = { projectId: project.id };
+    const schemaWith = (labels: string[]) => ({
+      kind: 'text_classification',
+      textField: 'text',
+      labels,
+      multiple: false,
+    });
+    const save = (labels: string[], reviewSamplePercent: string) =>
+      run(
+        settingsAction,
+        makeRequest(path, {
+          cookie,
+          form: { ...validForm, schema: JSON.stringify(schemaWith(labels)), reviewSamplePercent },
+        }),
+        params,
+      );
+    const saved = () => prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+
+    // an allowed edit: the check against stored work and the write are one transaction
+    const added = await save(['positive', 'negative', 'neutral'], '30');
+    expect(payload<{ saved: boolean }>(added).saved).toBe(true);
+    expect(await saved()).toMatchObject({
+      reviewSamplePercent: 30,
+      schema: schemaWith(['positive', 'negative', 'neutral']),
+    });
+
+    // a refused edit saves nothing of the form, the share included
+    const refused = await save(['negative', 'neutral'], '5');
+    expect(statusOf(refused)).toBe(400);
+    expect(await saved()).toMatchObject({
+      reviewSamplePercent: 30,
+      schema: schemaWith(['positive', 'negative', 'neutral']),
+    });
   });
 
   it('returns field errors for an invalid schema', async () => {

@@ -5,6 +5,12 @@ import { DEFAULT_DISPUTE_WINDOW_DAYS } from '~/domain/disputes';
 import { renderMarkdown } from '~/domain/markdown';
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import {
+  diffSchema,
+  REDESIGN_HINT,
+  type SchemaChange,
+  type SchemaUsage,
+} from '~/domain/schema-diff';
+import {
   KIND_LABELS,
   parseTaskSchema,
   SCHEMA_TEMPLATES,
@@ -13,7 +19,7 @@ import {
 
 import { MarkdownBody } from './markdown';
 
-import { Alert, Button, Field, Input } from './ui';
+import { Alert, Button, cx, Field, Input } from './ui';
 
 export type ProjectFormDefaults = {
   name: string;
@@ -50,13 +56,47 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
 const textareaClass =
   'block w-full rounded-md border-0 px-3 py-2 font-mono text-sm shadow-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-indigo-600';
 
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const CHANGE_STYLE: Record<SchemaChange['impact'], string> = {
+  safe: 'text-slate-600',
+  warning: 'text-amber-700',
+  breaking: 'text-rose-600',
+};
+
+/** What the typed schema changes compared with the saved one, before the save. */
+function SchemaChanges({ changes }: { changes: SchemaChange[] }) {
+  if (changes.length === 0) return null;
+  const blocked = changes.some((change) => change.impact === 'breaking');
+  return (
+    <div className="rounded-md p-3 text-xs ring-1 ring-slate-200" aria-live="polite">
+      <p className={cx('font-medium', blocked ? 'text-rose-600' : 'text-slate-700')}>
+        {blocked
+          ? 'This edit cannot be saved because it would break work that already exists:'
+          : 'Compared with the saved schema:'}
+      </p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {changes.map((change) => (
+          <li key={change.summary} className={CHANGE_STYLE[change.impact]}>
+            {capitalize(change.reason || change.summary)}.
+          </li>
+        ))}
+      </ul>
+      {blocked && <p className="mt-1 text-slate-600">{REDESIGN_HINT}</p>}
+    </div>
+  );
+}
+
 export function ProjectForm({
   defaults,
+  usage,
   errors,
   submitLabel,
   allowTemplates,
 }: {
   defaults: ProjectFormDefaults;
+  /** What stored work uses from the saved schema. Only an existing project has it. */
+  usage?: SchemaUsage;
   errors?: Record<string, string>;
   submitLabel: string;
   allowTemplates: boolean;
@@ -64,6 +104,9 @@ export function ProjectForm({
   const [schema, setSchema] = useState(defaults.schema);
   const [instructions, setInstructions] = useState(defaults.instructions);
   const checked = parseTaskSchema(schema);
+  const saved = usage ? parseTaskSchema(defaults.schema) : null;
+  const changes =
+    usage && saved?.ok && checked.ok ? diffSchema(saved.schema, checked.schema, usage) : [];
 
   return (
     <Form method="post" className="space-y-6">
@@ -117,6 +160,7 @@ export function ProjectForm({
         ) : (
           <p className="text-xs text-amber-700">{checked.errors[0]}</p>
         )}
+        <SchemaChanges changes={changes} />
       </div>
 
       <Field

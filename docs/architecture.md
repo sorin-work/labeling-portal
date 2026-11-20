@@ -53,6 +53,9 @@ tests/integration/  loaders and actions against a real PostgreSQL
    revising, the annotator can dispute the decision (see "Disputes" below).
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
+   `refreshTaskStatus` runs in the transaction that accepted the submission
+   and locks the task row before it counts, so acceptances that arrive at the
+   same moment are counted one after the other and none is missed.
 
 ## Review sampling
 
@@ -81,8 +84,9 @@ work goes to a reviewer:
 
 Two reviewers must not do the same review. `Assignment.reviewHeldById` and
 `reviewHeldAt` say who is on a waiting submission and since when. A hold
-lasts 15 minutes (`app/domain/review-hold.ts`) and then simply stops
-counting; there is no background job that clears it.
+lasts 15 minutes from the moment it was taken or last renewed
+(`app/domain/review-hold.ts`) and then simply stops counting; there is no
+background job that clears it.
 
 - "Start reviewing" posts to `/projects/:id/review`. `reserveNextReview` in
   `app/models/reviews.server.ts` runs one `UPDATE` whose subquery picks the
@@ -97,8 +101,12 @@ counting; there is no background job that clears it.
   pending, and not held by someone else. Of two decisions sent at the same
   moment one is stored and the other gets a 409. The same write clears the
   hold.
-- Dates in the raw statement are written as UTC explicitly, because a bare
-  parameter would be converted to the database session's time zone.
+- While the reviewer works, the review page renews the hold every five
+  minutes with a POST (`intent=renew`, `renewReviewHold`), but only if the
+  tab is visible and was touched since the last check. Starting a fix renews
+  it at once, and so does a posted decision that does not validate. So a
+  long fix keeps its submission, and a tab that was left open lets it go. A
+  renewal only touches a hold that is still the reviewer's own.
 
 ## Disputes
 
@@ -165,6 +173,64 @@ Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
 at the time since the claim.
 
+## Changing the schema once work exists
+
+A project's schema can be edited at any time, but an edit must not orphan or
+corrupt work that is already stored. `updateProject` compares the posted
+schema with the saved one (`diffSchema` in `app/domain/schema-diff.ts`) and
+with what the project's tasks and answers use (`schemaUsage` in
+`app/models/projects.server.ts`), in one transaction that holds the project
+row. A breaking edit is refused with a 400 and nothing from that post is
+saved. The rule lives in the model, so it holds for any form post, not only
+for the settings page. The page gets the same counts from its loader and
+shows what an edit would do while the manager types.
+
+"Stored answers" are the five places an answer is kept: submissions
+(`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
+answers (`Task.goldAnswer`), consensus answers (`Task.consensus`) and
+qualification attempts (`QualificationAttempt.answers`).
+
+| Edit                                               | Outcome                                                   |
+| -------------------------------------------------- | --------------------------------------------------------- |
+| Another kind                                       | Refused once the project has a task or a stored answer    |
+| A field name such as `textField` or `imageField`   | Refused once the project has a task                       |
+| Add or reorder labels, entity types, box labels    | Saved                                                     |
+| Remove or rename a label, entity type or box label | Refused while a stored answer uses the name               |
+| `multiple` off                                     | Refused while a stored answer has more than one label     |
+| `allowTie` off                                     | Refused while a stored answer is a tie                    |
+| Add a rubric dimension                             | Refused while a stored answer with scores has none for it |
+| Remove a rubric dimension                          | Saved, with a warning when stored answers have its scores |
+| Anything else                                      | Saved                                                     |
+
+- The field names are `textField`, `promptField`, `responseAField`,
+  `responseBField` and `imageField`. The imported rows only have the field
+  they were imported with.
+- A removed rubric dimension leaves its scores on the stored answers. The CSV
+  export and new consensus answers leave them out; the JSONL export still
+  shows them. The dimension can be added back as long as every answer with
+  scores still has one for it.
+- "Anything else" is `multiple` or `allowTie` turned on, `minRationaleLength`,
+  `minBoxSize`, colours, the label and description of a rubric dimension and
+  the order of the dimensions.
+- Tasks and answers are separate checks. A draft with imported tasks and no
+  answers can still be broken by a field rename, so that is refused too.
+- Names are compared exactly, the way answers are validated. A rename, also
+  one that only changes case, is a removal plus an addition. There is no
+  "rename everywhere" action.
+- Nobody can force a refused edit, admins included. The way out for a real
+  redesign is **Duplicate project**, which copies the setup into a new draft
+  without tasks. The error says so.
+- A higher `minRationaleLength` or `minBoxSize` applies from then on. Stored
+  answers stay as they are, but a reviewer who fixes an older answer has to
+  meet the new minimum.
+- A saved schema edit is written to the activity log as
+  `detail.changes.schema = [before, after]`. The list of changes is not
+  stored: the activity tab runs the diff on the pair again to word the entry.
+- The check covers what is stored when the save runs. An answer that was
+  validated against the old schema a moment before the save and written a
+  moment after it is not caught. Closing that needs every place that stores
+  an answer to hold the project row while it validates and writes.
+
 ## Adding a labeling kind
 
 Everything kind-specific goes through a `switch (schema.kind)`, so TypeScript
@@ -176,8 +242,11 @@ schema union:
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.
-5. `app/components/labeling/`: the interface, wired up in `index.tsx`.
-6. A `TaskKind` enum value and a migration.
+5. `app/domain/schema-diff.ts`: which edits of the new schema are safe. If its
+   answers name labels in a new place, `schemaUsage` in
+   `app/models/projects.server.ts` has to count them.
+6. `app/components/labeling/`: the interface, wired up in `index.tsx`.
+7. A `TaskKind` enum value and a migration.
 
 ## Conventions
 
@@ -188,4 +257,9 @@ schema union:
 - Every loader and action starts with `requireUser`/`requireRole` and, for
   project pages, `requireProject(current, id, capability)`, which also hides
   other organisations' projects.
-- Dates are stored in UTC and shown in UTC.
+- Dates are stored in UTC and shown in UTC. In raw SQL a date goes through
+  `utc()` from `app/lib/db.server.ts`: a bare `${date}` is converted to the
+  database session's time zone, which is wrong unless that is UTC.
+- A write that ends a claim or decides a submission states the status it
+  expects in its `where` and checks how many rows it changed. A form posted
+  twice, or two people acting at once, then cannot undo each other.

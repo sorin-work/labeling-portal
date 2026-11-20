@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Projects and setup
+
+- Schema edits are checked against stored work. The settings form refuses
+  another kind or field name once tasks exist, removing or renaming a label,
+  entity type or box label that answers use, turning off `multiple` or
+  `allowTie` while answers depend on them, and a new rubric dimension that
+  scored answers lack. It shows what an edit would do while typing, and the
+  error points to "Duplicate project" for a redesign
+- A saved schema edit is recorded in the activity log with the schema before
+  and after, and the activity tab says what changed
+- Pairwise consensus averages only the dimensions of the current rubric
+
 ### Review and quality
 
 - Review sampling: a project can review a share of its submissions instead of
@@ -12,7 +24,9 @@
 - Reviewer reservations: "Start reviewing" reserves the oldest free submission
   for one reviewer for 15 minutes, the queue shows who holds what, and a
   decision on a submission someone else holds is refused. Two reviewers asking
-  or deciding at the same moment can no longer end up on the same submission
+  or deciding at the same moment can no longer end up on the same submission.
+  The review page renews the hold while the reviewer works, so a long fix is
+  not lost to the next reviewer
 - Quality page and its CSV: share of each annotator's work that was reviewed
 - Disputes: an annotator can contest a send-back or a correction, once per
   decision and within a time limit set on the project. Anyone who can review,
@@ -20,6 +34,18 @@
   overturned decision no longer counts in the consensus, the export, the
   quality numbers or the reviewer's stats, and the work counts as approved.
   Sent-back work cannot be revised while its dispute is open
+
+### Fixes
+
+- A task could stay open for good with its overlap met when its last
+  submissions were accepted at the same moment. The task is now locked while
+  its accepted submissions are counted
+- On a database whose time zone is not UTC, a task with a live claim could be
+  handed to a second annotator, and the daily chart put submissions on the
+  wrong day
+- A work form posted twice around the time limit could turn the stored
+  submission into an expired claim. Skipping and releasing are guarded the
+  same way
 
 ## 1.0.0 - 2026-11-08
 
