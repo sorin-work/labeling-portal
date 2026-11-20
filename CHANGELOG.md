@@ -40,6 +40,26 @@
   layouts where the digits need Shift and on the number pad. On the
   qualification test they act on one question, the one that was clicked or
   holds the focus, and that question is marked
+- Queue order: a batch has a priority and can be paused from its page
+  (higher numbers are handed out first; a paused batch hands out nothing new,
+  claims on it can be finished, and resuming continues where it was). A
+  project can hand out tasks in import order or shuffled, in an order of each
+  annotator's own that stays the same for them. "Gold spacing" makes each task
+  an annotator gets gold with a chance of 1 in N, per annotator, never as the
+  first task of a session, keyed with a secret per project so the timing
+  cannot be worked out. The dashboard count leaves paused batches out.
+  With the default settings the order is the same as before
+- Boxes can be moved by dragging and resized from eight handles, and with the
+  keyboard: Tab walks through the boxes, the arrows move the one that has
+  focus (Shift for ten pixels), `r` makes them resize it, `n` puts a new box
+  in the middle of the view. `r` is no longer a label key, so labels 24 to 30
+  moved one letter on (`t` to `z` instead of `r` to `y`)
+- Zoom and pan for box images: the wheel, `+`, `-` and `f`, buttons, and
+  Space with a drag. Reviewers and managers get the same zoomable picture
+  without the editing. Zoom is kept for the session and is never part of an
+  answer
+- Undo and redo for boxes (Ctrl+Z, Ctrl+Shift+Z and buttons): drawing,
+  moving, resizing, relabelling and removing
 
 ### Review and quality
 

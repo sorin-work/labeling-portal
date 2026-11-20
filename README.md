@@ -19,10 +19,15 @@ or fix the work.
 - **Keyboard shortcuts** for every action: a key for each label (1 to 9, 0,
   then letters), a rubric that can be typed, keys for skipping, reviewing and
   fixing, and a list of them behind `?` on every labeling page
+- **Box editing**: move and resize boxes by dragging or with the arrow keys,
+  zoom and pan the image, undo and redo. Reviewers and managers get the same
+  zoomable picture without the editing
 - **Import** CSV or JSONL into batches with per-line error reports, example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
-  abandoned claims, one extension per claim, skip with a reason, release
+  abandoned claims, one extension per claim, skip with a reason, release.
+  Managers give batches a priority or pause them, can shuffle the order for
+  each annotator and can space gold tasks out ("about one in every N")
 - **Drafts**: the answer in progress and its working time are saved to the
   server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores

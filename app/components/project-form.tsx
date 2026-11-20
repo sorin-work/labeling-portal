@@ -3,6 +3,7 @@ import { Form } from 'react-router';
 
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from '~/domain/disputes';
 import { renderMarkdown } from '~/domain/markdown';
+import { MAX_GOLD_EVERY, MIN_GOLD_EVERY, QUEUE_ORDERS } from '~/domain/queue-order';
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import {
   diffSchema,
@@ -32,6 +33,8 @@ export type ProjectFormDefaults = {
   reviewSamplePercent: number;
   disputeWindowDays: number;
   goldFeedback: boolean;
+  queueOrder: 'IMPORT' | 'SHUFFLED';
+  goldEvery: number | null;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -49,6 +52,8 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   reviewSamplePercent: 100,
   disputeWindowDays: DEFAULT_DISPUTE_WINDOW_DAYS,
   goldFeedback: true,
+  queueOrder: 'IMPORT',
+  goldEvery: null,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -268,6 +273,45 @@ export function ProjectForm({
           <input type="checkbox" name="goldFeedback" defaultChecked={defaults.goldFeedback} />
           After submitting a gold task, annotators see their score and the expected answer
         </label>
+      </fieldset>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Queue</legend>
+        <Field
+          label="Task order inside a batch"
+          htmlFor="queueOrder"
+          error={errors?.queueOrder}
+          hint="Batches are handed out by their priority, then in import order. Shuffled gives every annotator an order of their own, which stays the same for them."
+        >
+          <select
+            id="queueOrder"
+            name="queueOrder"
+            defaultValue={defaults.queueOrder}
+            className="block w-full rounded-md border-0 px-3 py-2 text-sm ring-1 ring-slate-300"
+          >
+            {(Object.keys(QUEUE_ORDERS) as Array<keyof typeof QUEUE_ORDERS>).map((order) => (
+              <option key={order} value={order}>
+                {QUEUE_ORDERS[order]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label="Gold spacing"
+          htmlFor="goldEvery"
+          error={errors?.goldEvery}
+          hint="About one gold task in every this many tasks, at uneven intervals and never first in a session. Empty leaves gold tasks where their position puts them."
+        >
+          <Input
+            id="goldEvery"
+            name="goldEvery"
+            type="number"
+            min={MIN_GOLD_EVERY}
+            max={MAX_GOLD_EVERY}
+            placeholder="off"
+            defaultValue={defaults.goldEvery ?? ''}
+          />
+        </Field>
       </fieldset>
 
       <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">

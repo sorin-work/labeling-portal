@@ -30,15 +30,17 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `GoldRevision`         | A change to a gold task: who, when, why, the answer before and after |
+| `QueueSecret`          | The key of a project's queue hashes; no page ever gets it            |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
 ## Task lifecycle
 
 1. An annotator presses **Start**. `claimNextTask` releases expired claims,
-   then picks the first open task (by import position) that the annotator has
-   not done or skipped and that has fewer live claims and submissions than the
-   project's overlap. The task row is locked while the claim is created.
+   then picks an open task that the annotator may be given (`eligibleFor`:
+   not done or skipped by them, not in a paused batch, fewer live claims and
+   submissions than the project's overlap) in the order described in "Which
+   task comes next" below. The task row is locked while the claim is created.
 2. The claim expires after the project's time limit. In the last two minutes
    the annotator can ask for more time once, which adds another full limit.
    Expired claims are released lazily the next time anyone asks for work in
@@ -59,6 +61,60 @@ tests/integration/  loaders and actions against a real PostgreSQL
    `refreshTaskStatus` runs in the transaction that accepted the submission
    and locks the task row before it counts, so acceptances that arrive at the
    same moment are counted one after the other and none is missed.
+
+## Which task comes next
+
+`nextTaskSql` in `models/queue.server.ts` is the whole decision, one
+statement that picks the task and locks it (`FOR UPDATE OF t SKIP LOCKED`).
+Given the same data, the same annotator and the same secret it returns the
+same task, so a reload or a second tab gets the task the first one got. Every
+hash in it is an HMAC keyed with the project's queue secret (`QueueSecret`, a
+random key per project in a table of its own that no loader reads, made by
+the migration for existing projects and on the first claim for new ones). So
+nothing an annotator sees, ids, times or which of their tasks were gold, tells
+them what comes next. The order:
+
+1. **Gold spacing** (`Project.goldEvery`, empty by default). When it is set,
+   each claim is a draw: a gold task is due with a chance of 1 in N
+   (`goldDraw`), from an HMAC of the annotator and their latest submission or
+   skip. The draw has no memory, so the tasks right after a gold task can be
+   gold too and no gap is ever certain; it is new after every task handed in
+   or skipped and the same on a reload. Gold is not due for the first task of
+   a session (no submission in the project in the last 30 minutes) or someone's
+   first task ever; the task after that is an ordinary draw. A cap keeps a
+   streak from running away: with 10 gold tasks among the last 5N submissions
+   (fewer for N below 3) the next claim is regular. The wanted kind is tried
+   first and the other kind second, so the queue serves what is left when
+   only gold or no gold remains. Without spacing, gold tasks stay where their
+   position puts them, as before.
+2. **Batches**: not paused (`Batch.pausedAt`), the highest `Batch.priority`
+   first, then in import order (the batch's first position).
+3. **Inside a batch**: by position, or with `Project.queueOrder = SHUFFLED`
+   by the HMAC of the annotator and the task: the order is the annotator's own
+   and stays the same for them.
+
+The levels are nested lateral joins with `LIMIT 1`, so PostgreSQL stops at
+the first batch that has an eligible task and only the picked task is locked.
+Import order inside a batch uses `Task(batchId, status, position)`, and
+with gold spacing, where each kind is looked for on its own,
+`Task(batchId, status, isGold, position)`, so a kind that is used up costs
+nothing to look for. The batch order uses `Task(batchId, position)`. A
+shuffled order has no index: it sorts the open tasks of a batch, one batch at
+a time. On a project with 40 batches and 40,000 tasks, 30,000 of them
+complete, and an annotator with 2,000 submissions who has done every gold
+task, the statement took 8 to 10 ms in import order and 11 to 12 ms shuffled,
+with gold spacing off, on, and with gold due on every claim (roadmap item 17
+is about larger projects).
+
+Pausing stops new claims at the next request. Claims that exist can be
+submitted, and nothing else about the batch changes, so after a resume a task
+that has some of its answers gets the rest. A priority change only affects
+the next claim. The dashboard count (`countAvailable`) uses the same
+`eligibleFor` and so leaves paused batches out too.
+
+After the pick, `claimNextTask` checks `eligibleFor` again on the locked row,
+because a slot count taken before the lock may miss a claim that was committed
+in between, and retries with a new pick if it fails.
 
 ## Review sampling
 
@@ -300,12 +356,16 @@ meanings on one page.
   a moment (`DECISION_PAUSE_MS`), so a key that is still held or pressed twice
   cannot decide on work nobody has looked at.
 - **Label keys** skip the letters that mean something else somewhere (`a`,
-  `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
-  page, so a label always has the same key.
+  `e`, `s` on the pages, `f`, `n` and `r` in the box interface), on every
+  page, so a label always has the same key. That leaves thirty keys, as many
+  as a schema may have labels. `r` joined the list with box editing, so
+  labels 24 to 30 moved one letter on: they were `r` to `y` and are now `t`
+  to `z`.
 - **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
   browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
   with Z, which the browser only uses inside text boxes. A key that is held
-  down does not repeat. What is typed into a text box is text, also `?` and
+  down does not repeat, except the rows marked `repeat` (moving a box with
+  the arrows, zooming). What is typed into a text box is text, also `?` and
   Escape while the list of shortcuts is open; only handing in and closing the
   skip form work from there. While the list is open nothing else acts. A
   focused radio button keeps its arrow keys and Space, a button its Enter.
@@ -323,16 +383,81 @@ meanings on one page.
 - **Nothing is thrown away by a slip.** No single letter or digit skips,
   releases, deletes or decides: `s` only opens the skip form, releasing has
   no key, approving takes two keys. Removing a box takes Delete or Backspace
-  on a box that was selected first. Removing a span takes Delete (Backspace
-  is left to text boxes), a span is let go when the cursor moves into a text
-  box, and the last removal can be put back with the "Undo" next to it or
-  Ctrl+Z.
+  on a box that was selected first, and undo brings it back. Removing a span
+  takes Delete (Backspace is left to text boxes), a span is let go when the
+  cursor moves into a text box, and the last removal can be put back with the
+  "Undo" next to it or Ctrl+Z.
+- **Rows that are only listed.** A row marked `passive` shows up in the list
+  of shortcuts but is not handed out by the key map: Tab is the browser's,
+  and Space and Escape in the box interface only mean something while the
+  pointer is on the picture or dragging.
 
 The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
 pass on what the key map decides. Pairwise score rows are real radio groups:
 one tab stop each, the arrows choose, and a typed digit scores the row that
 has focus (or the first empty one) and moves to the next, A then B for each
 dimension.
+
+## Boxes on an image
+
+`app/components/labeling/bounding-boxes.tsx` wires the pointer and the keys to
+pure code: the geometry in `app/domain/geometry.ts`, undo in
+`app/domain/history.ts` and the keys in the key map.
+
+- **Image pixels.** A box is stored in pixels of the image, whatever is on
+  screen. The view is `{ zoom, x, y }`: zoom 1 fits the whole image, `x` and
+  `y` are the image pixel in the top left corner. `toImage` and `toScreen`
+  convert at any zoom and position, and the picture is shown with one CSS
+  transform (`viewTransform`). Zoom and position are kept for the session
+  under the assignment's id (`viewKey`) and never reach the draft or the
+  answer. Coordinates are kept to a tenth of a pixel and inside the image
+  (`storedBox`). The component stores every box that way, and `validateBbox`
+  and the draft reader compare the minimum size on the same rounded box, so a
+  box the interface keeps is never refused or dropped as too small.
+- **What a press does** is decided by `hitTest` and `pointerIntent`. The
+  handles of the selected box come first. Of the boxes under the pointer the
+  smallest wins, so a box inside a larger one can always be reached, and of
+  two equally large ones the topmost. A press on a handle resizes, on a box
+  moves, on the background draws. With Space held or the middle button it
+  moves the view. Handles, lines, labels and the reach of a press are sized
+  in screen pixels, whatever the size of the image and the zoom.
+- **A drag** starts only after four screen pixels, so a click never moves a
+  box. While it lasts the component shows a preview, and the answer changes
+  once, when the drag ends, so the draft autosave never sees a half dragged
+  box. Escape, a lost pointer (`pointercancel`) and a release more than 24
+  pixels outside the picture put the box back; inside that margin it stops
+  at the edge. `moveBox` keeps a box inside the image, `resizeBox` flips it
+  when a handle is dragged past the opposite side, and neither lets it get
+  smaller than the schema's `minBoxSize`. The drag is measured in the view it
+  started in, so zooming meanwhile does not make the box jump, and only the
+  view keys work while it lasts: a removal or an undo during a drag is
+  ignored.
+- **Without a pointer.** Every box can take focus, and the box that has focus
+  is the selected one, so Tab walks through them. `n` puts a new box in the
+  middle of the view. The arrow keys move the focused box by one image pixel,
+  with Shift by ten, and after `r` they resize it instead. They only do so
+  while a box has focus; elsewhere they scroll the page or move inside a
+  radio group as usual. Resizing is a mode and not a second modifier, because
+  Alt and Ctrl with the arrows belong to the browser, the system and screen
+  readers.
+- **Undo and redo** (Ctrl+Z, Ctrl+Shift+Z, and two buttons) step through one
+  history for the picture: drawing, moving, resizing, relabelling and removing
+  are a step each, a whole drag is one step, and a run of arrow presses on one
+  box is one step too. The selection is part of every step, which is why boxes
+  need no ids. The history starts over when the answer is replaced from
+  outside (a restored draft).
+- **Zooming.** The wheel zooms around the pointer, `+` and `-` do the same,
+  `f` fits the whole image. On a page where the picture can be edited the
+  wheel always zooms. A read-only picture leaves the wheel, and touch, to the
+  page until it has been zoomed with a button or a key, so a page with
+  several pictures still scrolls.
+- **Read-only** is the same component with `readOnly`: it can be zoomed and
+  moved around and nothing else. The pointer learns that in `pointerIntent`,
+  the keys from the `readOnly` rows of the key map, and `apply` in the
+  component is the one gate every change to the boxes has to pass.
+- **Touch and pen** use the same pointer events. A picture that can be edited
+  or is zoomed sets `touch-action: none`, so a finger draws and moves instead
+  of scrolling the page. There is no pinch zoom.
 
 ## Quality
 

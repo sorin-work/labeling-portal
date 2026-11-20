@@ -285,6 +285,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
             value={fixing ? corrected : assignment.answer}
             onChange={setCorrected}
             readOnly={!fixing}
+            viewKey={assignment.id}
           />
         </Card>
       </div>

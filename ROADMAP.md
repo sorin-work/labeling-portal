@@ -45,8 +45,8 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
-| 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
-| 13  | Moving, resizing and zooming boxes           | Later   | labeling      | M    | -          |
+| 12  | Queue order, batch priority and gold spacing | Shipped | queue         | M    | -          |
+| 13  | Moving, resizing and zooming boxes           | Shipped | labeling      | M    | -          |
 | 14  | Image classification                         | Later   | labeling      | M    | -          |
 | 15  | Audit trail                                  | Later   | ops           | M    | -          |
 | 16  | API tokens and a JSON API                    | Later   | api           | L    | -          |
@@ -118,9 +118,9 @@ checks any of it. Gaps I already know about:
   made. It needs a keyboard path: while the text has focus, a cursor that the
   arrow keys move word by word, Shift with an arrow to extend, Enter to apply
   the active type.
-- Boxes can only be drawn with a pointer. Item 13 adds moving and resizing by
-  keyboard and a key (`n`) that drops a new box in the middle of the view.
-  That part lives there, and this item does not wait for it.
+- Boxes no longer need a pointer since item 13: `n` puts a new box in the
+  view, Tab walks through the boxes, and the arrows move and resize the one
+  that has focus.
 - New keys go into the key map in `domain/hotkeys.ts` (item 3): pages and
   kinds, key to action, read by the handlers and by `KeyboardHelp`. The arrow
   keys and Space stay with a focused radio button or checkbox there
@@ -235,8 +235,8 @@ disagreed on.
 - Tricky: an extra slot can stay empty for ever when every member has already
   answered the task. Managers should be able to send a task that is waiting
   for an extra annotator to adjudication from its page.
-- Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
-  two that must stay: a retired gold task is never eligible
+- Items 10 and 12 have shipped conditions in `eligibleFor` that must stay.
+  Item 12: a task in a paused batch is never eligible. Item 10: a retired gold task is never eligible
   (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
   that task's other copies are one group (the second `NOT EXISTS`, over
   `kin`): whoever has a claim, a submission or a skip on one of them gets
@@ -252,124 +252,6 @@ disagreed on.
   can settle it, a task still under after the last extra goes to adjudication,
   an adjudicated task survives a later review, and the export marks the
   source. One case per kind for the number that is compared.
-
-### 12. Queue order, batch priority and gold spacing
-
-The queue has one rule: the open task with the lowest `position` that you have
-not touched and that has a free slot (`nextCandidate` in
-`models/queue.server.ts`). Position is import order. So an urgent batch
-imported later waits behind everything before it, and a batch with a problem
-cannot be held back short of pausing the whole project. Everyone works through
-the file in the same order. Gold tasks sit wherever their rows were in the
-file, so a block of gold at the top is done in the first ten minutes and never
-met again.
-
-This pull request is three changes to how the next task is chosen, and nothing
-else. They are the ordering rules that item 17 has to keep.
-
-- Batch priority and pause: `priority Int @default(0)` and
-  `pausedAt DateTime?` on `Batch`. `nextCandidate` joins the batch and sorts
-  by priority first; `eligibleFor` skips paused batches. Controls on
-  `routes/batch-detail.tsx` (new intents beside `delete`), shown in
-  `routes/project-batches.tsx`, with activity entries.
-- Order inside a priority: a project setting, import order or shuffled.
-  Shuffled has to be stable for one annotator and different between them, for
-  example `ORDER BY md5(t.id || userId)`.
-- Gold spacing: a project setting `goldEvery` ("about one gold task in every
-  N"). `claimNextTask` counts the annotator's submissions since their last
-  gold task, and when one is due and an unseen one exists it serves that,
-  otherwise a regular task. Some jitter keeps it from being exactly every Nth.
-  Empty means today's behaviour.
-- Tricky: `countAvailable` feeds "N tasks available" and the Start button on
-  the dashboard. It must skip paused batches too, or the dashboard offers work
-  that the claim then refuses.
-- Tricky: eligibility is evaluated three times per claim (the candidate query,
-  the locked re-check, the count). The choice between gold and regular has to
-  sit inside the retry loop of `claimNextTask`.
-- Tricky: no index serves a shuffled order, so every claim sorts all eligible
-  tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
-- Tricky: with default settings the behaviour must stay exactly as it is. The
-  queue tests rely on position order.
-- Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
-  has shipped two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
-  that task's other copies are one group (the second `NOT EXISTS`, over
-  `kin`): whoever has a claim, a submission or a skip on one of them gets
-  none of the others. Gold spacing has to treat those copies like any other
-  gold task, and a new order must not single them out: today a copy sits in a
-  batch with open tasks, at the position of one of them.
-- Follow-ups, each small enough for a pull request of its own and not part of
-  this one:
-  - a daily limit per annotator, so one fast person cannot label most of a
-    project: `dailyTaskLimit` on `Project`, counted per UTC day like "done
-    today" on the work page, a `limit` reason in `ClaimResult` with a text in
-    `lib/queue-messages.ts`, and the same check in `countAvailable`;
-  - a manager releasing somebody's claim from `routes/task-detail.tsx`. A
-    claim that was walked away from blocks its slot until the time limit runs
-    out, which can be eight hours (`timeLimitMinutes` goes up to 480) or
-    sixteen with the extension. It is listed under "Claims" on the task page
-    and cannot be released there;
-  - assigning tasks to named people by hand (`assignedToId` on `Task`). I do
-    not think it is needed while claims work.
-- Tests: `tests/integration/queue.test.ts`, with the random source passed in
-  as `now` is today: a higher priority batch is served first, a paused batch
-  is skipped by the claim and by the count, the shuffled order is stable for
-  one annotator and differs between two, gold arrives about every N tasks and
-  never twice for one person, and the defaults give position order.
-
-### 13. Moving, resizing and zooming boxes
-
-A box can be drawn, relabelled and deleted, and that is all. One that is a few
-pixels off has to be deleted and drawn again. The image is scaled to fit the
-window (`max-h-[70vh]`), so small objects are a few screen pixels wide. And
-there is no undo: Delete on the wrong box is final.
-
-- Everything is in `components/labeling/bounding-boxes.tsx`: an `<img>` under
-  an SVG overlay in image coordinates, `toImage()` to convert pointer
-  positions, pointer capture on the SVG, and `selected` as an index into the
-  list of boxes.
-- Move by dragging a selected box, resize with eight handles. The maths goes
-  into `domain/geometry.ts`, which has only `iou` and `round` today:
-  `moveBox`, `resizeBox` (flipping when a handle is dragged past the opposite
-  edge) and clamping to the image and to `minBoxSize`. The server needs no
-  change: `validateBbox` already clamps and rounds.
-- Keyboard: every box can take focus, so Tab walks through them. While a box
-  has focus the arrows nudge it by one image pixel, with Shift by ten, and
-  another modifier resizes. `n` drops a new box in the middle of the view, so
-  the tool works without a pointer. Elsewhere the arrows keep their native
-  meaning, for example in a radio group (items 3 and 8).
-- Zoom and pan: wheel or `+` and `-` around the pointer, drag with Space held
-  to pan, `f` to fit. Not `0`: that is the tenth label (item 3). Read-only
-  views (review before "Fix it myself", the task page, the comparison) get
-  zoom too.
-- These keys go into the key map in `domain/hotkeys.ts` (item 3), so the help
-  list shows them and the test for keys used twice covers them. Label letters
-  already skip `n` and `f`. Keys that also work in a read-only view (zoom) are
-  marked `readOnly` there, which is what puts them into the review page's
-  check.
-- The key map knows plain keys and Ctrl or Cmd with Enter. `keyName` drops
-  everything else pressed with Ctrl, Cmd or Alt and ignores Shift, so nudging
-  by ten and resizing need modifier names in the map, and `Ctrl+Z` needs to
-  be let through outside text boxes.
-- Undo and redo (`Ctrl+Z`, `Ctrl+Shift+Z`): a small history reducer in
-  `domain/` (past, present, future, capped) that `NerSpans` can use as well.
-  A whole drag is one entry.
-- Tricky: pointer handling. Today a press on the SVG background starts a box
-  and a press on a `<g>` selects one. With moving and resizing there are three
-  kinds of drag, boxes overlap, and `pointercancel` is not handled.
-- Tricky: `selected` is an array index and the boxes are keyed by index. Undo,
-  redo and delete shift the array. Give boxes ids in the browser; they do not
-  need to be sent, `validateBbox` rebuilds each box from `x`, `y`, `w`, `h`
-  and `label`.
-- Tricky: stroke width and label size come from `size.w / 400`, and the
-  handles will too. With zoom they have to be divided by the zoom factor to
-  stay the same size on screen. `toImage()` reads the SVG's bounding box, so
-  it stays correct under a CSS transform.
-- Tricky: on a tablet, dragging scrolls the page unless the SVG sets
-  `touch-action: none`.
-- Tests: unit tests for `moveBox`, `resizeBox` and the history (there is no
-  `tests/unit/geometry.test.ts` yet). Pointer behaviour needs the DOM test
-  setup from item 8, and jsdom has no layout, so keep the maths pure.
 
 ### 14. Image classification
 
@@ -818,3 +700,46 @@ and past qualification attempts never follow a rescore. Still open: gold spacing
 the position of a random open task), a retired task that someone has claimed
 can still be submitted, and the server does different work for a gold
 submission than for a regular one, which a patient observer could measure.
+
+### 12. Queue order, batch priority and gold spacing
+
+Managers set a priority on a batch and pause or resume it from the batch page,
+with activity entries; the batch list shows both. A project can hand out tasks
+in import order or shuffled, and can space gold tasks out ("about one gold
+task in every N"). The whole choice is one statement, `nextTaskSql`, that
+picks and locks the task (`FOR UPDATE SKIP LOCKED`) and is the same for the
+same inputs. Different from the design: every hash is an HMAC keyed with a
+random secret per project that never leaves the server, so neither the
+shuffled order nor gold timing can be worked out from ids; gold spacing is a
+draw without memory (each claim is gold with a chance of 1 in N, with a cap
+on streaks) instead of counting submissions, never makes the first task of a
+session (30 minutes without a submission) gold, and falls back to the other
+kind so the queue never runs dry. New indexes on
+`Task(batchId, status, position)` and `Task(batchId, status, isGold,
+position)` serve import order; shuffled order sorts the open tasks of one
+batch at a time. Still open: the daily limit, a manager releasing a claim and manual
+assignment, as planned, and the measurements of item 17.
+
+### 13. Moving, resizing and zooming boxes
+
+A selected box can be dragged, resized from eight handles, and moved and
+resized with the arrow keys; `n` puts a new one in the middle of the view, so
+the box interface works without a pointer. The view zooms (wheel, `+`, `-`,
+`f`, buttons) and pans (Space with a drag, or a plain drag in a read-only
+view). Zoom and position are kept per assignment for the session and never
+reach the draft or the answer, which stay in image pixels. Undo and redo
+(`Ctrl+Z`, `Ctrl+Shift+Z`, buttons) cover drawing, moving, resizing,
+relabelling and removing. The maths is in `domain/geometry.ts` (hit testing,
+`moveBox`, `resizeBox`, the view) and `domain/history.ts`, and the keys are
+rows of the key map. Different from the design: resizing by keyboard is a
+mode (`r` makes the arrows resize) and not a second modifier, because Alt and
+Ctrl with the arrows belong to the browser, the system and screen readers, and
+Shift is the ten pixel step; `r` is therefore no label letter any more. Boxes
+got no ids: the selection travels with every history step instead. A move or
+resize that is let go more than 24 pixels outside the picture is taken back,
+like one cancelled with Escape or by a lost pointer; within that margin the
+box stops at the edge. A read-only picture leaves the wheel and touch to the
+page until it has been zoomed with a button or a key. Still open: no pinch
+zoom on touch screens; entity spans keep their one-step undo and do not use
+the history yet; on an AZERTY keyboard `-` is on the 6 key, where the label
+wins, so zooming out there takes the number pad, the wheel or the button.

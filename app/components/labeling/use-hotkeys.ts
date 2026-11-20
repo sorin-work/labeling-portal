@@ -9,6 +9,7 @@ import {
 
 import {
   activeInterface,
+  hasReadOnlyKeys,
   interfaceAction,
   isNativeKey,
   isTextEntry,
@@ -119,6 +120,7 @@ function useKeys(onKey: (key: string, context: KeyContext) => boolean | void, en
         page: shared.page,
         dialog: shared.dialogs > 0,
         typing: isTextEntry(target),
+        repeat: event.repeat,
       };
       if (handler.current(key, context)) event.preventDefault();
     };
@@ -168,6 +170,9 @@ export function usePageHotkeys(onAction: (action: string, key: string) => boolea
  * Shortcuts of one labeling interface. Spread the returned props on the
  * interface's root element. On a page with several interfaces only the one
  * that is in use gets the keys (see `useKeyScope`).
+ *
+ * A read-only interface listens only when its kind has keys that work
+ * without editing (zooming an image), and gets only those.
  */
 export function useInterfaceHotkeys(
   schema: TaskSchema,
@@ -175,8 +180,16 @@ export function useInterfaceHotkeys(
   onAction: (hit: InterfaceHit) => boolean | void,
 ) {
   const [own] = useState(() => ({}));
-  const self = useContext(KeyScope) ?? own;
-  const enabled = !readOnly;
+  const card = useContext(KeyScope);
+  const self = card ?? own;
+  const enabled = !readOnly || hasReadOnlyKeys(schema);
+  // Several interfaces that are not in cards of their own (pictures on the
+  // task page): the one that has the keys says so itself.
+  const marked = useSyncExternalStore(
+    watch,
+    () => enabled && card === null && cards().length > 1 && activeCard() === own,
+    () => false,
+  );
 
   useEffect(() => {
     if (!enabled) return;
@@ -191,12 +204,16 @@ export function useInterfaceHotkeys(
 
   useKeys((key, context) => {
     if (activeCard() !== self) return false;
-    const hit = interfaceAction(schema, key, { ...context, readOnly: !enabled });
+    const hit = interfaceAction(schema, key, { ...context, readOnly: Boolean(readOnly) });
     return hit ? onAction(hit) : false;
   }, enabled);
 
   const mark = () => {
     if (enabled) claim(self);
   };
-  return { onPointerDownCapture: mark, onFocusCapture: mark };
+  return {
+    onPointerDownCapture: mark,
+    onFocusCapture: mark,
+    'data-keys': marked ? ('here' as const) : undefined,
+  };
 }
