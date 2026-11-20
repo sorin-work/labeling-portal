@@ -180,6 +180,19 @@ are categorical is decided by `categoricalValue` in
 `isCategorical`, which the quality page asks, is derived from it, so the
 two cannot disagree.
 
+## Suggested answers
+
+When tasks carry suggestions (see `docs/architecture.md`), the quality page
+shows, for each annotator, how many of their submissions had one, the share
+they handed in unchanged and the average time on them. It also scores the
+suggestions on gold tasks against the gold answers with `scoreAgainstGold`,
+per source (the import file or the rule). That costs nothing and says how good
+the rule is before anyone relies on it.
+
+Suggestions are not answers. They never count in consensus, agreement, gold
+scores or pay. But every annotator of a task sees the same suggestion, so
+agreement and the consensus lean towards it, and the page says so.
+
 ## Consensus
 
 When a task has as many accepted answers as the project's overlap, they are

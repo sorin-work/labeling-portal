@@ -104,6 +104,18 @@ covered by that check:
   already imported with it. They keep their addresses and are still handed
   out; take such a batch out of the queue by pausing it, or remove it.
 
+### Suggested answers (`_prediction`)
+
+A `_prediction` column holds a suggested answer for the task, for example the
+output of a model that ran somewhere else. It takes the same short forms and
+full answers as `_gold` (below) and is checked against the schema the same
+way; a prediction the schema refuses fails the line. It is stored on the task
+apart from every answer and shown to annotators as a suggestion (see
+"Suggested answers" in `docs/architecture.md`). A qualification test takes no
+`_prediction`. The JSON Lines export writes each task's `suggestion` (its
+answer and where it came from) and, for each annotation, `from_suggestion`
+and `suggestion_unchanged`.
+
 ### Gold answers
 
 | Kind           | Short form in CSV    | Full form (JSON)                                                    |

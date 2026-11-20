@@ -477,6 +477,51 @@ one tab stop each, the arrows choose, and a typed digit scores the row that
 has focus (or the first empty one) and moves to the next, A then B for each
 dimension.
 
+## Suggested answers
+
+A task can carry a suggested answer (`Task.suggestion`, with
+`suggestionSource`: `file` or the name of a rule), so annotators correct
+instead of starting from nothing.
+
+- **Where they come from.** A `_prediction` column in the import file (any
+  model that ran elsewhere), or the project's rule (`Project.prelabel`, set
+  under Settings). A rule is one entry of `PRELABEL_RULES` in
+  `app/domain/prelabel.ts`: a name, the kinds it works for, a zod schema of
+  its settings and a function `(schema, data, config) => Answer | null`. Two
+  ship with the app and call no service: keyword lists per label for text
+  classification, and phrase lists per entity type for spans (whole words,
+  the longest first, never overlapping). There is no hosted model and no
+  regular expression written by a manager: the lists are capped
+  (`MAX_TERMS`, `MAX_TERM_LENGTH`) and only the first `MAX_SCAN` characters
+  of a text are read, so a rule cannot hang the server.
+- **Checked like answers.** What a rule returns, and every `_prediction`,
+  goes through the kind's answer validator before it is stored; what the
+  schema refuses is not suggested. The work page reads it like a draft, so a
+  later schema edit cannot offer something the schema refuses.
+- **Off the request path.** The import stores the file's predictions and
+  marks the batch `PENDING` when the project has a rule. The rule runs after
+  the response, in the same process (`startPrelabel` in
+  `app/models/prelabel.server.ts`), and stops after
+  `PRELABEL_TIME_LIMIT_MS` (15 seconds), keeping what it did and saying so on
+  the batch page (`TIMED_OUT`), where "Run the rule again" goes on. That
+  button also takes back what the rule suggested on tasks nobody has started,
+  so a changed rule can run again; what someone has seen stays. A run that a
+  restart cut short goes on when the batch page is opened. Only tasks
+  without a suggestion are touched, so a file's prediction wins.
+- **A suggestion, not an answer.** The work page shows it in a dashed,
+  labelled box and fills nothing in. "Start from the suggestion" makes it the
+  answer, which the annotator then checks or changes; a draft wins over it,
+  and taking it over a draft asks first. Nothing hands a suggestion in
+  without an action. The submission records `fromSuggestion` and
+  `suggestionUnchanged` (from `sameAnswer`), which the review page, the
+  quality page and the export show.
+- **Counted nowhere.** Consensus, agreement, gold scores and pay read
+  answers only. The suggestion is kept apart on the task.
+- **Gold and qualification.** Qualification questions never get one. Gold
+  tasks get the rule's suggestion like any other task, and a gold copy keeps
+  the suggestion of the task it was copied from: a task without one would
+  stand out as gold.
+
 ## Accessibility
 
 What a keyboard or screen reader user gets, and where it is checked.

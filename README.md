@@ -34,6 +34,10 @@ or fix the work.
   release.
   Managers give batches a priority or pause them, can shuffle the order for
   each annotator and can space gold tasks out ("about one in every N")
+- **Suggested answers**: a `_prediction` column in an import, or a project
+  rule (keyword or phrase lists) that runs after the import, suggests an
+  answer. Annotators see it as a suggestion and take it or not; it never
+  counts as an answer
 - **Drafts**: the answer in progress and its working time are saved to the
   server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
