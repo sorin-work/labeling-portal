@@ -136,7 +136,12 @@ describe('work routes', () => {
     const page = await run(workLoader, makeRequest(`/work/${assignment.id}`, { cookie }), {
       assignmentId: assignment.id,
     });
-    expect(payload<{ task: { id: string } }>(page).task.id).toBe(tasks[0].id);
+    // the page gets the task's content, not its id (see the gold tests)
+    expect(assignment.taskId).toBe(tasks[0].id);
+    expect(payload<{ task: Record<string, unknown> }>(page).task).toMatchObject({
+      externalId: tasks[0].externalId,
+      data: { text: 'one' },
+    });
   });
 
   it('submits a valid answer and moves on to the next task', async () => {
