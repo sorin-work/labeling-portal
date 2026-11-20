@@ -60,8 +60,12 @@ tests/integration/  loaders and actions against a real PostgreSQL
    "Reviewer reservations" below). Sent-back work can be revised and
    resubmitted by the annotator, and always returns to review. Instead of
    revising, the annotator can dispute the decision (see "Disputes" below).
-5. When `overlap` submissions are accepted the task is complete and the
-   accepted answers are merged into a consensus with an agreement score.
+5. When `overlap` submissions (plus any extra slots) are accepted the task is
+   complete and the accepted answers are merged into a consensus with an
+   agreement score. With an agreement threshold on the project, a task under
+   it gets extra annotators and then goes to `ADJUDICATION` instead
+   (`decideCompletion` in `domain/adjudication.ts`; see "Low agreement" in
+   [quality.md](quality.md)). A task that was adjudicated is left alone.
    `refreshTaskStatus` runs in the transaction that accepted the submission
    and locks the task row before it counts, so acceptances that arrive at the
    same moment are counted one after the other and none is missed.

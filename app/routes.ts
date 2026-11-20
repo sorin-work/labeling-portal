@@ -34,6 +34,7 @@ export default [
       route('qualification', 'routes/project-qualification.tsx'),
       route('review', 'routes/project-review.tsx'),
       route('disputes', 'routes/project-disputes.tsx'),
+      route('adjudication', 'routes/project-adjudication.tsx'),
       route('disputes/:disputeId', 'routes/project-dispute.tsx'),
       route('quality', 'routes/project-quality.tsx'),
       route('annotators/:userId', 'routes/project-annotator.tsx'),

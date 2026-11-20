@@ -46,6 +46,10 @@ or fix the work.
   time limit set on the project. Someone other than the reviewer upholds or
   overturns the decision, and an overturned decision is undone everywhere it
   counted
+- **Low agreement**: with an agreement threshold set on the project, a task
+  whose answers agree less gets extra annotators (up to three), then goes to
+  an adjudication list where a reviewer who did not label it picks or gives
+  the final answer, with a reason. Off by default
 - **Quality**: per-annotator reviewed share, approval rate, QA score, gold
   accuracy, speed and throughput; Cohen's and Fleiss' kappa; consensus answers
   per task

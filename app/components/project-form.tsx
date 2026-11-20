@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Form } from 'react-router';
 
+import { agreementExplained, MAX_EXTRA_ANNOTATORS } from '~/domain/adjudication';
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from '~/domain/disputes';
 import { renderMarkdown } from '~/domain/markdown';
 import { MAX_GOLD_EVERY, MIN_GOLD_EVERY, QUEUE_ORDERS } from '~/domain/queue-order';
@@ -35,6 +36,9 @@ export type ProjectFormDefaults = {
   goldFeedback: boolean;
   queueOrder: 'IMPORT' | 'SHUFFLED';
   goldEvery: number | null;
+  /** in percent; null is off */
+  agreementThreshold: number | null;
+  maxExtraAnnotators: number;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -54,6 +58,8 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   goldFeedback: true,
   queueOrder: 'IMPORT',
   goldEvery: null,
+  agreementThreshold: null,
+  maxExtraAnnotators: 1,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -310,6 +316,41 @@ export function ProjectForm({
             max={MAX_GOLD_EVERY}
             placeholder="off"
             defaultValue={defaults.goldEvery ?? ''}
+          />
+        </Field>
+      </fieldset>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Low agreement</legend>
+        <Field
+          label="Agreement threshold (%)"
+          htmlFor="agreementThreshold"
+          error={errors?.agreementThreshold}
+          hint={`A task whose accepted answers agree less than this gets extra annotators, then goes to adjudication. Empty: every task completes once it has its answers. ${agreementExplained(checked.ok ? checked.schema : null)} Tasks that are complete already stay complete.`}
+        >
+          <Input
+            id="agreementThreshold"
+            name="agreementThreshold"
+            type="number"
+            min={1}
+            max={100}
+            placeholder="off"
+            defaultValue={defaults.agreementThreshold ?? ''}
+          />
+        </Field>
+        <Field
+          label="Extra annotators"
+          htmlFor="maxExtraAnnotators"
+          error={errors?.maxExtraAnnotators}
+          hint="How many more annotators a task under the threshold gets, one at a time, before a reviewer settles it. 0 sends it to adjudication straight away."
+        >
+          <Input
+            id="maxExtraAnnotators"
+            name="maxExtraAnnotators"
+            type="number"
+            min={0}
+            max={MAX_EXTRA_ANNOTATORS}
+            defaultValue={defaults.maxExtraAnnotators}
           />
         </Field>
       </fieldset>

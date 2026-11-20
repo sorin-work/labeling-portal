@@ -41,6 +41,16 @@ function describe(action: string, detail: Detail, names: Map<string, string>): s
       return `paused “${d.name}”: nothing from it is handed out`;
     case 'batch.resumed':
       return `resumed “${d.name}”`;
+    case 'task.adjudicated':
+      return `settled task #${d.position} in adjudication (${
+        d.how === 'own'
+          ? 'with an answer of their own'
+          : d.how === 'consensus'
+            ? 'kept the consensus'
+            : 'used one of the answers'
+      })`;
+    case 'task.escalated':
+      return `sent task #${d.position} to adjudication without waiting for an extra annotator`;
     case 'member.added':
       return `added ${names.get(String(d.userId)) ?? 'someone'} to the project`;
     case 'member.removed':

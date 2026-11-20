@@ -160,16 +160,17 @@ column is not renamed or removed, and new ones are added at the end.
 
 One object per task:
 
-| Field         | Value                                                  |
-| ------------- | ------------------------------------------------------ |
-| `task_id`     | The task's id in the portal                            |
-| `external_id` | The `id` from the import, or `null`                    |
-| `batch`       | Name of the batch                                      |
-| `status`      | `open` or `complete`                                   |
-| `data`        | The imported row                                       |
-| `consensus`   | The merged answer, or `null`                           |
-| `agreement`   | 0 to 1, or `null`                                      |
-| `annotations` | List of accepted annotations, oldest first (see below) |
+| Field              | Value                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| `task_id`          | The task's id in the portal                                  |
+| `external_id`      | The `id` from the import, or `null`                          |
+| `batch`            | Name of the batch                                            |
+| `status`           | `open`, `adjudication` or `complete`                         |
+| `data`             | The imported row                                             |
+| `consensus`        | The merged answer, or `null`                                 |
+| `agreement`        | 0 to 1, or `null`                                            |
+| `annotations`      | List of accepted annotations, oldest first (see below)       |
+| `consensus_source` | `majority`, `adjudicated` (settled by a reviewer), or `null` |
 
 Each annotation has `annotator`, `answer`, `review_status` (`approved`,
 `fixed` or `not_required`), `qa_score` (1 to 5 or `null`), `active_seconds`
@@ -183,7 +184,8 @@ One row per accepted annotation, then one row with `consensus` as the
 annotator for a task that has a consensus. Columns, in this order:
 
 `task_id`, `external_id`, `batch`, `annotator`, `review_status`, `qa_score`,
-`active_seconds`, the answer columns, `submitted_at`, `answer`, `data`.
+`active_seconds`, the answer columns, `submitted_at`, `answer`, `data`,
+`task_status` (`open`, `adjudication` or `complete`).
 
 | Kind           | Answer columns                                                            |
 | -------------- | ------------------------------------------------------------------------- |
@@ -193,7 +195,8 @@ annotator for a task that has a consensus. Columns, in this order:
 | Boxes          | `boxes` (JSON list)                                                       |
 
 `answer` holds the whole answer as JSON and `data` the imported row as JSON.
-A task without accepted work has no row.
+A task without accepted work has no row. A task waiting for adjudication has
+no consensus, in this or any other format, until a reviewer settles it.
 
 A cell that starts with `=`, `+`, `-` or `@` gets a single quote in front, so
 a spreadsheet program shows it as text instead of running it as a formula.

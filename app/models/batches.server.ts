@@ -79,6 +79,7 @@ export async function listBatches(projectId: string) {
       ...batch,
       total: sum(regular),
       complete: sum(regular.filter((c) => c.status === 'COMPLETE')),
+      adjudication: sum(regular.filter((c) => c.status === 'ADJUDICATION')),
       gold: sum(mine.filter((c) => c.isGold)),
       qualification: sum(mine.filter((c) => c.isQualification)),
     };

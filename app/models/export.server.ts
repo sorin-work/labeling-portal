@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { Prisma, Project } from '@prisma/client';
 
+import { consensusSource } from '~/domain/adjudication';
 import type { Answer } from '~/domain/answers';
 import type { ExportTask } from '~/domain/export';
 import { ACCEPTED_STATUSES, finalAnswer, standingReviews } from '~/domain/outcome';
@@ -86,6 +87,7 @@ function exportPage(
       data: true,
       status: true,
       consensus: true,
+      adjudicatedAt: true,
       agreement: true,
       batch: { select: { name: true } },
       assignments: {
@@ -143,6 +145,7 @@ export async function* exportTasks(
         data: task.data as Record<string, unknown>,
         status: task.status,
         consensus: task.consensus as Answer | null,
+        consensusSource: consensusSource(task),
         agreement: task.agreement,
         annotations: task.assignments.map((a) => {
           // the score of the last review that gave one and was not overturned

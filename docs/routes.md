@@ -20,9 +20,10 @@ at the end. The table lists who can open each page.
 | `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
 | `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                         |
 | `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)    |
+| `/projects/:id/adjudication`        | Tasks whose answers agreed too little    | reviewers, managers                         |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
 | `/projects/:id/batches[/new\|/:id]` | Import, browse, gold, priority and pause | admin, project manager                      |
-| `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
+| `/projects/:id/tasks/:taskId`       | Submissions, consensus, adjudication     | reviewers, managers                         |
 | `/projects/:id/members`             | Add people, reset qualification          | admin, project manager                      |
 | `/projects/:id/export`              | Download labels                          | admin, project manager                      |
 | `/projects/:id/activity`            | What managers changed                    | admin, project manager                      |

@@ -126,8 +126,10 @@ describe('toCsvExport', () => {
       'submitted_at',
       'answer',
       'data',
+      'task_status',
     ]);
     const [row] = table.rows.map((r) => r.values);
+    expect(row.at(-1)).toBe('complete');
     expect(row.slice(0, 16)).toEqual([
       't1',
       'ext-1',
@@ -160,7 +162,7 @@ describe('toCsvExport', () => {
     };
     const lines = toCsvExport(SCHEMA_TEMPLATES.text_classification, [task]).trimEnd().split('\r\n');
     expect(lines[1]).toBe(
-      't1,ext-1,March,consensus,,,,neutral,,"{""labels"":[""neutral""]}","{""text"":""x""}"',
+      't1,ext-1,March,consensus,,,,neutral,,"{""labels"":[""neutral""]}","{""text"":""x""}",complete',
     );
   });
 

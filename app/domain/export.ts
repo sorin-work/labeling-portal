@@ -37,6 +37,8 @@ export type ExportTask = {
   data: Record<string, unknown>;
   status: string;
   consensus: Answer | null;
+  /** where the consensus came from: the accepted answers, or a reviewer in adjudication */
+  consensusSource?: 'majority' | 'adjudicated' | null;
   agreement: number | null;
   annotations: ExportAnnotation[];
 };
@@ -103,6 +105,7 @@ export function jsonlLine(schema: TaskSchema, task: ExportTask): string {
       active_seconds: a.activeSeconds,
       submitted_at: a.submittedAt,
     })),
+    consensus_source: task.consensusSource ?? null,
   });
 }
 
@@ -179,6 +182,7 @@ export function csvHeader(schema: TaskSchema): string[] {
     'submitted_at',
     'answer',
     'data',
+    'task_status',
   ];
 }
 
@@ -197,6 +201,7 @@ export function csvRows(schema: TaskSchema, task: ExportTask): CsvCell[][] {
     a.submittedAt,
     JSON.stringify(a.answer),
     data,
+    task.status.toLowerCase(),
   ]);
   if (task.consensus) {
     rows.push([
@@ -211,6 +216,7 @@ export function csvRows(schema: TaskSchema, task: ExportTask): CsvCell[][] {
       null,
       JSON.stringify(task.consensus),
       data,
+      task.status.toLowerCase(),
     ]);
   }
   return rows;

@@ -30,6 +30,8 @@ enum ImportFormat {
 
 enum TaskStatus {
   OPEN
+  /// its answers agree less than the project's threshold, after every extra annotator
+  ADJUDICATION
   COMPLETE
 }
 
@@ -121,6 +123,7 @@ model User {
   disputesOpened        Dispute[]              @relation("DisputeOpenedBy")
   disputesResolved      Dispute[]              @relation("DisputeResolvedBy")
   goldRevisions         GoldRevision[]
+  adjudications         Task[]                 @relation("Adjudication")
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
   credited              CreditedInterval[]
@@ -179,6 +182,10 @@ model Project {
   queueOrder               QueueOrder             @default(IMPORT)
   /// about one gold task in every N; empty leaves gold where its position puts it
   goldEvery                Int?
+  /// a task whose agreement is under this (0 to 1) gets extra annotators, then adjudication; empty is off
+  agreementThreshold       Float?
+  /// how many extra annotators a task under the threshold gets before adjudication (0 to 3)
+  maxExtraAnnotators       Int                    @default(1)
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -255,12 +262,23 @@ model Task {
   goldRetiredAt   DateTime?
   /// the completed task this gold task was copied from
   goldSourceId    String?
+  /// annotators added over the project's overlap because the answers agreed too little
+  extraSlots      Int            @default(0)
+  /// when the task went to adjudication
+  escalatedAt     DateTime?
+  /// while it waits there: what a majority of the answers says, if anything; not a result
+  majority        Json?
+  /// who settled the task in adjudication, when and why; their answer is the consensus
+  adjudicatedById String?
+  adjudicatedAt   DateTime?
+  adjudicatedNote String?
   createdAt       DateTime       @default(now())
   completedAt     DateTime?
   project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   batch           Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
   goldSource      Task?          @relation("GoldCopy", fields: [goldSourceId], references: [id], onDelete: SetNull)
   goldCopies      Task[]         @relation("GoldCopy")
+  adjudicatedBy   User?          @relation("Adjudication", fields: [adjudicatedById], references: [id], onDelete: SetNull)
   goldRevisions   GoldRevision[]
   assignments     Assignment[]
 
@@ -269,6 +287,7 @@ model Task {
   @@index([batchId, status, position])
   @@index([batchId, status, isGold, position])
   @@index([goldSourceId])
+  @@index([projectId, status, escalatedAt])
 }
 
 /// One change to a gold task: who made it, when, why, and the expected answer before and after.
