@@ -18,7 +18,6 @@ function workData(kind: Kind, id = 'a1') {
       id,
       claimedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-      canExtend: true,
       extensionsLeft: 3,
       draft: null,
       draftNote: null,

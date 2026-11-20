@@ -26,6 +26,7 @@ import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { renderMarkdown } from '~/domain/markdown';
 import { assignmentRef } from '~/domain/reference';
+import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -93,7 +94,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
-      canExtend: assignment.extendedAt === null,
+      extensionsLeft: extensionsLeft(assignment.extensions),
       draft: draft.answer,
       draftNote: droppedNote(schema, draft.dropped),
       draftSeconds: assignment.draftSeconds,
@@ -138,8 +139,8 @@ export async function action({ request, params }: Route.ActionArgs) {
       return data(
         {
           error:
-            result.error === 'already_extended'
-              ? 'You already got extra time on this task.'
+            result.error === 'no_extensions_left'
+              ? `You already got extra time ${MAX_EXTENSIONS} times on this task.`
               : 'This task is no longer yours.',
         },
         { status: 409 },
@@ -310,7 +311,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
         <TimeWarning
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}
-          canExtend={assignment.canExtend}
+          extensionsLeft={assignment.extensionsLeft}
         />
         {instructionsChanged && (
           <Alert tone="info">
