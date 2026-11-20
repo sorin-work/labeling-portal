@@ -4,6 +4,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { DisputePanel } from '~/components/dispute-panel';
 import { DraftNote } from '~/components/draft-note';
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useActiveTime } from '~/components/use-active-time';
@@ -239,6 +240,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
             Resubmit for review
           </Button>
           <DraftNote state={draftState} />
+          <KeyboardHelp page={null} schema={schema} />
         </Form>
       )}
     </div>

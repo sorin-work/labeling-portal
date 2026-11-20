@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { emptyAnswer } from '~/domain/answers';
 import { DRAFT_MAX_BYTES } from '~/domain/drafts';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
 import {
@@ -162,6 +163,29 @@ describe('work routes', () => {
     const next = await prisma.assignment.findFirstOrThrow({ where: { status: 'ACTIVE' } });
     expect(next.taskId).toBe(tasks[1].id);
     expect(locationOf(result)).toBe(`/work/${next.id}`);
+  });
+
+  it('takes an entity task with nothing marked as an answer', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { schema: SCHEMA_TEMPLATES.ner });
+    await createTasks(project.id, [{ text: 'Nothing to tag in this sentence.' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const claim = await claimNextTask(project, ann.id);
+    const id = claim.ok ? claim.assignment.id : '';
+
+    // what the work page posts when the annotator marked nothing
+    const answer = JSON.stringify(emptyAnswer(SCHEMA_TEMPLATES.ner));
+    await run(
+      workAction,
+      makeRequest(`/work/${id}`, {
+        cookie: await cookieFor(ann, org.id),
+        form: { intent: 'submit', answer },
+      }),
+      { assignmentId: id },
+    );
+
+    const submitted = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(submitted).toMatchObject({ status: 'SUBMITTED', answer: { spans: [] } });
   });
 
   it('rejects an invalid answer', async () => {

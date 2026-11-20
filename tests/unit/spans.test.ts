@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { addSpan, removeSpan, segmentText, spanText, trimSelection } from '~/domain/spans';
+import {
+  addSpan,
+  relabelSpan,
+  removeSpan,
+  segmentText,
+  spanText,
+  trimSelection,
+} from '~/domain/spans';
 
 const text = 'Grace Hopper joined the Navy in 1943.';
 
@@ -76,5 +83,19 @@ describe('segmentText', () => {
 
   it('returns the whole text when there are no spans', () => {
     expect(segmentText('plain', [])).toEqual([{ text: 'plain', start: 0, end: 5, span: null }]);
+  });
+});
+
+describe('relabelSpan', () => {
+  it('changes the type of one span and keeps its boundaries', () => {
+    const spans = [
+      { start: 0, end: 12, label: 'PERSON' },
+      { start: 24, end: 28, label: 'PERSON' },
+    ];
+    expect(relabelSpan(spans, { start: 24, end: 28 }, 'ORG')).toEqual([
+      { start: 0, end: 12, label: 'PERSON' },
+      { start: 24, end: 28, label: 'ORG' },
+    ]);
+    expect(relabelSpan(spans, { start: 1, end: 2 }, 'ORG')).toEqual(spans);
   });
 });
