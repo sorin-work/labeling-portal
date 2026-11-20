@@ -53,6 +53,14 @@ enum ReviewDecision {
   FIX
 }
 
+/// How sampling treated a submission in a project that reviews only a share.
+enum ReviewSample {
+  NEW_ANNOTATOR
+  FLAGGED
+  DRAWN
+  NOT_DRAWN
+}
+
 enum PayMode {
   PER_TASK
   HOURLY
@@ -84,6 +92,7 @@ model User {
   projects              ProjectMember[]
   assignments           Assignment[]
   reviews               Review[]
+  reviewHolds           Assignment[]           @relation("ReviewHold")
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
 }
@@ -114,6 +123,8 @@ model Project {
   overlap                  Int                    @default(1)
   timeLimitMinutes         Int                    @default(30)
   reviewRequired           Boolean                @default(true)
+  /// share of submissions that go to a reviewer while review is on
+  reviewSamplePercent      Int                    @default(100)
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -205,12 +216,18 @@ model Assignment {
   draftSeconds  Int              @default(0)
   reviewStatus  ReviewStatus?
   reviewedAt    DateTime?
+  /// decided once at submission when the project reviews a share; empty otherwise
+  reviewSample  ReviewSample?
+  /// the reviewer who reserved this submission; the hold lapses after 15 minutes
+  reviewHeldById String?
+  reviewHeldAt  DateTime?
   /// 0..1 match against the gold answer, for gold tasks only
   goldScore     Float?
   reviews       Review[]
   project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewHeldBy  User?            @relation("ReviewHold", fields: [reviewHeldById], references: [id], onDelete: SetNull)
 
   @@index([projectId, status])
   @@index([userId, status])

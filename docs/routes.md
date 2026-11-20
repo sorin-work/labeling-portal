@@ -15,8 +15,9 @@ at the end. The table lists who can open each page.
 | `/projects/:id/qualification`       | Qualification test                       | annotators on the project                   |
 | `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                          |
 | `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                |
-| `/projects/:id/review`              | Review queue                             | reviewers, managers                         |
-| `/review/:assignmentId`             | Approve, send back or fix a submission   | reviewers, managers (not on their own work) |
+| `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                         |
+| `/projects/:id/review` (POST)       | Reserve the next submission and open it  | reviewers, managers                         |
+| `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
 | `/projects/:id/batches[/new\|/:id]` | Import and browse tasks                  | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
@@ -28,6 +29,10 @@ at the end. The table lists who can open each page.
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
+
+Saving the settings form answers 400 with `errors.schema` when the schema
+edit would break stored work, and saves nothing from that post. The rules are
+in [architecture](architecture.md#changing-the-schema-once-work-exists).
 
 ## Downloads and probes
 

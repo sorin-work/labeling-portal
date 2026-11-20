@@ -301,6 +301,39 @@ describe('expired claims', () => {
     expect(stored).toMatchObject({ status: 'EXPIRED', answer: null });
   });
 
+  it('keeps a submission that was in time when a second post arrives after the limit', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    const input = { answer: { labels: ['positive'] }, activeSeconds: 60, reviewRequired: true };
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Both posts read the claim as active. Holding the row makes them write
+    // one after the other: the one in time first, the late one second.
+    let inTime: ReturnType<typeof submitAssignment> | undefined;
+    let late: ReturnType<typeof submitAssignment> | undefined;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Assignment" WHERE id = ${id} FOR UPDATE`;
+      inTime = submitAssignment(id, ann.id, input, new Date(t0.getTime() + 29 * 60_000));
+      await pause();
+      late = submitAssignment(id, ann.id, input, new Date(t0.getTime() + 31 * 60_000));
+      await pause();
+    });
+
+    const [first, second] = [await inTime, await late];
+    const stored = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    // whichever write came first, the row and the answers given agree
+    if (first?.ok) {
+      expect(second).toEqual({ ok: false, error: 'not_active' });
+      expect(stored).toMatchObject({ status: 'SUBMITTED', answer: { labels: ['positive'] } });
+    } else {
+      expect(second).toEqual({ ok: false, error: 'expired' });
+      expect(stored).toMatchObject({ status: 'EXPIRED', answer: null });
+    }
+    expect(first?.ok).toBe(true);
+  });
+
   it('sends the annotator back to the project when their time ran out', async () => {
     const { project, ann, cookie } = await setup();
     const claim = await claimNextTask(project, ann.id, new Date(Date.now() - 40 * 60_000));

@@ -162,6 +162,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       answer: checked.answer as Prisma.InputJsonValue,
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
       reviewRequired: assignment.project.reviewRequired,
+      reviewSamplePercent: assignment.project.reviewSamplePercent,
     });
     if (!result.ok && result.error === 'expired') {
       return redirect(`/projects/${assignment.projectId}?queue=expired`);

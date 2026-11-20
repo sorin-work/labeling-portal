@@ -117,6 +117,7 @@ export async function createTestProject(
     overlap: number;
     timeLimitMinutes: number;
     reviewRequired: boolean;
+    reviewSamplePercent: number;
     instructions: string;
   }> = {},
 ) {
@@ -142,6 +143,7 @@ export async function createTestProject(
       overlap: overrides.overlap ?? 1,
       timeLimitMinutes: overrides.timeLimitMinutes ?? 30,
       reviewRequired: overrides.reviewRequired ?? true,
+      reviewSamplePercent: overrides.reviewSamplePercent ?? 100,
       instructions: overrides.instructions ?? '',
     },
   });
@@ -175,7 +177,7 @@ export async function submitWork(
   project: { id: string },
   userId: string,
   answer: object,
-  opts: { activeSeconds?: number; now?: Date } = {},
+  opts: { activeSeconds?: number; now?: Date; random?: () => number } = {},
 ) {
   const { claimNextTask, submitAssignment } = await import('~/models/queue.server');
   const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
@@ -186,8 +188,14 @@ export async function submitWork(
   const result = await submitAssignment(
     claim.assignment.id,
     userId,
-    { answer, activeSeconds: opts.activeSeconds ?? 30, reviewRequired: fresh.reviewRequired },
+    {
+      answer,
+      activeSeconds: opts.activeSeconds ?? 30,
+      reviewRequired: fresh.reviewRequired,
+      reviewSamplePercent: fresh.reviewSamplePercent,
+    },
     new Date(claimedAt.getTime() + 5 * 60_000),
+    opts.random,
   );
   if (!result.ok) throw new Error(result.error);
   return result.assignment;
