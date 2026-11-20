@@ -41,7 +41,13 @@
   except the reviewer who decided, upholds or overturns it with a note. An
   overturned decision no longer counts in the consensus, the export, the
   quality numbers or the reviewer's stats, and the work counts as approved.
-  Sent-back work cannot be revised while its dispute is open
+  Sent-back work cannot be revised while its dispute is open. The annotator
+  can withdraw an open dispute, and a dispute that nobody but the deciding
+  reviewer could settle is refused with a message that says why
+- Disputes are on for existing projects from the moment this is deployed: the
+  window defaults to 14 days, so every send-back and correction of the last
+  14 days can be disputed at once. Set "Dispute window" to 0 in a project's
+  settings to keep disputes off there
 
 ### Operations
 

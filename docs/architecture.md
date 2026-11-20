@@ -119,10 +119,21 @@ be disputed.
   sent back or fixed, once per decision (`Dispute.reviewId` is unique), and
   only within `Project.disputeWindowDays` of the review (14 by default, 0
   turns disputes off). The dispute keeps a copy of the answer as it stood.
+- **Somebody must be there to settle it.** Opening is refused, with a message
+  that says so, when nobody but the deciding reviewer and the annotator can
+  review in the project (`countResolvers`, by the rule of `requireProject`).
+  A dispute that nobody may settle would hold the work for good: unpaid, not
+  revisable, its task never complete.
 - **Revise or dispute, never both.** Opening a dispute and `resubmitAssignment`
   both start by locking the submission row, so the second one waits and then
   sees what the first did: a revision is refused while a dispute is open, and
-  a dispute is refused once the work is back in review.
+  a dispute is refused once the work is back in review. A draft of a revision
+  is not saved while a dispute is open either (`saveRevisionDraft`); one that
+  was saved before waits for the outcome.
+- **Withdrawing** (`withdrawDispute`): the annotator can take their own open
+  dispute back. The decision stands and the work is exactly where it was,
+  sent back and revisable or fixed. The dispute is kept as `WITHDRAWN`, so
+  that decision cannot be disputed a second time.
 - **Settling** (`resolveDispute`): anyone who can review in the project,
   except the reviewer who made the decision and the annotator who did the
   work, with a note. The rules are checked in the model, not only on the page.
@@ -135,10 +146,15 @@ be disputed.
   - the submission becomes `APPROVED` and `refreshTaskStatus` runs, so the
     consensus is rebuilt from the annotator's own answer (`finalAnswer` skips
     overturned corrections) and the task may complete;
-  - an overturned send-back gets `reviewedAt` set to the time of the overturn:
-    the work becomes payable now and never in a period that was already paid.
-    An overturned fix was accepted and payable since the review, so its
-    `reviewedAt` stays;
+  - an overturned send-back gets `reviewedAt` set to the time of the overturn,
+    which is the day the work became payable. An overturned fix was accepted
+    and payable since the review, so its `reviewedAt` stays. That is as far
+    as it goes today: the payouts report still selects by `submittedAt`, so
+    overturned work shows in the period it was submitted in. It will show in
+    the period of the overturn, and never in one that was already paid, once
+    the report goes by the day work became payable (roadmap item 5);
+  - a draft of a revision that was started before the dispute is dropped, so
+    approved work never carries one;
   - if the submission is not in the state the decision left it in, the
     transaction throws and nothing is changed.
 - **Who reads an overturned review.** `standingReviews` in
@@ -281,9 +297,10 @@ shows what an edit would do while the manager types.
 "Stored answers" are the six places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
 answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
-a dispute was about (`Dispute.answer`) and qualification attempts
-(`QualificationAttempt.answers`). A correction that a dispute overturned
-still counts: the review row is kept and shown.
+a dispute was about (`Dispute.answer`, counted only once the submission has
+been revised and says something else, so no answer is counted twice) and
+qualification attempts (`QualificationAttempt.answers`). A correction that a
+dispute overturned still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |
