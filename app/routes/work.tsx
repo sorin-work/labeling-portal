@@ -80,8 +80,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project: { id: project.id, name: project.name },
     instructionsHtml: renderMarkdown(project.instructions),
     schema: projectSchema(project),
+    // The task's own id is not sent: a gold task that was added later has a
+    // younger id than its neighbours. The page keys on the assignment instead.
     task: {
-      id: task.id,
       externalId: task.externalId,
       batch: task.batch.name,
       data: task.data as Record<string, unknown>,
@@ -239,7 +240,7 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
         )}
         <Card>
           <LabelingInterface
-            key={task.id}
+            key={assignment.id}
             schema={schema}
             data={task.data}
             value={answer}
