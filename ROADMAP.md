@@ -40,7 +40,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
-| 7   | Scheduled backups                            | Next    | ops           | S    | -          |
+| 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Later   | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
@@ -227,35 +227,6 @@ ordinary JSON array is rejected line by line ("Not valid JSON").
 - Tests: `tests/unit/export.test.ts` and `tests/unit/import.test.ts` for the
   writers and readers, `tests/integration/export.test.ts` for the downloads.
   `docs/import-export.md` gets the new formats.
-
-### 7. Scheduled backups
-
-Everything lives in the `db-data` volume of `docker-compose.yml` and there is
-no backup. The label export is no substitute: it leaves out reviews, gold
-answers, pay data, accounts and project settings.
-
-- A `backup` service behind a compose profile, using the same
-  `postgres:17-alpine` image as `db`, that runs `pg_dump --format=custom` once
-  a day into a mounted folder and keeps the last N dumps. The script goes in
-  `docker/backup.sh` next to `entrypoint.sh`. `docker compose run --rm backup`
-  should take one dump right away.
-- A "Backup and restore" section in the README with the restore command. An
-  older dump restored under a newer app is fine: `docker/entrypoint.sh` runs
-  `prisma migrate deploy` on start.
-- A restore that is never tested is not a backup. Add a step to
-  `.github/workflows/ci.yml` after the tests: put the demo data into the
-  database (`npm run db:seed`; the tests truncate every table as they go, so
-  little is left in it), dump it with the script, restore the dump into a
-  scratch database and compare the row count of every table.
-- Tricky: the runner's own `pg_dump` can be older than the server and then
-  refuses to dump it. Run the tools from the same image, either with
-  `docker exec` in the service container (`job.services.postgres.id`) or with
-  `docker run --network host postgres:17-alpine`.
-- Tricky: a dump holds password hashes and personal data. Create the files
-  readable by their owner only, say so in the README, and add the folder to
-  `.gitignore` and `.dockerignore`.
-- Undecided: cron inside a container is clumsy. A shell loop with `sleep` is
-  probably enough for one dump a day.
 
 ### 8. Accessibility pass
 
@@ -973,3 +944,24 @@ it up), a submission opened from the list is reserved with a button before
 the form appears, and deciding on a submission another reviewer holds is
 refused. Still open: pulling an accepted, unsampled submission into review
 later as a spot check, and releasing or taking over a hold before it lapses.
+
+### 7. Scheduled backups
+
+A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
+`docker/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
+`./backups` once a day, keeping the newest seven. It is a shell loop with
+`sleep`, not cron. The age of a dump and the order of pruning come from the
+time in the file name, never from modification times, and after every attempt
+the loop pauses before the next. Different from the design: a dump right away
+is `docker compose run --rm backup once`, because without an argument the
+service is the daily loop, and that makes a dump at the start only when the
+newest one is older than a day. A restore is part of the script
+(`backup restore <file>`), loading the dump into a new database and swapping
+it with the old one in one transaction, so that a database with the name
+exists at every moment. Dumps dated in the future are never pruned and do not
+count towards the seven. CI runs `docker/check-backup.sh` after
+the tests, with the demo data in: the loop and the pruning against made-up
+clocks, then a real dump, a restore into a scratch database and the row
+counts. Still open: the dumps are not encrypted and stay on the same disk
+unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
+apart from the service's log.

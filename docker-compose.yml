@@ -20,7 +20,8 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling
+      # The name is what a refused restore lists as still connected.
+      DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-portal
       SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
       # Creates the demo organisation, users and projects on first start.
       SEED_DEMO: ${SEED_DEMO:-true}
@@ -38,6 +39,29 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  # Optional, start it with: docker compose --profile backup up -d
+  # Dumps the database once a day into BACKUP_DIR and keeps the newest
+  # BACKUP_KEEP dumps. See "Backup and restore" in the README.
+  backup:
+    image: postgres:17-alpine
+    profiles: [backup]
+    restart: unless-stopped
+    entrypoint: ['sh', '/backup.sh']
+    environment:
+      PGHOST: db
+      PGUSER: labeling
+      PGPASSWORD: labeling
+      PGDATABASE: labeling
+      PGAPPNAME: labeling-backup
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./docker/backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
 
 volumes:
   db-data:

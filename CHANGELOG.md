@@ -37,6 +37,17 @@
   not lost to the next reviewer
 - Quality page and its CSV: share of each annotator's work that was reviewed
 
+### Operations
+
+- A `backup` service behind a compose profile dumps the database once a day
+  into `./backups` and keeps the newest seven dumps; `backup once` takes a
+  dump right away and `backup restore <file>` loads one into a new database
+  that takes the place of the old one in a single transaction, only when the
+  load worked
+- CI puts the demo data into the test database, dumps it, restores the dump
+  into a scratch database and compares the row counts, and runs the daily
+  loop and the pruning against made-up clocks
+
 ### Fixes
 
 - A task could stay open for good with its overlap met when its last

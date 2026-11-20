@@ -16,6 +16,10 @@ coverage/
 # logs
 npm-debug.log*
 
+# database dumps from the backup service (the empty folder is kept)
+/backups/*
+!/backups/.gitkeep
+
 # env files
 .env
 .env.*

@@ -175,6 +175,47 @@ time counts on from the saved value.
 - Sign-in attempts are rate limited per email (ten failures per fifteen
   minutes, in memory).
 
+## Backups
+
+`docker/backup.sh` runs in the `backup` service of `docker-compose.yml`, in
+the same `postgres:17-alpine` image as the database so that `pg_dump` matches
+the server. It is a shell loop, not cron. How to use it is in the README
+under "Backup and restore"; these are the rules the script keeps, because
+breaking one of them loses backups:
+
+- The time in a dump's file name is the only time that counts, for its age
+  and for the order of pruning. Modification times are never read.
+- The age of the newest dump is read from the names once, at the start.
+  After that the loop only remembers when it last made one.
+- A dump dated in the future, or with a date that does not exist, is left
+  out: it does not say how old the newest dump is, it is never pruned and it
+  does not count towards `BACKUP_KEEP`. Sorted by name such dumps would pass
+  for the newest ones and push the real dumps out. Every start and every dump
+  logs a warning that names them. If every dump is dated in the future the
+  loop waits a full interval before its first dump.
+- After every attempt, whether it worked or not, the loop pauses before the
+  next one, and it waits in steps of a minute with a look at the clock after
+  each, so a suspended machine still gets its daily dump.
+- `pg_dump` writes to a hidden `.partial` file that is renamed when it is
+  complete. A failed or interrupted dump never counts as a backup, and
+  pruning never removes the dump that was just written.
+- A restore loads the dump into a new database. The swap is one
+  transaction: the database in use is renamed aside and the copy takes its
+  name. The old one is dropped only after that has committed. So a database
+  with the name exists at every moment, which matters because the app
+  creates a missing one, empty, when it starts (`prisma migrate deploy`), and
+  the loop would then dump that while the real data sat under another name.
+  A swap that is refused names the clients that are still connected.
+
+`docker/check-backup-loop.sh` checks the loop, the pruning and the restore
+with stand-ins for the database tools, a pretend set of databases and dump
+files with made-up dates. `docker/check-backup.sh` runs it and then works on
+a real server: it makes dumps, checks that a damaged dump and a restore
+while something is connected leave a database with other data alone, then
+replaces that database with the newest dump and compares the row counts,
+where only the application's tables count as data (Prisma's migrations table
+always has rows). CI runs it after the tests, once the demo data is in.
+
 ## Pay
 
 Projects pay either per accepted task or per hour of active time. Active time
