@@ -9,10 +9,12 @@
   entity type or box label that answers use, turning off `multiple` or
   `allowTie` while answers depend on them, and a new rubric dimension that
   scored answers lack. It shows what an edit would do while typing, and the
-  error points to "Duplicate project" for a redesign
+  error says where the answers are stored and points to "Duplicate project"
+  for a redesign
 - A saved schema edit is recorded in the activity log with the schema before
   and after, and the activity tab says what changed
-- Pairwise consensus averages only the dimensions of the current rubric
+- Pairwise consensus averages only the dimensions of the current rubric,
+  over the answers that have a score for them
 
 ### Operations
 

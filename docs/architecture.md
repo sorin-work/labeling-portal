@@ -118,7 +118,11 @@ shows what an edit would do while the manager types.
 "Stored answers" are the five places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
 answers (`Task.goldAnswer`), consensus answers (`Task.consensus`) and
-qualification attempts (`QualificationAttempt.answers`).
+qualification attempts (`QualificationAttempt.answers`). The error names the
+places, for example "2 stored answers use it (1 submission, 1 gold answer)",
+so the manager knows where to look. An attempt keeps the posted map of
+answers as it came, and only the entries of the project's test questions
+were validated, so only those count.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |
@@ -156,10 +160,21 @@ qualification attempts (`QualificationAttempt.answers`).
 - A saved schema edit is written to the activity log as
   `detail.changes.schema = [before, after]`. The list of changes is not
   stored: the activity tab runs the diff on the pair again to word the entry.
-- The check covers what is stored when the save runs. An answer that was
-  validated against the old schema a moment before the save and written a
-  moment after it is not caught. Closing that needs every place that stores
-  an answer to hold the project row while it validates and writes.
+- The check is not atomic with the code that stores answers. The usage
+  count sees what was committed when its statement started. An answer that
+  is committed between that snapshot and the commit of the save is not
+  counted, and neither is one whose request read the old schema before the
+  save committed and stores its answer after it. So the open window is as
+  long as the usage statement and the save take together, plus the time a
+  submit, review, import or test request needs between reading the project
+  and writing. The usage statement unnests every stored answer of the
+  project, which is about two seconds at 200,000 tasks. Closing the window
+  needs every place that stores an answer to hold the project row while it
+  validates and writes.
+- The save holds the project row with `FOR NO KEY UPDATE`, the lock an
+  `UPDATE` takes anyway. Two saves of one project run one after the other,
+  and claims, imports and activity entries, which only point at the row, do
+  not wait for a save.
 
 ## Adding a labeling kind
 

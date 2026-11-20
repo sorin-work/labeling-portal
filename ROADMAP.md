@@ -919,6 +919,12 @@ is why this is here and not above. What would have to change first:
   stream; the action calls `file.text()`.
 - Lists: `routes/project-annotator.tsx` shows a person's latest 50 entries
   with no pages.
+- Schema edits: `schemaUsage` in `models/projects.server.ts` unnests every
+  stored answer of the project in one statement, about two seconds at 200,000
+  tasks, on every load of the settings page and again inside a save that
+  changes the schema. Keep the counts per name up to date where answers are
+  written, or count only when the schema field is edited. The second also
+  shortens the window item 2 leaves open.
 - Tricky: the counter is a second source of truth for the queue. Expiry is
   lazy (`releaseExpiredClaims` is one `updateMany` at the next claim), so the
   counter has to drop in that same statement. A test should run a random
@@ -1007,10 +1013,11 @@ new rubric dimension is refused only while an answer with scores has none for
 it, so a dimension removed by mistake can be put back, and consensus now
 averages only the dimensions of the current rubric, so the scores a removed
 dimension leaves behind stay out of it. Left out: "rename this label
-everywhere" and a forced save for admins. Still open: the check covers what is
-stored when the save runs. An answer validated against the old schema in the
-same instant can land after it, and closing that needs every place that stores
-an answer to hold the project row while it validates and writes.
+everywhere" and a forced save for admins. Still open: the check is not atomic
+with the code that stores answers. An answer committed after the usage count
+took its snapshot, or stored by a request that read the old schema before the
+save committed, is not caught. Closing that needs every place that stores an
+answer to hold the project row while it validates and writes.
 
 ### 7. Scheduled backups
 
