@@ -3,7 +3,7 @@ import { redirect } from 'react-router';
 
 import { parseDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
-import { jsonError } from '~/lib/http';
+import { jsonError, requireSameOrigin } from '~/lib/http';
 import { saveDraft } from '~/models/queue.server';
 
 import type { Route } from './+types/work-draft';
@@ -13,6 +13,7 @@ import type { Route } from './+types/work-draft';
  * while the annotator is still on the task. Answers with JSON, never a page.
  */
 export async function action({ request, params }: Route.ActionArgs) {
+  requireSameOrigin(request);
   const { user } = await requireUser(request);
   const form = await request.formData();
   const parsed = parseDraft(form.get('draft'));

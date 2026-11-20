@@ -526,6 +526,26 @@ describe('drafts', () => {
     expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).draft).toBeNull();
   });
 
+  it('refuses a save that another site made the browser send', async () => {
+    const { id, cookie } = await claimed();
+    const from = (headers: Record<string, string>) =>
+      run(
+        draftAction,
+        makeRequest(`/work/${id}/draft`, {
+          cookie,
+          headers,
+          form: { draft: '{"labels":["negative"]}' },
+        }),
+        { assignmentId: id },
+      );
+
+    expect(statusOf(await from({ Origin: 'https://elsewhere.example' }))).toBe(403);
+    expect(statusOf(await from({ Referer: 'https://elsewhere.example/page' }))).toBe(403);
+    expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).draft).toBeNull();
+
+    expect(statusOf(await from({ Origin: 'http://localhost' }))).toBe(200);
+  });
+
   it('refuses a draft once the claim is no longer active', async () => {
     const { id, ann, cookie } = await claimed();
     await releaseAssignment(id, ann.id);
