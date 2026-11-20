@@ -32,7 +32,7 @@ function rate(block: ProjectPayout): string {
 function BlockRows({ blocks, state }: { blocks: ProjectPayout[]; state?: string }) {
   return blocks.map((block) => (
     <tr
-      key={`${state}-${block.projectId}-${block.payMode}-${block.rateCents}`}
+      key={`${state ?? 'payable'}-${block.projectId}-${block.payMode}-${block.rateCents}`}
       className="border-t border-slate-200"
     >
       <td className="px-4 py-2">{block.projectName}</td>

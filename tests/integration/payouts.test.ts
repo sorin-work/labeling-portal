@@ -337,6 +337,51 @@ describe('the day work becomes payable', () => {
     expect(april.totalCents).toBe(35);
   });
 
+  it('pays work the review sample lets through from the day it was submitted', async () => {
+    const { project, ann, report } = await withReview();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewSamplePercent: 0 } });
+    // ten reviewed submissions in January: from then on the sample decides
+    const earlier = await createTasks(
+      project.id,
+      Array.from({ length: 10 }, (_, i) => ({ text: `earlier ${i}` })),
+    );
+    const january = new Date('2026-01-10T09:00:00Z');
+    await prisma.assignment.createMany({
+      data: earlier.map((task) => ({
+        projectId: project.id,
+        taskId: task.id,
+        userId: ann.id,
+        status: 'SUBMITTED' as const,
+        claimedAt: january,
+        expiresAt: january,
+        submittedAt: january,
+        reviewStatus: 'APPROVED' as const,
+        reviewedAt: january,
+        answer: { labels: ['positive'] },
+        rateCents: 35,
+        payMode: 'PER_TASK' as const,
+      })),
+    });
+
+    const submission = await submitWork(
+      project,
+      ann.id,
+      { labels: ['positive'] },
+      { now: new Date('2026-03-30T09:00:00Z') },
+    );
+
+    // not drawn: accepted at once, with the rate frozen in the same write
+    expect(submission).toMatchObject({
+      reviewStatus: 'NOT_REQUIRED',
+      reviewSample: 'NOT_DRAWN',
+      reviewedAt: null,
+      rateCents: 35,
+      payMode: 'PER_TASK',
+    });
+    expect(await report(MARCH)).toMatchObject({ totalCents: 35, pending: 0 });
+    expect((await report(APRIL)).totalCents).toBe(0);
+  });
+
   it('counts a reviewer fix like an approval, and never pays sent-back work', async () => {
     const { project, ann, reviewer, report } = await withReview();
     const now = new Date('2026-03-30T09:00:00Z');
