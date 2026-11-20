@@ -146,7 +146,21 @@ export async function action({ request, params }: Route.ActionArgs) {
   };
 
   if (intent === 'gold-rescore') {
-    const result = await applyRescore(project, params.taskId, current.user.id);
+    const result = await applyRescore(
+      project,
+      params.taskId,
+      current.user.id,
+      String(form.get('digest') ?? ''),
+    );
+    if (!result.ok && result.error === 'stale') {
+      return data(
+        {
+          error:
+            'Nothing was rescored: the expected answer or the stored answers changed after this page was loaded. The numbers below are the current ones; press again if they are what you want.',
+        },
+        { status: 409 },
+      );
+    }
     if (!result.ok) return refuse({ error: result.error });
     const { changes, impact } = result.plan;
     return redirectWithFlash(

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Prisma, type Project } from '@prisma/client';
 
 import type { Answer } from '~/domain/answers';
@@ -209,7 +211,43 @@ export type RescorePlan = {
   changes: ScoreChange[];
   /** what that does to the annotators' gold accuracy and flags */
   impact: GoldImpact;
+  /**
+   * Stands for exactly this plan: the expected answer, every score change and
+   * every annotator's standing before and after. The page sends it back with
+   * "Rescore", and the rescore is refused when it would do something else.
+   */
+  digest: string;
 };
+
+function planDigest(gold: unknown, changes: ScoreChange[], impact: GoldImpact): string {
+  const byId = <T>(rows: T[], id: (row: T) => string) =>
+    [...rows].sort((a, b) => id(a).localeCompare(id(b)));
+  const canonical = JSON.stringify([
+    describeForDigest(gold),
+    byId(changes, (c) => c.assignmentId).map((c) => [c.assignmentId, c.from, c.to]),
+    byId(impact.moved, (m) => m.userId).map((m) => [
+      m.userId,
+      m.before.attempts,
+      m.before.accuracy,
+      m.before.flagged,
+      m.after.attempts,
+      m.after.accuracy,
+      m.after.flagged,
+    ]),
+  ]);
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
+}
+
+/** JSON with its keys in order, so the same answer always gives the same text. */
+function describeForDigest(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(describeForDigest);
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .map((key) => [key, describeForDigest((value as Record<string, unknown>)[key])]);
+  }
+  return value;
+}
 
 /**
  * Works out what rescoring a gold task changes, without changing anything:
@@ -241,13 +279,15 @@ async function planRescore(db: Db, project: Project, taskId: string): Promise<Re
           .filter((c) => c.from === null)
           .map((c) => ({ id: c.assignmentId, userId: c.userId, taskId, goldScore: c.to })),
       ];
+  const impact = goldImpact(
+    byAnnotator(before, (r) => r.goldScore),
+    byAnnotator(after, (r) => r.goldScore),
+  );
   return {
     submissions: submissions.filter((s) => s.answer !== null).length,
     changes,
-    impact: goldImpact(
-      byAnnotator(before, (r) => r.goldScore),
-      byAnnotator(after, (r) => r.goldScore),
-    ),
+    impact,
+    digest: planDigest(task.goldAnswer, changes, impact),
   };
 }
 
@@ -261,17 +301,28 @@ export function previewRescore(project: Project, taskId: string) {
  * is now, in one transaction, and returns what changed. It recomputes from
  * the stored answers, so running it again changes nothing. Only `goldScore`
  * is written: the work stays accepted and paid as it was.
+ *
+ * `previewed` is the digest of the plan the manager looked at. The plan is
+ * worked out again under the lock, and if it is not the same one (the
+ * expected answer was edited again, a submission arrived, another task was
+ * rescored) nothing is written and the new plan comes back to be shown.
  */
 export async function applyRescore(
   project: Project,
   taskId: string,
   actorId: string,
+  previewed: string,
   now = new Date(),
-): Promise<{ ok: true; plan: RescorePlan } | { ok: false; error: 'not_found' | 'not_gold' }> {
+): Promise<
+  | { ok: true; plan: RescorePlan }
+  | { ok: false; error: 'not_found' | 'not_gold' }
+  | { ok: false; error: 'stale'; plan: RescorePlan }
+> {
   return prisma.$transaction(async (tx) => {
     if (!(await lockTask(tx, project.id, taskId))) return { ok: false, error: 'not_found' };
     const plan = await planRescore(tx, project, taskId);
     if (!plan) return { ok: false, error: 'not_gold' };
+    if (plan.digest !== previewed) return { ok: false, error: 'stale', plan };
     for (const change of plan.changes) {
       await tx.assignment.update({
         where: { id: change.assignmentId },
