@@ -24,8 +24,22 @@
 - Reviewer reservations: "Start reviewing" reserves the oldest free submission
   for one reviewer for 15 minutes, the queue shows who holds what, and a
   decision on a submission someone else holds is refused. Two reviewers asking
-  or deciding at the same moment can no longer end up on the same submission
+  or deciding at the same moment can no longer end up on the same submission.
+  The review page renews the hold while the reviewer works, so a long fix is
+  not lost to the next reviewer
 - Quality page and its CSV: share of each annotator's work that was reviewed
+
+### Fixes
+
+- A task could stay open for good with its overlap met when its last
+  submissions were accepted at the same moment. The task is now locked while
+  its accepted submissions are counted
+- On a database whose time zone is not UTC, a task with a live claim could be
+  handed to a second annotator, and the daily chart put submissions on the
+  wrong day
+- A work form posted twice around the time limit could turn the stored
+  submission into an expired claim. Skipping and releasing are guarded the
+  same way
 
 ## 1.0.0 - 2026-11-08
 

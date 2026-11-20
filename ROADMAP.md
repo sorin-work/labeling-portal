@@ -996,7 +996,8 @@ accepted at once and can complete its task. New and flagged annotators are
 always reviewed, and the quality page shows the reviewed share of each
 annotator's work. "Start reviewing" is a POST that reserves the oldest free
 submission in one statement with `FOR UPDATE SKIP LOCKED`, holds lapse after
-15 minutes, and a decision is one conditional write. Different from the
+15 minutes unless the review page renews them, which it does while the
+reviewer works, and a decision is one conditional write. Different from the
 design: the outcome of the draw has its own column, the first-ten rule counts
 submissions that went to review (work done while review was off does not use
 it up), a submission opened from the list is reserved with a button before

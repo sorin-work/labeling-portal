@@ -22,8 +22,8 @@ or fix the work.
   abandoned claims, one extension per claim, skip with a reason, release
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections. "Start reviewing"
-  reserves a submission for one reviewer for 15 minutes, so two reviewers
-  never work on the same one
+  reserves a submission for one reviewer, for 15 minutes and for as long as
+  they keep working on it, so two reviewers never work on the same one
 - **Review sampling**: review a share of the work instead of all of it. New
   annotators and annotators with low gold accuracy are always reviewed
 - **Quality**: per-annotator reviewed share, approval rate, QA score, gold
@@ -146,8 +146,8 @@ More detail: [architecture](docs/architecture.md),
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
 - **A submission says another reviewer is on it**: "Start reviewing" reserves
-  a submission for 15 minutes. If that reviewer walked away, it frees up by
-  itself when the time is over.
+  a submission for 15 minutes and keeps it reserved while that reviewer works
+  on it. If they walked away, it frees up by itself 15 minutes later.
 - **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
   and skips itself if the demo organisation already exists. Remove the volume
   with `docker compose down -v` to start over.

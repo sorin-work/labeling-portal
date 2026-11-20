@@ -51,6 +51,9 @@ tests/integration/  loaders and actions against a real PostgreSQL
    resubmitted by the annotator, and always returns to review.
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
+   `refreshTaskStatus` runs in the transaction that accepted the submission
+   and locks the task row before it counts, so acceptances that arrive at the
+   same moment are counted one after the other and none is missed.
 
 ## Review sampling
 
@@ -79,8 +82,9 @@ work goes to a reviewer:
 
 Two reviewers must not do the same review. `Assignment.reviewHeldById` and
 `reviewHeldAt` say who is on a waiting submission and since when. A hold
-lasts 15 minutes (`app/domain/review-hold.ts`) and then simply stops
-counting; there is no background job that clears it.
+lasts 15 minutes from the moment it was taken or last renewed
+(`app/domain/review-hold.ts`) and then simply stops counting; there is no
+background job that clears it.
 
 - "Start reviewing" posts to `/projects/:id/review`. `reserveNextReview` in
   `app/models/reviews.server.ts` runs one `UPDATE` whose subquery picks the
@@ -95,8 +99,12 @@ counting; there is no background job that clears it.
   pending, and not held by someone else. Of two decisions sent at the same
   moment one is stored and the other gets a 409. The same write clears the
   hold.
-- Dates in the raw statement are written as UTC explicitly, because a bare
-  parameter would be converted to the database session's time zone.
+- While the reviewer works, the review page renews the hold every five
+  minutes with a POST (`intent=renew`, `renewReviewHold`), but only if the
+  tab is visible and was touched since the last check. Starting a fix renews
+  it at once, and so does a posted decision that does not validate. So a
+  long fix keeps its submission, and a tab that was left open lets it go. A
+  renewal only touches a hold that is still the reviewer's own.
 
 ## Quality
 
@@ -206,4 +214,9 @@ schema union:
 - Every loader and action starts with `requireUser`/`requireRole` and, for
   project pages, `requireProject(current, id, capability)`, which also hides
   other organisations' projects.
-- Dates are stored in UTC and shown in UTC.
+- Dates are stored in UTC and shown in UTC. In raw SQL a date goes through
+  `utc()` from `app/lib/db.server.ts`: a bare `${date}` is converted to the
+  database session's time zone, which is wrong unless that is UTC.
+- A write that ends a claim or decides a submission states the status it
+  expects in its `where` and checks how many rows it changed. A form posted
+  twice, or two people acting at once, then cannot undo each other.
