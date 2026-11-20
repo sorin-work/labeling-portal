@@ -139,14 +139,14 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                   <th
                     key={col.key}
                     className={`px-4 py-2 ${col.key === 'name' ? '' : 'text-right'}`}
+                    aria-sort={
+                      sort.key === col.key ? (sort.desc ? 'descending' : 'ascending') : undefined
+                    }
                   >
                     <button
                       type="button"
                       onClick={() => toggleSort(col.key)}
                       className="uppercase hover:text-slate-800"
-                      aria-sort={
-                        sort.key === col.key ? (sort.desc ? 'descending' : 'ascending') : undefined
-                      }
                     >
                       {col.label}
                       {sort.key === col.key ? (sort.desc ? ' ↓' : ' ↑') : ''}
