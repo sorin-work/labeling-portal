@@ -453,9 +453,15 @@ count nowhere: not in consensus, agreement, gold scores or pay. The quality
 page shows each annotator's unchanged share and time and scores the
 suggestions against gold, with a note that agreement leans towards the
 suggestion; the export carries the suggestion and how each annotation used
-it. Different from the design: gold tasks get the rule's suggestion like any
-other task (and a gold copy keeps its source's), because a task without one
-would stand out as gold; everyone sees the suggestion, as the item leaned.
+it. Different from the design: gold tasks get the rule's suggestions like any
+other task, because a task without one would stand out as gold, but never a
+file's: a `_prediction` on a `_gold` row is refused and a gold copy keeps only
+a rule's suggestion; a project with file predictions and no rule gets a note
+on the quality page that its gold tasks can be told apart. Everyone sees the
+suggestion, as the item leaned. Matching is one left-to-right pass with a
+fixed cost per task, "Continue" goes on after a timeout and "Run again from
+scratch" follows a rule change, tasks someone has been handed are never
+touched, and taking a suggestion is recorded on the server when it happens.
 Still open: the rule runs in the web process, so a run cut short by a restart
 only goes on when its batch page is opened; the CSV export does not carry
 suggestions; image classification and boxes have no rule.

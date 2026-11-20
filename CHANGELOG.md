@@ -21,15 +21,19 @@
 - Suggested answers. A `_prediction` column in an import file, or a project
   rule set under Settings (keyword lists per label for text classification,
   phrase lists per entity type for spans), suggests an answer for each task.
-  The rule runs after the import, with a time limit, and the batch page says
-  how far it got and can run it again. Annotators see the suggestion in a
+  The rule runs after the import, with a time limit, only over tasks nobody
+  has been handed. The batch page says how far it got, can continue a run
+  that stopped and can run a changed rule again from scratch. Annotators see the suggestion in a
   dashed box and take it with "Start from the suggestion"; nothing is filled
   in or handed in by itself. Suggestions are checked against the schema,
   stored apart from answers and count nowhere: not in consensus, agreement,
   gold scores or pay. The quality page shows how often each annotator handed
   one in unchanged and how the rule scores against the gold answers, the
   review page says whether the answer is a suggestion, and the JSON Lines
-  export carries the suggestion and how each annotation used it
+  export carries the suggestion and how each annotation used it. Gold tasks
+  only show the rule's suggestions: a `_prediction` on a gold row is refused,
+  and the quality page warns when file predictions alone make gold tasks
+  stand out
 
 - A fifth labeling kind, image classification (`image_classification`, with
   `imageField`, `labels` and `multiple`): the image, then the same label

@@ -489,11 +489,16 @@ instead of starting from nothing.
   `app/domain/prelabel.ts`: a name, the kinds it works for, a zod schema of
   its settings and a function `(schema, data, config) => Answer | null`. Two
   ship with the app and call no service: keyword lists per label for text
-  classification, and phrase lists per entity type for spans (whole words,
-  the longest first, never overlapping). There is no hosted model and no
-  regular expression written by a manager: the lists are capped
-  (`MAX_TERMS`, `MAX_TERM_LENGTH`) and only the first `MAX_SCAN` characters
-  of a text are read, so a rule cannot hang the server.
+  classification, and phrase lists per entity type for spans. Both match
+  with `findTerms`: one pass from left to right over word starts, terms
+  deduplicated and indexed by their first character, the longest term where
+  several start at the same place, never two that overlap, compared on the
+  text itself so offsets stay right where lower case changes a character's
+  length. There is no hosted model and no regular expression written by a
+  manager. The lists are capped (`MAX_TERMS`, `MAX_TERM_LENGTH`), only the
+  first `MAX_SCAN` characters of a text are read, and one task stops after
+  `MAX_SPANS` matches or a fixed number of comparisons, so one task costs a
+  bounded amount of work and the run's time limit holds.
 - **Checked like answers.** What a rule returns, and every `_prediction`,
   goes through the kind's answer validator before it is stored; what the
   schema refuses is not suggested. The work page reads it like a draft, so a
@@ -503,24 +508,33 @@ instead of starting from nothing.
   the response, in the same process (`startPrelabel` in
   `app/models/prelabel.server.ts`), and stops after
   `PRELABEL_TIME_LIMIT_MS` (15 seconds), keeping what it did and saying so on
-  the batch page (`TIMED_OUT`), where "Run the rule again" goes on. That
-  button also takes back what the rule suggested on tasks nobody has started,
-  so a changed rule can run again; what someone has seen stays. A run that a
-  restart cut short goes on when the batch page is opened. Only tasks
-  without a suggestion are touched, so a file's prediction wins.
+  the batch page (`TIMED_OUT`), where "Continue" goes on with the tasks still
+  to do. "Run again from scratch", for a changed rule, takes back what the
+  rule suggested on tasks nobody has been handed and runs it again. A run
+  that a restart cut short goes on when the batch page is opened. Only tasks
+  without a suggestion that nobody has been handed are touched, so a file's
+  prediction wins and nobody sees a suggestion change under them. Writes and
+  the reset lock the task rows by id first and then check, under the lock,
+  that no assignment exists, the lock order a claim uses too.
 - **A suggestion, not an answer.** The work page shows it in a dashed,
   labelled box and fills nothing in. "Start from the suggestion" makes it the
   answer, which the annotator then checks or changes; a draft wins over it,
   and taking it over a draft asks first. Nothing hands a suggestion in
-  without an action. The submission records `fromSuggestion` and
-  `suggestionUnchanged` (from `sameAnswer`), which the review page, the
-  quality page and the export show.
+  without an action. Pressing the button is posted to the server at once
+  (`markSuggestionTaken` sets `fromSuggestion` on the claim); the submission
+  reads it from there, not from the form, and records `suggestionUnchanged`
+  (from `sameAnswer`). The review page, the quality page and the export show
+  both.
 - **Counted nowhere.** Consensus, agreement, gold scores and pay read
   answers only. The suggestion is kept apart on the task.
 - **Gold and qualification.** Qualification questions never get one. Gold
-  tasks get the rule's suggestion like any other task, and a gold copy keeps
-  the suggestion of the task it was copied from: a task without one would
-  stand out as gold.
+  tasks only show the rule's suggestions, which come from the task's data
+  alone, like any other task's; a task without one would stand out as gold.
+  A `_prediction` on a `_gold` row is refused at import, since a prediction
+  written next to the answer could be the answer, and a gold copy keeps
+  only a rule's suggestion of the task it was copied from. A project that
+  uses only file predictions therefore has gold tasks without suggestions,
+  and the quality page says that they can be told apart.
 
 ## Accessibility
 

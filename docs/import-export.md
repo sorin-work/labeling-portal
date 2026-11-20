@@ -109,7 +109,8 @@ covered by that check:
 A `_prediction` column holds a suggested answer for the task, for example the
 output of a model that ran somewhere else. It takes the same short forms and
 full answers as `_gold` (below) and is checked against the schema the same
-way; a prediction the schema refuses fails the line. It is stored on the task
+way; a prediction the schema refuses fails the line. A gold row (one with
+`_gold`) takes no `_prediction`: gold tasks only show the rule's suggestions. It is stored on the task
 apart from every answer and shown to annotators as a suggestion (see
 "Suggested answers" in `docs/architecture.md`). A qualification test takes no
 `_prediction`. The JSON Lines export writes each task's `suggestion` (its

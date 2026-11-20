@@ -189,6 +189,10 @@ suggestions on gold tasks against the gold answers with `scoreAgainstGold`,
 per source (the import file or the rule). That costs nothing and says how good
 the rule is before anyone relies on it.
 
+When tasks have suggestions from the import file and the project has no rule,
+gold tasks are the ones without a suggestion, and the page says that gold can
+be told apart.
+
 Suggestions are not answers. They never count in consensus, agreement, gold
 scores or pay. But every annotator of a task sees the same suggestion, so
 agreement and the consensus lean towards it, and the page says so.
