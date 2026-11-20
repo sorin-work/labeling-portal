@@ -1,6 +1,7 @@
 import type { Answer } from './answers';
 import { parseCsv, sniffDelimiter, unguardFormula, type Delimiter } from './csv';
 import { parseGold } from './gold';
+import { parsePrediction } from './prelabel';
 import { isImageKind, requiredFields, type TaskSchema } from './task-schema';
 
 /**
@@ -18,6 +19,8 @@ export type ImportRow = {
   data: Record<string, unknown>;
   /** set for gold (honeypot) tasks */
   gold?: Answer;
+  /** a suggested answer from the file's `_prediction`; never an annotation */
+  suggestion?: Answer;
 };
 
 /** `line` is 0 for a problem with the file as a whole. */
@@ -44,6 +47,7 @@ export const MAX_REPORTED_ERRORS = 20;
 /** Columns/keys with a leading underscore are instructions to the importer, not task data. */
 const ID_KEYS = ['_id', 'id'];
 const GOLD_KEY = '_gold';
+const PREDICTION_KEY = '_prediction';
 
 /**
  * A task's data as an annotator's browser gets it: without the id its row
@@ -533,6 +537,22 @@ export function parseImport(
       }
       seenIds.set(externalId, record.line);
     }
+    // a suggestion from a model that ran elsewhere, checked like an answer
+    const rawPrediction = record.data[PREDICTION_KEY];
+    let suggestion: Answer | undefined;
+    if (!isBlank(rawPrediction)) {
+      if (options.qualification) {
+        errors.push({ line: record.line, message: 'Qualification questions take no _prediction' });
+        continue;
+      }
+      const prediction = parsePrediction(schema, data, rawPrediction);
+      if (!prediction.ok) {
+        errors.push({ line: record.line, message: `Prediction: ${prediction.error}` });
+        continue;
+      }
+      suggestion = prediction.answer;
+    }
+    const withSuggestion = suggestion === undefined ? {} : { suggestion };
     const rawGold = record.data[GOLD_KEY];
     if (!isBlank(rawGold)) {
       // the same checks an annotator's answer gets, against the schema as it is now
@@ -544,14 +564,14 @@ export function parseImport(
         });
         continue;
       }
-      rows.push({ line: record.line, externalId, data, gold: gold.answer });
+      rows.push({ line: record.line, externalId, data, gold: gold.answer, ...withSuggestion });
       continue;
     }
     if (options.qualification) {
       errors.push({ line: record.line, message: 'Qualification questions need a _gold answer' });
       continue;
     }
-    rows.push({ line: record.line, externalId, data });
+    rows.push({ line: record.line, externalId, data, ...withSuggestion });
   }
 
   if (records.length === 0 && errors.length === 0) {
