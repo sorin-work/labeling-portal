@@ -3,9 +3,9 @@ import type { Project } from '@prisma/client';
 import { categoricalValue, fleissKappa, pairwiseKappas } from '~/domain/agreement';
 import type { Answer } from '~/domain/answers';
 import { round } from '~/domain/geometry';
-import { GOLD_PASS_SCORE } from '~/domain/gold';
+import { isGoldFlagged } from '~/domain/gold';
 import { finalAnswer } from '~/domain/outcome';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { projectSchema } from './projects.server';
 
@@ -13,7 +13,14 @@ export type AnnotatorStats = {
   userId: string;
   name: string;
   submitted: number;
+  /** review decisions on their work; sent-back work can have several */
   reviewed: number;
+  /** submissions a reviewer could look at, so gold tasks are left out */
+  reviewable: number;
+  /** how many of those a reviewer has decided on */
+  reviewedSubmissions: number;
+  /** the part of their work the approval rate is based on */
+  reviewedShare: number | null;
   approved: number;
   sentBack: number;
   skipped: number;
@@ -26,8 +33,6 @@ export type AnnotatorStats = {
   /** gold accuracy below the pass score after enough attempts */
   flagged: boolean;
 };
-
-const MIN_GOLD_ATTEMPTS = 3;
 
 function mean(values: number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
@@ -69,6 +74,9 @@ export async function projectQuality(project: Project) {
         name: a.user.name,
         submitted: 0,
         reviewed: 0,
+        reviewable: 0,
+        reviewedSubmissions: 0,
+        reviewedShare: null,
         approved: 0,
         sentBack: 0,
         skipped: 0,
@@ -98,6 +106,8 @@ export async function projectQuality(project: Project) {
       if (a.goldScore !== null) stats.gold.push(a.goldScore);
       continue;
     }
+    stats.reviewable += 1;
+    if (a.reviews.length > 0) stats.reviewedSubmissions += 1;
     for (const review of a.reviews) {
       stats.reviewed += 1;
       if (review.decision === 'APPROVE') stats.approved += 1;
@@ -133,8 +143,8 @@ export async function projectQuality(project: Project) {
         ...s,
         goldAttempts: gold.length,
         goldAccuracy: goldMean === null ? null : round(goldMean, 4),
-        flagged:
-          goldMean !== null && gold.length >= MIN_GOLD_ATTEMPTS && goldMean < GOLD_PASS_SCORE,
+        flagged: isGoldFlagged(goldMean, gold.length),
+        reviewedShare: s.reviewable ? round(s.reviewedSubmissions / s.reviewable, 4) : null,
         approvalRate: s.reviewed ? round(s.approved / s.reviewed, 4) : null,
         avgQaScore: avgQa === null ? null : round(avgQa, 2),
         avgSeconds: avgSec === null ? null : Math.round(avgSec),
@@ -176,6 +186,26 @@ export async function projectQuality(project: Project) {
   };
 }
 
+/**
+ * Whether the annotator is flagged in the project right now, by the same rule
+ * as the `flagged` column above. Sampling sends all work of a flagged
+ * annotator to review.
+ */
+export async function isAnnotatorFlagged(projectId: string, userId: string): Promise<boolean> {
+  const gold = await prisma.assignment.aggregate({
+    where: {
+      projectId,
+      userId,
+      status: 'SUBMITTED',
+      goldScore: { not: null },
+      task: { isGold: true },
+    },
+    _avg: { goldScore: true },
+    _count: { _all: true },
+  });
+  return isGoldFlagged(gold._avg.goldScore, gold._count._all);
+}
+
 export type DayCount = { day: string; submitted: number; accepted: number };
 
 /** Submissions per UTC day for the last `days` days, oldest first, including empty days. */
@@ -187,13 +217,13 @@ export async function dailyThroughput(
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
   const rows = await prisma.$queryRaw<Array<{ day: Date; submitted: bigint; accepted: bigint }>>`
-    SELECT date_trunc('day', a."submittedAt" AT TIME ZONE 'UTC') AS day,
+    SELECT date_trunc('day', a."submittedAt") AS day,
            count(*) AS submitted,
            count(*) FILTER (WHERE a."reviewStatus" IN ('APPROVED', 'FIXED', 'NOT_REQUIRED')) AS accepted
     FROM "Assignment" a
     WHERE a."projectId" = ${projectId}
       AND a.status = 'SUBMITTED'
-      AND a."submittedAt" >= ${start} AND a."submittedAt" < ${end}
+      AND a."submittedAt" >= ${utc(start)} AND a."submittedAt" < ${utc(end)}
     GROUP BY 1`;
   const byDay = new Map(rows.map((r) => [r.day.toISOString().slice(0, 10), r]));
   const result: DayCount[] = [];

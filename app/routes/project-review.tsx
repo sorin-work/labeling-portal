@@ -3,13 +3,14 @@ import { Form, Link, redirect } from 'react-router';
 import { Alert, Button, EmptyState } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { taskPreview } from '~/domain/preview';
+import { activeHold, REVIEW_HOLD_MINUTES } from '~/domain/review-hold';
 import { Pagination } from '~/components/pagination';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { paginate, readPage } from '~/lib/pagination';
 import { formatDateTime } from '~/lib/format';
 import { projectSchema, requireProject } from '~/models/projects.server';
-import { listPendingReviews, nextPendingReview, pendingByAnnotator } from '~/models/reviews.server';
+import { listPendingReviews, pendingByAnnotator, reserveNextReview } from '~/models/reviews.server';
 
 import type { Route } from './+types/project-review';
 
@@ -21,12 +22,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'review');
   const url = new URL(request.url);
-
-  if (url.searchParams.has('next')) {
-    const next = await nextPendingReview(project.id, current.user.id);
-    if (next) throw redirect(`/review/${next.id}`);
-    throw redirect(`/projects/${project.id}/review?done=1`);
-  }
+  const now = new Date();
 
   const annotator = url.searchParams.get('annotator') ?? '';
   const annotators = await pendingByAnnotator(project.id);
@@ -45,15 +41,31 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     page,
     annotator,
     annotators,
-    pending: pending.map((a) => ({
-      id: a.id,
-      annotator: a.user.name,
-      submittedAt: a.submittedAt,
-      activeSeconds: a.activeSeconds,
-      externalId: a.task.externalId,
-      preview: taskPreview(schema, a.task.data, 70),
-    })),
+    pending: pending.map((a) => {
+      const hold = activeHold(a, current.user.id, now);
+      return {
+        id: a.id,
+        heldBy: hold ? (hold.mine ? 'You' : hold.reviewer) : null,
+        annotator: a.user.name,
+        submittedAt: a.submittedAt,
+        activeSeconds: a.activeSeconds,
+        externalId: a.task.externalId,
+        preview: taskPreview(schema, a.task.data, 70),
+      };
+    }),
   };
+}
+
+/**
+ * POST: reserve the next submission for this reviewer and open it. Reserving
+ * is a write, so "Start reviewing" posts here, like the claim in
+ * `project-work.tsx`.
+ */
+export async function action({ request, params }: Route.ActionArgs) {
+  const current = await requireUser(request);
+  const project = await requireProject(current, params.projectId, 'review');
+  const next = await reserveNextReview(project.id, current.user.id);
+  return redirect(next ? `/review/${next.id}` : `/projects/${project.id}/review?done=1`);
 }
 
 export default function ProjectReview({ loaderData }: Route.ComponentProps) {
@@ -99,9 +111,13 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
             <p className="text-sm text-slate-600">
               {page.total} submission{page.total === 1 ? '' : 's'} waiting, oldest first.
             </p>
-            <Link to="?next=1">
-              <Button>Start reviewing</Button>
-            </Link>
+            <Form method="post">
+              <Button
+                title={`Reserves the next submission for you for ${REVIEW_HOLD_MINUTES} minutes`}
+              >
+                Start reviewing
+              </Button>
+            </Form>
           </div>
           <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
             <table className="w-full min-w-[36rem] text-sm">
@@ -111,6 +127,7 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
                   <th className="px-4 py-2">Annotator</th>
                   <th className="px-4 py-2">Time</th>
                   <th className="px-4 py-2">Submitted</th>
+                  <th className="px-4 py-2">Reviewer</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -136,6 +153,7 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
                     <td className="px-4 py-2 text-slate-500">
                       {item.submittedAt ? formatDateTime(item.submittedAt) : ''}
                     </td>
+                    <td className="px-4 py-2 text-slate-500">{item.heldBy ?? ''}</td>
                   </tr>
                 ))}
               </tbody>

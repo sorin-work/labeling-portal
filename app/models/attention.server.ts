@@ -1,8 +1,7 @@
-import { GOLD_PASS_SCORE } from '~/domain/gold';
+import { isGoldFlagged } from '~/domain/gold';
 import { prisma } from '~/lib/db.server';
 
 const DAY = 24 * 60 * 60 * 1000;
-const MIN_GOLD_ATTEMPTS = 3;
 
 export type AttentionItem =
   | { kind: 'stale-reviews'; projectId: string; projectName: string; count: number }
@@ -48,9 +47,7 @@ export async function needsAttention(orgId: string, now = new Date()): Promise<A
     }),
   ]);
 
-  const lowGold = gold.filter(
-    (g) => g._count._all >= MIN_GOLD_ATTEMPTS && (g._avg.goldScore ?? 1) < GOLD_PASS_SCORE,
-  );
+  const lowGold = gold.filter((g) => isGoldFlagged(g._avg.goldScore, g._count._all));
   const users = await prisma.user.findMany({
     where: { id: { in: lowGold.map((g) => g.userId) } },
     select: { id: true, name: true },

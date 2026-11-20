@@ -8,9 +8,10 @@ or fix the work.
 - **Organisations and roles**: admin, project manager, reviewer and annotator,
   with every project scoped to its organisation
 - **Projects**: Markdown instructions with live preview, a JSON task schema,
-  annotators per task (overlap), time limit, review on/off, pay rate. The
-  schema can still be edited once work exists: edits that would break stored
-  answers are refused, and the form says why before the save
+  annotators per task (overlap), time limit, review of everything, of a
+  sampled share or of nothing, pay rate. The schema can still be edited once
+  work exists: edits that would break stored answers are refused, and the
+  form says why before the save
 - **Four labeling interfaces**: text classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
@@ -20,9 +21,14 @@ or fix the work.
 - **Task queue**: claim the next task, time limits with automatic release of
   abandoned claims, one extension per claim, skip with a reason, release
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
-  1-5; annotators revise sent-back work and see corrections
-- **Quality**: per-annotator approval rate, QA score, gold accuracy, speed and
-  throughput; Cohen's and Fleiss' kappa; consensus answers per task
+  1-5; annotators revise sent-back work and see corrections. "Start reviewing"
+  reserves a submission for one reviewer, for 15 minutes and for as long as
+  they keep working on it, so two reviewers never work on the same one
+- **Review sampling**: review a share of the work instead of all of it. New
+  annotators and annotators with low gold accuracy are always reviewed
+- **Quality**: per-annotator reviewed share, approval rate, QA score, gold
+  accuracy, speed and throughput; Cohen's and Fleiss' kappa; consensus answers
+  per task
 - **Gold tasks** scored automatically and a **qualification test** before an
   annotator may work on a project
 - **Time tracking** of active time per task and a **payouts** report (per task
@@ -57,7 +63,7 @@ test. Every demo account uses the password `labeling-demo`:
 | ------------------------ | --------------- | ----------------------------------------------------------------- |
 | `admin@example.com`      | Admin           | People, payouts, everything below                                 |
 | `pm@example.com`         | Project manager | Import a batch, quality, payouts, export                          |
-| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_                        |
+| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)         |
 | `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project |
 | `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work             |
 | `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                |
@@ -253,6 +259,9 @@ More detail: [architecture](docs/architecture.md),
   fifteen minutes. Restarting the app clears the counter.
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
+- **A submission says another reviewer is on it**: "Start reviewing" reserves
+  a submission for 15 minutes and keeps it reserved while that reviewer works
+  on it. If they walked away, it frees up by itself 15 minutes later.
 - **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
   and skips itself if the demo organisation already exists. Remove the volume
   with `docker compose down -v` to start over.

@@ -59,11 +59,25 @@ describe('parseProjectForm', () => {
         overlap: 3,
         timeLimitMinutes: 15,
         reviewRequired: true,
+        reviewSamplePercent: 100,
         qualificationRequired: false,
         qualificationPassPercent: 75,
         payMode: 'HOURLY',
         rateCents: 1850,
       });
+    }
+  });
+
+  it('reads the share of submissions to review', () => {
+    const sampled = parseProjectForm(form({ ...valid, reviewSamplePercent: '20' }));
+    expect(sampled.ok && sampled.value.reviewSamplePercent).toBe(20);
+    const none = parseProjectForm(form({ ...valid, reviewSamplePercent: '0' }));
+    expect(none.ok && none.value.reviewSamplePercent).toBe(0);
+
+    for (const bad of ['', '101', '-1', '12.5', 'half']) {
+      const result = parseProjectForm(form({ ...valid, reviewSamplePercent: bad }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(Object.keys(result.errors)).toEqual(['reviewSamplePercent']);
     }
   });
 

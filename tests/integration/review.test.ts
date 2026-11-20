@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
+import { claimNextTask, submitAssignment } from '~/models/queue.server';
+import { recordReview, renewReviewHold, reserveNextReview } from '~/models/reviews.server';
 import { action as reviseAction } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as reviewAction, loader as reviewLoader } from '~/routes/review';
-import { loader as queueLoader } from '~/routes/project-review';
+import { action as queueAction, loader as queueLoader } from '~/routes/project-review';
+import { loader as taskLoader } from '~/routes/task-detail';
+import { action as workAction } from '~/routes/work';
 
 import {
   addToProject,
@@ -306,6 +311,60 @@ describe('task completion', () => {
     expect(done.completedAt).not.toBeNull();
   });
 
+  it('completes a task whose last two submissions are approved at the same moment', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2 });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const annotators = [
+      await createMember(org.id, 'ANNOTATOR'),
+      await createMember(org.id, 'ANNOTATOR'),
+    ];
+    const approve = { decision: 'APPROVE' as const, qaScore: null, feedback: '' };
+
+    // a few rounds: without the lock on the task most of them leave it open
+    for (let round = 0; round < 3; round++) {
+      const [task] = await createTasks(project.id, [{ text: `round ${round}` }]);
+      const work = [];
+      for (const annotator of annotators) {
+        work.push(await submitWork(project, annotator.id, { labels: ['positive'] }));
+      }
+
+      const results = await Promise.all(work.map((w) => recordReview(w.id, reviewer.id, approve)));
+
+      expect(results.map((r) => r.ok)).toEqual([true, true]);
+      const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
+    }
+  });
+
+  it('completes a task that two unsampled submissions fill at the same moment', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2, reviewSamplePercent: 0 });
+    const [task] = await createTasks(project.id, [{ text: 'x' }]);
+    const claims = [];
+    for (let i = 0; i < 2; i++) {
+      const annotator = await createMember(org.id, 'ANNOTATOR');
+      await withHistory(project.id, annotator.id);
+      const claim = await claimNextTask(project, annotator.id, new Date(Date.now() - 60_000));
+      if (!claim.ok) throw new Error('nothing to claim');
+      claims.push(claim.assignment);
+    }
+    const input = {
+      answer: { labels: ['negative'] },
+      activeSeconds: 10,
+      reviewRequired: true,
+      reviewSamplePercent: 0,
+    };
+
+    const results = await Promise.all(
+      claims.map((claim) => submitAssignment(claim.id, claim.userId, input)),
+    );
+
+    expect(results.every((r) => r.ok && r.assignment.reviewStatus === 'NOT_REQUIRED')).toBe(true);
+    const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['negative'] } });
+  });
+
   it('completes immediately when review is not required', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id, { reviewRequired: false });
@@ -332,5 +391,490 @@ describe('consensus on completion', () => {
     const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
     expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
     expect(done.agreement).toBeCloseTo(0.6667);
+  });
+});
+
+/** Gives an annotator a history of submissions that went to review in the project. */
+async function withHistory(projectId: string, userId: string, count = ALWAYS_REVIEW_FIRST) {
+  const tasks = await createTasks(
+    projectId,
+    Array.from({ length: count }, (_, i) => ({ text: `earlier ${i}` })),
+  );
+  const at = new Date(Date.now() - 24 * 60 * 60_000);
+  await prisma.assignment.createMany({
+    data: tasks.map((task) => ({
+      projectId,
+      taskId: task.id,
+      userId,
+      status: 'SUBMITTED' as const,
+      claimedAt: at,
+      expiresAt: at,
+      submittedAt: at,
+      answer: { labels: ['positive'] },
+      reviewStatus: 'APPROVED' as const,
+      reviewedAt: at,
+    })),
+  });
+  await prisma.task.updateMany({
+    where: { id: { in: tasks.map((t) => t.id) } },
+    data: { status: 'COMPLETE' },
+  });
+}
+
+const drawn = () => 0.1;
+const notDrawn = () => 0.9;
+const taskStatus = async (id: string) =>
+  (await prisma.task.findUniqueOrThrow({ where: { id } })).status;
+
+describe('review sampling', () => {
+  beforeEach(resetDb);
+
+  async function sampledProject(overrides: { overlap?: number; reviewSamplePercent?: number }) {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { reviewSamplePercent: 50, ...overrides });
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, ann, reviewer);
+    return { org, project, ann, reviewer, reviewerCookie: await cookieFor(reviewer, org.id) };
+  }
+
+  it('sends the drawn share to review and accepts the rest at once', async () => {
+    const { project, ann } = await sampledProject({});
+    const [first, second] = await createTasks(project.id, [{ text: 'one' }, { text: 'two' }]);
+    await withHistory(project.id, ann.id);
+
+    const sampled = await submitWork(project, ann.id, { labels: ['positive'] }, { random: drawn });
+    expect(sampled).toMatchObject({ reviewStatus: 'PENDING', reviewSample: 'DRAWN' });
+    expect(await taskStatus(first.id)).toBe('OPEN');
+
+    const passed = await submitWork(
+      project,
+      ann.id,
+      { labels: ['negative'] },
+      { random: notDrawn },
+    );
+    expect(passed).toMatchObject({ reviewStatus: 'NOT_REQUIRED', reviewSample: 'NOT_DRAWN' });
+    const done = await prisma.task.findUniqueOrThrow({ where: { id: second.id } });
+    expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['negative'] } });
+  });
+
+  it('reviews the first ten submissions of an annotator whatever the draw says', async () => {
+    const { project, ann } = await sampledProject({ reviewSamplePercent: 10 });
+    await createTasks(
+      project.id,
+      Array.from({ length: ALWAYS_REVIEW_FIRST + 1 }, (_, i) => ({ text: `task ${i}` })),
+    );
+
+    const outcomes = [];
+    for (let i = 0; i <= ALWAYS_REVIEW_FIRST; i++) {
+      const done = await submitWork(
+        project,
+        ann.id,
+        { labels: ['positive'] },
+        { random: notDrawn },
+      );
+      outcomes.push(done.reviewSample);
+    }
+    expect(outcomes.slice(0, ALWAYS_REVIEW_FIRST)).toEqual(
+      Array(ALWAYS_REVIEW_FIRST).fill('NEW_ANNOTATOR'),
+    );
+    expect(outcomes[ALWAYS_REVIEW_FIRST]).toBe('NOT_DRAWN');
+    expect(
+      await prisma.assignment.count({ where: { userId: ann.id, reviewStatus: 'PENDING' } }),
+    ).toBe(ALWAYS_REVIEW_FIRST);
+  });
+
+  it('reviews everything from an annotator flagged for gold accuracy', async () => {
+    const { project, ann } = await sampledProject({ reviewSamplePercent: 10 });
+    await withHistory(project.id, ann.id);
+    const gold = await createTasks(project.id, [{ text: 'g1' }, { text: 'g2' }, { text: 'g3' }]);
+    const at = new Date(Date.now() - 60 * 60_000);
+    await prisma.task.updateMany({
+      where: { id: { in: gold.map((t) => t.id) } },
+      data: { isGold: true, goldAnswer: { labels: ['positive'] } },
+    });
+    await prisma.assignment.createMany({
+      data: gold.map((task) => ({
+        projectId: project.id,
+        taskId: task.id,
+        userId: ann.id,
+        status: 'SUBMITTED' as const,
+        claimedAt: at,
+        expiresAt: at,
+        submittedAt: at,
+        answer: { labels: ['negative'] },
+        reviewStatus: 'NOT_REQUIRED' as const,
+        goldScore: 0,
+      })),
+    });
+    await createTasks(project.id, [{ text: 'regular' }]);
+
+    const work = await submitWork(project, ann.id, { labels: ['positive'] }, { random: notDrawn });
+    expect(work).toMatchObject({ reviewStatus: 'PENDING', reviewSample: 'FLAGGED' });
+  });
+
+  it('completes a task that unsampled and reviewed work fill together', async () => {
+    const { org, project, ann, reviewerCookie } = await sampledProject({ overlap: 2 });
+    const [task] = await createTasks(project.id, [{ text: 'shared' }]);
+    const other = await createMember(org.id, 'ANNOTATOR');
+    await withHistory(project.id, ann.id);
+    await withHistory(project.id, other.id);
+
+    await submitWork(project, ann.id, { labels: ['positive'] }, { random: notDrawn });
+    expect(await taskStatus(task.id)).toBe('OPEN');
+    const sampled = await submitWork(
+      project,
+      other.id,
+      { labels: ['positive'] },
+      { random: drawn },
+    );
+    expect(await taskStatus(task.id)).toBe('OPEN');
+
+    await run(
+      reviewAction,
+      makeRequest(`/review/${sampled.id}`, { cookie: reviewerCookie, form: { intent: 'approve' } }),
+      { assignmentId: sampled.id },
+    );
+    expect(await taskStatus(task.id)).toBe('COMPLETE');
+  });
+
+  it('keeps the stored outcome when pages are loaded and when work comes back', async () => {
+    const { project, ann, reviewerCookie } = await sampledProject({ reviewSamplePercent: 0 });
+    await createTasks(project.id, [{ text: 'one' }]);
+    const fresh = await submitWork(project, ann.id, { labels: ['positive'] });
+    expect(fresh).toMatchObject({ reviewStatus: 'PENDING', reviewSample: 'NEW_ANNOTATOR' });
+    await withHistory(project.id, ann.id);
+    const [later] = await createTasks(project.id, [{ text: 'two' }]);
+    const passed = await submitWork(project, ann.id, { labels: ['positive'] });
+    expect(passed.reviewSample).toBe('NOT_DRAWN');
+
+    // the queue, the review page and the task page only read what was stored
+    const pages: Array<[Parameters<typeof run>[0], string, Record<string, string>]> = [
+      [queueLoader, `/projects/${project.id}/review`, { projectId: project.id }],
+      [reviewLoader, `/review/${passed.id}`, { assignmentId: passed.id }],
+      [
+        taskLoader,
+        `/projects/${project.id}/tasks/${later.id}`,
+        { projectId: project.id, taskId: later.id },
+      ],
+    ];
+    for (const [loader, path, params] of pages) {
+      expect(
+        statusOf(await run(loader, makeRequest(path, { cookie: reviewerCookie }), params)),
+      ).toBe(200);
+    }
+    expect(await prisma.assignment.findUniqueOrThrow({ where: { id: passed.id } })).toMatchObject({
+      reviewStatus: 'NOT_REQUIRED',
+      reviewSample: 'NOT_DRAWN',
+    });
+
+    // sent-back work returns to the queue without another draw
+    await run(
+      reviewAction,
+      makeRequest(`/review/${fresh.id}`, {
+        cookie: reviewerCookie,
+        form: { intent: 'send_back', feedback: 'Look again' },
+      }),
+      { assignmentId: fresh.id },
+    );
+    const { resubmitAssignment } = await import('~/models/queue.server');
+    expect(await resubmitAssignment(fresh.id, ann.id, { labels: ['negative'] })).toEqual({
+      ok: true,
+    });
+    expect(await prisma.assignment.findUniqueOrThrow({ where: { id: fresh.id } })).toMatchObject({
+      reviewStatus: 'PENDING',
+      reviewSample: 'NEW_ANNOTATOR',
+    });
+  });
+
+  it('draws once when the same answer is posted twice at the same moment', async () => {
+    const { project, ann } = await sampledProject({});
+    await createTasks(project.id, [{ text: 'one' }]);
+    await withHistory(project.id, ann.id);
+    const claimedAt = new Date(Date.now() - 60_000);
+    const claim = await claimNextTask(project, ann.id, claimedAt);
+    if (!claim.ok) throw new Error('nothing to claim');
+    const input = {
+      answer: { labels: ['positive'] },
+      activeSeconds: 10,
+      reviewRequired: true,
+      reviewSamplePercent: 50,
+    };
+
+    const results = await Promise.all([
+      submitAssignment(claim.assignment.id, ann.id, input, new Date(), drawn),
+      submitAssignment(claim.assignment.id, ann.id, input, new Date(), notDrawn),
+    ]);
+
+    const stored = results.filter((r) => r.ok);
+    expect(stored).toHaveLength(1);
+    expect(results.find((r) => !r.ok)).toEqual({ ok: false, error: 'not_active' });
+    const saved = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.assignment.id } });
+    expect(stored[0].ok && stored[0].assignment.reviewSample).toBe(saved.reviewSample);
+    expect(saved.reviewStatus).toBe(saved.reviewSample === 'DRAWN' ? 'PENDING' : 'NOT_REQUIRED');
+  });
+
+  it('applies the project share to work submitted through the form', async () => {
+    const { org, project, ann } = await sampledProject({ reviewSamplePercent: 0 });
+    const [task] = await createTasks(project.id, [{ text: 'one' }]);
+    await withHistory(project.id, ann.id);
+    const claim = await claimNextTask(project, ann.id);
+    if (!claim.ok) throw new Error('nothing to claim');
+
+    await run(
+      workAction,
+      makeRequest(`/work/${claim.assignment.id}`, {
+        cookie: await cookieFor(ann, org.id),
+        form: { intent: 'submit', answer: '{"labels":["positive"]}', activeSeconds: '0' },
+      }),
+      { assignmentId: claim.assignment.id },
+    );
+
+    const saved = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.assignment.id } });
+    expect(saved).toMatchObject({ reviewStatus: 'NOT_REQUIRED', reviewSample: 'NOT_DRAWN' });
+    expect(await taskStatus(task.id)).toBe('COMPLETE');
+  });
+});
+
+describe('reviewer reservations', () => {
+  beforeEach(resetDb);
+
+  /** One annotator with `count` submissions waiting, oldest first, and some reviewers. */
+  async function waiting(count: number, reviewers = 2) {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    await createTasks(
+      project.id,
+      Array.from({ length: count }, (_, i) => ({ text: `task ${i}` })),
+    );
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, ann);
+    const submissions = [];
+    for (let i = 0; i < count; i++) {
+      const now = new Date(Date.now() - (count - i) * 60 * 60_000);
+      submissions.push(await submitWork(project, ann.id, { labels: ['positive'] }, { now }));
+    }
+    const people = [];
+    for (let i = 0; i < reviewers; i++) {
+      const user = await createMember(org.id, 'REVIEWER', { name: `Reviewer ${i + 1}` });
+      people.push({ user, cookie: await cookieFor(user, org.id) });
+    }
+    await addToProject(project.id, ...people.map((p) => p.user));
+    return { org, project, ann, submissions, reviewers: people };
+  }
+
+  const start = (projectId: string, cookie: string) =>
+    run(queueAction, makeRequest(`/projects/${projectId}/review`, { cookie, form: {} }), {
+      projectId,
+    });
+  const post = (id: string, cookie: string, form: Record<string, string>) =>
+    run(reviewAction, makeRequest(`/review/${id}`, { cookie, form }), { assignmentId: id });
+  const holderOf = async (id: string) =>
+    (await prisma.assignment.findUniqueOrThrow({ where: { id } })).reviewHeldById;
+
+  it('gives reviewers who ask at the same moment different submissions', async () => {
+    const { project, submissions, reviewers } = await waiting(3, 5);
+
+    const taken = await Promise.all(reviewers.map((r) => reserveNextReview(project.id, r.user.id)));
+
+    const ids = taken.filter((t) => t !== null).map((t) => t.id);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids)).toEqual(new Set(submissions.map((s) => s.id)));
+    const holders = await Promise.all(submissions.map((s) => holderOf(s.id)));
+    expect(new Set(holders).size).toBe(3);
+  });
+
+  it('reserves on "Start reviewing", which is a POST', async () => {
+    const { project, submissions, reviewers } = await waiting(2);
+    const [first, second] = reviewers;
+
+    // the old link no longer does anything
+    const viewed = await run(
+      queueLoader,
+      makeRequest(`/projects/${project.id}/review?next=1`, { cookie: first.cookie }),
+      { projectId: project.id },
+    );
+    expect(statusOf(viewed)).toBe(200);
+    expect(await holderOf(submissions[0].id)).toBeNull();
+
+    expect(locationOf(await start(project.id, first.cookie))).toBe(`/review/${submissions[0].id}`);
+    expect(locationOf(await start(project.id, second.cookie))).toBe(`/review/${submissions[1].id}`);
+    // asking again brings a reviewer back to what they hold
+    expect(locationOf(await start(project.id, first.cookie))).toBe(`/review/${submissions[0].id}`);
+    expect(await holderOf(submissions[0].id)).toBe(first.user.id);
+    expect(await holderOf(submissions[1].id)).toBe(second.user.id);
+
+    const list = await run(
+      queueLoader,
+      makeRequest(`/projects/${project.id}/review`, { cookie: second.cookie }),
+      { projectId: project.id },
+    );
+    expect(payload<{ pending: Array<{ heldBy: string | null }> }>(list).pending).toMatchObject([
+      { heldBy: 'Reviewer 1' },
+      { heldBy: 'You' },
+    ]);
+  });
+
+  it('does not let an annotator reserve anything', async () => {
+    const { org, project, ann, submissions } = await waiting(1);
+    const other = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, other);
+
+    for (const user of [ann, other]) {
+      const cookie = await cookieFor(user, org.id);
+      expect(statusOf(await start(project.id, cookie))).toBe(403);
+      expect(statusOf(await post(submissions[0].id, cookie, { intent: 'hold' }))).toBe(403);
+      expect(statusOf(await post(submissions[0].id, cookie, { intent: 'renew' }))).toBe(403);
+    }
+    expect(await holderOf(submissions[0].id)).toBeNull();
+  });
+
+  it('lets a hold lapse after fifteen minutes', async () => {
+    const { project, ann, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+    const after = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+
+    expect(await reserveNextReview(project.id, first.user.id, t0)).toEqual({
+      id: submissions[0].id,
+    });
+    const held = await prisma.assignment.findUniqueOrThrow({ where: { id: submissions[0].id } });
+    expect(held.reviewHeldAt).toEqual(t0);
+    expect(await reserveNextReview(project.id, second.user.id, after(14))).toBeNull();
+    expect(await reserveNextReview(project.id, second.user.id, after(15))).toEqual({
+      id: submissions[0].id,
+    });
+    expect(await holderOf(submissions[0].id)).toBe(second.user.id);
+    // and nobody is handed their own work
+    expect(await reserveNextReview(project.id, ann.id, after(60))).toBeNull();
+  });
+
+  it('stores the hold in UTC whatever time zone the database session uses', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'America/New_York'`);
+      await reserveNextReview(project.id, first.user.id, t0, tx);
+      const tooEarly = new Date(t0.getTime() + 14 * 60_000);
+      expect(await reserveNextReview(project.id, second.user.id, tooEarly, tx)).toBeNull();
+    });
+
+    const held = await prisma.assignment.findUniqueOrThrow({ where: { id: submissions[0].id } });
+    expect(held).toMatchObject({ reviewHeldById: first.user.id, reviewHeldAt: t0 });
+  });
+
+  it('refuses a decision on a submission another reviewer holds', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    await start(project.id, first.cookie);
+
+    const refused = await post(id, second.cookie, { intent: 'approve' });
+    expect(statusOf(refused)).toBe(409);
+    expect(payload<{ error: string }>(refused).error).toMatch(/reserved/);
+    expect(await prisma.review.count()).toBe(0);
+    const page = await run(reviewLoader, makeRequest(`/review/${id}`, { cookie: second.cookie }), {
+      assignmentId: id,
+    });
+    expect(payload<{ hold: { reviewer: string; mine: boolean } }>(page).hold).toMatchObject({
+      reviewer: 'Reviewer 1',
+      mine: false,
+    });
+
+    // once the hold is older than fifteen minutes anyone may decide
+    await prisma.assignment.update({
+      where: { id },
+      data: { reviewHeldAt: new Date(Date.now() - 16 * 60_000) },
+    });
+    expect(statusOf(await post(id, second.cookie, { intent: 'approve' }))).toBe(302);
+    expect(await prisma.assignment.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      reviewStatus: 'APPROVED',
+      reviewHeldById: null,
+      reviewHeldAt: null,
+    });
+  });
+
+  it('renews a hold while its reviewer works, so a long review keeps the submission', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+    const after = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+    await reserveNextReview(project.id, first.user.id, t0);
+
+    // only the reviewer who holds it can renew, and that moves the deadline
+    expect(await renewReviewHold(id, second.user.id, after(10))).toBe(false);
+    expect(await renewReviewHold(id, first.user.id, after(10))).toBe(true);
+    expect(await reserveNextReview(project.id, second.user.id, after(20))).toBeNull();
+    // left alone, it lapses a full period after the last renewal
+    expect(await reserveNextReview(project.id, second.user.id, after(25))).toEqual({ id });
+    // and a hold that someone else took cannot be renewed back
+    expect(await renewReviewHold(id, first.user.id, after(26))).toBe(false);
+    expect(await holderOf(id)).toBe(second.user.id);
+  });
+
+  it('renews from the review page and when a posted fix does not validate', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    await start(project.id, first.cookie);
+    const almostOver = () =>
+      prisma.assignment.update({
+        where: { id },
+        data: { reviewHeldAt: new Date(Date.now() - 14 * 60_000) },
+      });
+    const heldFor = async () =>
+      Date.now() -
+      (await prisma.assignment.findUniqueOrThrow({ where: { id } })).reviewHeldAt!.getTime();
+
+    await almostOver();
+    expect(statusOf(await post(id, second.cookie, { intent: 'renew' }))).toBe(409);
+    expect(await heldFor()).toBeGreaterThan(13 * 60_000);
+    expect(statusOf(await post(id, first.cookie, { intent: 'renew' }))).toBe(200);
+    expect(await heldFor()).toBeLessThan(60_000);
+
+    await almostOver();
+    const invalid = await post(id, first.cookie, {
+      intent: 'fix',
+      corrected: '{"labels":["unknown"]}',
+    });
+    expect(statusOf(invalid)).toBe(400);
+    expect(await heldFor()).toBeLessThan(60_000);
+    expect(await holderOf(id)).toBe(first.user.id);
+  });
+
+  it('reserves a submission opened from the list and lets go of the other one', async () => {
+    const { project, submissions, reviewers } = await waiting(2);
+    const [first, second] = reviewers;
+    const [older, newer] = submissions.map((s) => s.id);
+    await start(project.id, first.cookie);
+    expect(await holderOf(older)).toBe(first.user.id);
+
+    expect(locationOf(await post(newer, first.cookie, { intent: 'hold' }))).toBe(
+      `/review/${newer}`,
+    );
+    expect(await holderOf(newer)).toBe(first.user.id);
+    expect(await holderOf(older)).toBeNull();
+    expect(statusOf(await post(newer, second.cookie, { intent: 'hold' }))).toBe(409);
+    expect(await holderOf(newer)).toBe(first.user.id);
+  });
+
+  it('stores one decision when two reviewers decide at the same moment', async () => {
+    const { submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+
+    const results = await Promise.all([
+      post(id, first.cookie, { intent: 'approve', qaScore: '5' }),
+      post(id, second.cookie, { intent: 'send_back', feedback: 'Not quite' }),
+    ]);
+
+    expect(results.map(statusOf).sort()).toEqual([302, 409]);
+    const reviews = await prisma.review.findMany({ where: { assignmentId: id } });
+    expect(reviews).toHaveLength(1);
+    const saved = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(saved.reviewStatus).toBe(reviews[0].decision === 'APPROVE' ? 'APPROVED' : 'SENT_BACK');
   });
 });

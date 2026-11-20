@@ -6,6 +6,8 @@ import { Badge, Card, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import type { Answer } from '~/domain/answers';
 import { finalAnswer } from '~/domain/outcome';
+import { activeHold } from '~/domain/review-hold';
+import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, REVIEW_BADGES, titleCase } from '~/lib/format';
@@ -33,6 +35,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         orderBy: { claimedAt: 'asc' },
         include: {
           user: { select: { name: true } },
+          reviewHeldBy: { select: { name: true } },
           reviews: {
             orderBy: { createdAt: 'asc' },
             include: { reviewer: { select: { name: true } } },
@@ -42,6 +45,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     },
   });
   if (!task) throw notFound('Task not found');
+  const now = new Date();
 
   return {
     projectId: project.id,
@@ -61,6 +65,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       annotator: a.user.name,
       status: a.status,
       reviewStatus: a.reviewStatus,
+      sampleNote: a.reviewSample ? SAMPLE_LABELS[a.reviewSample] : null,
+      heldBy:
+        a.reviewStatus === 'PENDING'
+          ? (activeHold(a, current.user.id, now)?.reviewer ?? null)
+          : null,
       claimedAt: a.claimedAt,
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
@@ -144,9 +153,11 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
                 <span className="font-medium">{a.annotator}</span>
                 {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                 {a.corrected && <Badge tone="sky">Showing reviewer correction</Badge>}
+                {a.heldBy && <Badge tone="indigo">With {a.heldBy}</Badge>}
                 <span className="text-slate-500">
                   {formatDuration(a.activeSeconds)} ·{' '}
                   {a.submittedAt ? formatDateTime(a.submittedAt) : ''}
+                  {a.sampleNote && ` · ${a.sampleNote}`}
                 </span>
               </div>
               <LabelingInterface

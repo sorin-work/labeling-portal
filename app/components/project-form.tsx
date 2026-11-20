@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Form } from 'react-router';
 
 import { renderMarkdown } from '~/domain/markdown';
+import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import {
   diffSchema,
   REDESIGN_HINT,
@@ -27,6 +28,7 @@ export type ProjectFormDefaults = {
   overlap: number;
   timeLimitMinutes: number;
   reviewRequired: boolean;
+  reviewSamplePercent: number;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -41,6 +43,7 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   overlap: 1,
   timeLimitMinutes: 30,
   reviewRequired: true,
+  reviewSamplePercent: 100,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -185,7 +188,7 @@ export function ProjectForm({
         </div>
       </Field>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Annotators per task"
           htmlFor="overlap"
@@ -216,11 +219,31 @@ export function ProjectForm({
             defaultValue={defaults.timeLimitMinutes}
           />
         </Field>
-        <label className="flex items-center gap-2 self-center pt-4 text-sm text-slate-700">
-          <input type="checkbox" name="reviewRequired" defaultChecked={defaults.reviewRequired} />
-          Every submission needs review
-        </label>
       </div>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Review</legend>
+        <label className="flex items-center gap-2 self-center text-sm text-slate-700">
+          <input type="checkbox" name="reviewRequired" defaultChecked={defaults.reviewRequired} />
+          Submissions are reviewed before they count
+        </label>
+        <Field
+          label="Share to review (%)"
+          htmlFor="reviewSamplePercent"
+          error={errors?.reviewSamplePercent}
+          hint={`100 reviews everything. Below that the rest is accepted unseen, except each annotator's first ${ALWAYS_REVIEW_FIRST} submissions and all work of annotators flagged for low gold accuracy.`}
+        >
+          <Input
+            id="reviewSamplePercent"
+            name="reviewSamplePercent"
+            type="number"
+            min={0}
+            max={100}
+            required
+            defaultValue={defaults.reviewSamplePercent}
+          />
+        </Field>
+      </fieldset>
 
       <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
         <legend className="px-1 text-sm font-medium text-slate-700">Qualification</legend>

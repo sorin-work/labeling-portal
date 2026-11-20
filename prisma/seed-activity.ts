@@ -3,7 +3,7 @@
  * reviews, gold answers and a qualification test, so the quality, review and
  * payout pages have something to show on first start.
  */
-import type { Prisma, PrismaClient, ReviewStatus } from '@prisma/client';
+import type { Prisma, PrismaClient, ReviewSample, ReviewStatus } from '@prisma/client';
 
 import type { Answer } from '../app/domain/answers';
 import { consensus } from '../app/domain/consensus';
@@ -38,6 +38,7 @@ async function submit(
     submittedAt: Date;
     seconds: number;
     reviewStatus: ReviewStatus;
+    reviewSample?: ReviewSample;
     goldScore?: number | null;
   },
 ) {
@@ -53,6 +54,7 @@ async function submit(
       activeSeconds: input.seconds,
       answer: input.answer as Prisma.InputJsonValue,
       reviewStatus: input.reviewStatus,
+      reviewSample: input.reviewSample,
       goldScore: input.goldScore ?? null,
     },
   });
@@ -78,7 +80,7 @@ async function complete(
   });
 }
 
-/** Sentiment: gold tasks, two annotators per task, reviews with QA scores. */
+/** Sentiment: gold tasks, two annotators per task, a review sample, QA scores. */
 export async function seedSentimentActivity(prisma: PrismaClient, projectId: string, ids: Ids) {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
   const tasks = await prisma.task.findMany({ where: { projectId }, orderBy: { position: 'asc' } });
@@ -106,9 +108,21 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
     for (const userId of [ben, chen]) {
       const right = rand() < accuracy.get(userId)!;
       const label = right ? truth(task.position) : SENTIMENT[(task.position + 1) % 3];
+      // The project reviews half of the work: everyone's first ten submissions,
+      // then everything from Chen, whose gold accuracy flags him, and of Ben's
+      // later work what the draw picked. Two of Ben's were not drawn.
+      const notDrawn = userId === ben && (i === 15 || i === 17);
+      const sample: ReviewSample =
+        i < 10 ? 'NEW_ANNOTATOR' : notDrawn ? 'NOT_DRAWN' : userId === chen ? 'FLAGGED' : 'DRAWN';
       const pendingReview = i >= 14;
       const sendBack = !pendingReview && !right && rand() < 0.5;
-      const status: ReviewStatus = pendingReview ? 'PENDING' : sendBack ? 'SENT_BACK' : 'APPROVED';
+      const status: ReviewStatus = notDrawn
+        ? 'NOT_REQUIRED'
+        : pendingReview
+          ? 'PENDING'
+          : sendBack
+            ? 'SENT_BACK'
+            : 'APPROVED';
       const assignment = await submit(prisma, {
         projectId,
         taskId: task.id,
@@ -117,6 +131,7 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
         submittedAt: at(20 - i, 18 + (userId === ben ? 1 : 3)),
         seconds: 25 + Math.floor(rand() * 50),
         reviewStatus: status,
+        reviewSample: sample,
       });
       if (!pendingReview) {
         await prisma.review.create({
@@ -130,7 +145,7 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
           },
         });
       }
-      if (status === 'APPROVED') {
+      if (status === 'APPROVED' || status === 'NOT_REQUIRED') {
         accepted += 1;
         answers.push({ labels: [label] });
       }
