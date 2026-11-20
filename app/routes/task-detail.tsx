@@ -8,6 +8,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { parseAnswerJson, type Answer } from '~/domain/answers';
 import { formatGoldScore, parseGoldReason } from '~/domain/gold';
 import { finalAnswer } from '~/domain/outcome';
+import { assignmentRef } from '~/domain/reference';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
@@ -20,6 +21,7 @@ import {
   applyRescore,
   editGoldAnswer,
   goldTaskView,
+  openBatches,
   promoteToGold,
   setGoldRetired,
   type GoldRefusal,
@@ -66,6 +68,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     projectId: project.id,
     schema: projectSchema(project),
     gold,
+    // where a gold copy of this task could go: batches that still have open tasks
+    openBatches: canManage ? await openBatches(project.id) : [],
     canUseAsGold:
       canManage &&
       !task.isGold &&
@@ -89,6 +93,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       annotator: a.user.name,
       status: a.status,
       reviewStatus: a.reviewStatus,
+      // what the annotator sees on the work page and quotes when reporting a problem
+      ref: assignmentRef(a.id),
       sampleNote: a.reviewSample ? SAMPLE_LABELS[a.reviewSample] : null,
       heldBy:
         a.reviewStatus === 'PENDING'
@@ -118,6 +124,8 @@ const REFUSALS: Record<GoldRefusal['error'], string> = {
   not_gold: 'This task has no expected answer to change.',
   unchanged: 'That is the expected answer already.',
   already_done: 'Someone already did that.',
+  another_live:
+    'Another gold copy of the same task is in use. Retire that one first: a task has one gold copy at a time.',
   invalid: 'The expected answer is not valid.',
 };
 
@@ -151,9 +159,11 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   if (intent === 'gold-copy') {
-    const outcome = await promoteToGold(project, [params.taskId], current.user.id);
+    const outcome = await promoteToGold(project, [params.taskId], current.user.id, {
+      batchId: String(form.get('batchId') ?? '') || null,
+    });
     if (outcome.created.length === 0) {
-      const why = outcome.skipped[0]?.why ?? 'it cannot be used as gold';
+      const why = outcome.refused ?? outcome.skipped[0]?.why ?? 'it cannot be used as gold';
       return data({ error: `This task was not copied: ${why}.` }, { status: 409 });
     }
     return redirectWithFlash(
@@ -196,7 +206,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { projectId, schema, task, assignments, gold, canUseAsGold } = loaderData;
+  const { projectId, schema, task, assignments, gold, canUseAsGold, openBatches } = loaderData;
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
   const submitted = assignments.filter((a) => a.answer);
@@ -269,16 +279,35 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 ))}
               </>
             ) : (
-              'Use this task as gold: a copy with the consensus as its expected answer goes into the queue. This task and its labels stay as they are.'
+              'Use this task as gold: a copy with the consensus as its expected answer goes into the queue, among the open tasks of the batch you choose. This task and its labels stay as they are.'
             )}
           </div>
-          {gold.copies.every((copy) => copy.retired) && (
-            <Form method="post">
-              <Button name="intent" value="gold-copy" variant="secondary" disabled={busy}>
-                Use as gold
-              </Button>
-            </Form>
-          )}
+          {gold.copies.every((copy) => copy.retired) &&
+            (openBatches.length === 0 ? (
+              <span className="text-slate-500">
+                No batch has open tasks to put a gold task among.
+              </span>
+            ) : (
+              <Form method="post" className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-slate-600">
+                  Into
+                  <select
+                    name="batchId"
+                    defaultValue={openBatches[0].id}
+                    className="rounded-md border-0 py-1.5 pl-2 pr-8 text-sm ring-1 ring-slate-300"
+                  >
+                    {openBatches.map((batch) => (
+                      <option key={batch.id} value={batch.id}>
+                        {batch.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button name="intent" value="gold-copy" variant="secondary" disabled={busy}>
+                  Use as gold
+                </Button>
+              </Form>
+            ))}
         </Card>
       )}
       {task.consensus && (
@@ -318,7 +347,7 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 <span className="text-slate-500">
                   {formatDuration(a.activeSeconds)} ·{' '}
                   {a.submittedAt ? formatDateTime(a.submittedAt) : ''}
-                  {a.sampleNote && ` · ${a.sampleNote}`}
+                  {a.sampleNote && ` · ${a.sampleNote}`} · ref {a.ref}
                 </span>
               </div>
               <LabelingInterface
@@ -354,7 +383,8 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
           <ul className="space-y-1 text-sm">
             {other.map((a) => (
               <li key={a.id} className="text-slate-600">
-                {a.annotator}: {titleCase(a.status)} · claimed {formatDateTime(a.claimedAt)}
+                {a.annotator}: {titleCase(a.status)} · claimed {formatDateTime(a.claimedAt)} · ref{' '}
+                {a.ref}
                 {a.skipReason && <span className="text-slate-500"> · “{a.skipReason}”</span>}
               </li>
             ))}

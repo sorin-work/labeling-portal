@@ -33,9 +33,10 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
  * SQL condition on task `t`: open, not part of the qualification test, not a
  * retired gold task, not already claimed, done or skipped by this annotator,
  * and (unless it is a gold task) with fewer live claims and submissions than
- * `overlap`. A gold task that was copied from a completed task is also kept
- * from the people who worked on that original: seeing the same item twice
- * would tell them it is gold.
+ * `overlap`. A completed task and the gold tasks copied from it are one
+ * group: someone who has labeled, skipped or holds any task of the group gets
+ * none of the others, because seeing the same item twice would tell them it
+ * is gold.
  */
 function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
@@ -44,7 +45,14 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
     AND t."goldRetiredAt" IS NULL
     AND NOT EXISTS (
       SELECT 1 FROM "Assignment" mine
-      WHERE mine."taskId" IN (t.id, t."goldSourceId") AND mine."userId" = ${userId}
+      WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
+        AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "Task" kin
+      JOIN "Assignment" mine ON mine."taskId" = kin.id
+      WHERE (kin.id = t."goldSourceId" OR kin."goldSourceId" = COALESCE(t."goldSourceId", t.id))
+        AND mine."userId" = ${userId}
         AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
     )
     AND (
