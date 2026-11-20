@@ -44,10 +44,16 @@ is_positive_integer() {
   esac
 }
 
+check_database() {
+  [ -n "${PGDATABASE:-}" ] || fail "PGDATABASE is not set"
+}
+
+# What making a dump needs. A restore only reads a dump, so it does not ask
+# for a folder it can write to.
 check_settings() {
   is_positive_integer "$keep" || fail "BACKUP_KEEP must be a whole number above zero, got '$keep'"
   is_positive_integer "$interval" || fail "BACKUP_INTERVAL_SECONDS must be a whole number above zero, got '$interval'"
-  [ -n "${PGDATABASE:-}" ] || fail "PGDATABASE is not set"
+  check_database
   if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
     fail "cannot write to $dir"
   fi
@@ -211,10 +217,36 @@ drop() {
   PGOPTIONS='-c client_min_messages=warning' dropdb --if-exists "$1"
 }
 
-# Restores into a new database first and swaps it in only when that worked,
-# so a damaged dump cannot take the current data with it.
+database_exists() {
+  [ -n "$(psql -AtXq -d postgres -c "select 1 from pg_database where datname = '$1'" 2>/dev/null)" ]
+}
+
+# Who is connected to database $1, as "name (sessions)", for the message of a
+# restore that was refused.
+connected_to() {
+  psql -AtXq -d postgres -c "select coalesce(nullif(application_name, ''), 'a client without a name') || ' (' || count(*) || ')' from pg_stat_activity where datname = '$1' and pid <> pg_backend_pid() group by application_name order by application_name" 2>/dev/null |
+    tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
+}
+
+# Replaces the database with a dump, in three steps:
+#
+#   1. The dump is loaded into a new database, <name>_restoring. A damaged
+#      dump stops here and the current data was never touched.
+#   2. The swap, in one transaction: the current database is renamed to
+#      <name>_replaced and the restored copy takes its name. Either both
+#      renames happen or neither does, so there is no moment without a
+#      database under the name. That matters because the app creates a
+#      missing database when it starts (prisma migrate deploy): an empty one,
+#      which the daily loop would then dump while the real data sat under
+#      another name. PostgreSQL refuses the rename while anything is
+#      connected, which is what keeps a running app from being cut off.
+#   3. Only after the swap has committed is <name>_replaced dropped.
+#
+# Killed at any point, this leaves a complete database under the name: the
+# old one before the swap, the restored one after it. What stays behind is a
+# _restoring or _replaced database, and the next restore removes it.
 restore() {
-  check_settings
+  check_database
   file=${1:-}
   if [ -z "$file" ]; then
     echo "usage: restore <file>" >&2
@@ -226,31 +258,50 @@ restore() {
   [ -f "$file" ] || fail "no such dump: $1"
 
   incoming="${PGDATABASE}_restoring"
-  drop "$incoming"
-  createdb "$incoming"
+  replaced="${PGDATABASE}_replaced"
+
+  drop "$incoming" || fail "could not remove $incoming, which an earlier restore left behind. $PGDATABASE was left as it was."
+  createdb "$incoming" || fail "could not create $incoming. $PGDATABASE was left as it was."
   if ! pg_restore --exit-on-error --no-owner --dbname="$incoming" "$file"; then
-    drop "$incoming"
+    drop "$incoming" || true
     fail "could not restore $(basename "$file"), $PGDATABASE was left as it was"
   fi
-  if ! drop "$PGDATABASE"; then
-    drop "$incoming"
-    fail "could not replace $PGDATABASE, something is still connected to it. It was left as it was. Stop the app and try again."
+
+  swapped=0
+  if database_exists "$PGDATABASE"; then
+    # What a restore that was stopped right after its swap left behind: the
+    # data it had replaced. With $PGDATABASE there it is never the only copy.
+    if ! drop "$replaced"; then
+      drop "$incoming" || true
+      fail "could not remove $replaced, which an earlier restore left behind. $PGDATABASE was left as it was."
+    fi
+    psql -qX -v ON_ERROR_STOP=1 --single-transaction -d postgres \
+      -c "ALTER DATABASE \"$PGDATABASE\" RENAME TO \"$replaced\"" \
+      -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\"" || swapped=$?
+  else
+    # A new server: nothing to set aside, and one rename is one transaction.
+    psql -qX -v ON_ERROR_STOP=1 -d postgres \
+      -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\"" || swapped=$?
   fi
-  rename="ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
-  if ! psql -qX -v ON_ERROR_STOP=1 -d postgres -c "$rename"; then
-    # The old database is gone and the copy does not have its name yet.
-    log "$PGDATABASE was dropped, but the restored copy could not be given its name." >&2
-    log "Nothing is lost: the data from $(basename "$file") is in the database $incoming." >&2
-    # prisma migrate deploy creates a database that is missing, and then the
-    # name would be taken.
-    log "Leave the app stopped until this is done: on start it would create a new, empty $PGDATABASE." >&2
-    log "To finish the restore, run this against the same server:" >&2
-    log "  psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
-    log "With the compose stack that is:" >&2
-    log "  docker compose exec db psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+  if [ "$swapped" -ne 0 ]; then
+    # The transaction was rolled back, so nothing was renamed.
+    who=$(connected_to "$PGDATABASE")
+    drop "$incoming" || true
+    log "could not put the restored copy in the place of $PGDATABASE. $PGDATABASE was left as it was." >&2
+    if [ -n "$who" ]; then
+      log "Still connected to it: $who." >&2
+      log "Stop what is connected and run the restore again. With the compose stack that is:" >&2
+      log "  docker compose --profile backup stop app backup" >&2
+    else
+      log "Nothing is connected to it, so the reason is in the error above." >&2
+    fi
     exit 1
   fi
   log "restored $PGDATABASE from $(basename "$file")"
+
+  if ! drop "$replaced"; then
+    log "The data it replaced is still there as the database $replaced. Remove it with: dropdb $replaced" >&2
+  fi
 }
 
 case ${1:-run} in
