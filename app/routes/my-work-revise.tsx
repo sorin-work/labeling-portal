@@ -4,6 +4,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
+import { useActiveTime } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -59,11 +60,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     parseAnswerJson(form.get('answer')),
   );
   if (!checked.ok) return data({ error: checked.error }, { status: 400 });
-  const result = await resubmitAssignment(
-    assignment.id,
-    user.id,
-    checked.answer as Prisma.InputJsonValue,
-  );
+  const result = await resubmitAssignment(assignment.id, user.id, {
+    answer: checked.answer as Prisma.InputJsonValue,
+    activeSeconds: Number(form.get('activeSeconds') ?? 0),
+  });
   if (!result.ok)
     return data({ error: 'This submission is not waiting for changes.' }, { status: 409 });
   return redirect('/my-work?filter=returned');
@@ -73,6 +73,8 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(answer);
   const navigation = useNavigation();
+  // revising is work too: on an hourly project this time is paid
+  const activeSeconds = useActiveTime();
 
   if (mode === 'compare') {
     return (
@@ -134,6 +136,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
       </Card>
       <Form method="post">
         <input type="hidden" name="answer" value={JSON.stringify(value)} />
+        <input type="hidden" name="activeSeconds" value={activeSeconds} />
         <Button type="submit" disabled={navigation.state !== 'idle'}>
           Resubmit for review
         </Button>
