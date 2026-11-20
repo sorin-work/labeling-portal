@@ -1,8 +1,10 @@
+import type { QueueOrder } from '@prisma/client';
 import { z } from 'zod';
 
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from './disputes';
 import { readOptionalNumber } from './form-fields';
 import { parseMoney } from './payouts';
+import { parseGoldEvery, parseQueueOrder } from './queue-order';
 import { readSamplePercent } from './review-sampling';
 import { parseTaskSchema, type TaskSchema } from './task-schema';
 
@@ -31,6 +33,9 @@ export const projectFormSchema = z.object({
 export type ProjectInput = z.infer<typeof projectFormSchema> & {
   schema: TaskSchema;
   rateCents: number;
+  queueOrder: QueueOrder;
+  /** about one gold task in every N; null leaves gold where its position puts it */
+  goldEvery: number | null;
 };
 
 export type ProjectFormResult =
@@ -66,7 +71,22 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
   if (!schema.ok) errors.schema = schema.errors.join('; ');
   const rateCents = parseMoney(String(form.get('rate') ?? '0'));
   if (rateCents === null) errors.rate = 'Enter the rate as an amount like 0.25 or 18.00';
+  const queueOrder = parseQueueOrder(form.get('queueOrder'));
+  if (!queueOrder.ok) errors.queueOrder = queueOrder.error;
+  const goldEvery = parseGoldEvery(form.get('goldEvery'));
+  if (!goldEvery.ok) errors.goldEvery = goldEvery.error;
 
-  if (!parsed.success || !schema.ok || rateCents === null) return { ok: false, errors };
-  return { ok: true, value: { ...parsed.data, schema: schema.schema, rateCents } };
+  if (!parsed.success || !schema.ok || rateCents === null || !queueOrder.ok || !goldEvery.ok) {
+    return { ok: false, errors };
+  }
+  return {
+    ok: true,
+    value: {
+      ...parsed.data,
+      schema: schema.schema,
+      rateCents,
+      queueOrder: queueOrder.value,
+      goldEvery: goldEvery.value,
+    },
+  };
 }
