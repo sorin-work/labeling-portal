@@ -65,6 +65,8 @@ async function main() {
     timeLimitMinutes: number;
     payMode: 'PER_TASK' | 'HOURLY';
     rateCents: number;
+    /** share of submissions that go to review; everything when left out */
+    reviewSamplePercent?: number;
     rows: Array<Record<string, unknown>>;
   }> = [
     {
@@ -82,6 +84,7 @@ async function main() {
       timeLimitMinutes: 10,
       payMode: 'PER_TASK',
       rateCents: 8,
+      reviewSamplePercent: 50,
       rows: reviewRows(36),
     },
     {
@@ -156,6 +159,7 @@ async function main() {
         timeLimitMinutes: spec.timeLimitMinutes,
         payMode: spec.payMode,
         rateCents: spec.rateCents,
+        reviewSamplePercent: spec.reviewSamplePercent,
         members: { create: workers.map((u) => ({ userId: u.id })) },
       },
     });
