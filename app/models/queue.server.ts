@@ -53,8 +53,16 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
  *
  * This is the whole rule for "may this annotator be given this task". The
  * pick, the check under the lock and the count on the dashboard all use it.
+ *
+ * The slots are counted by `Task.takenSlots`: the claims and submissions of
+ * the task (`ACTIVE` or `SUBMITTED`), kept by a trigger on "Assignment" in
+ * the statement that writes the assignment, so it cannot drift from the rows.
+ * A claim past its time limit is counted until it is marked expired, so every
+ * caller first runs `releaseExpiredClaims` with the same `now`; after that
+ * the counter is exactly the old count of live claims and submissions, and a
+ * full task is passed over on its own row, without a query per task.
  */
-function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
+function eligibleFor(userId: string, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     t.status = 'OPEN'
     AND NOT t."isQualification"
@@ -74,14 +82,7 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
         AND mine."userId" = ${userId}
         AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
     )
-    AND (
-      t."isGold"
-      OR (
-        SELECT count(*) FROM "Assignment" a
-        WHERE a."taskId" = t.id
-          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${utc(now)}))
-      ) < ${overlap} + t."extraSlots"
-    )
+    AND (t."isGold" OR t."takenSlots" < ${overlap} + t."extraSlots")
   )`;
 }
 
@@ -195,7 +196,7 @@ function goldDueCtes(options: Omit<PickOptions, 'wait'>, goldEvery: number): Pri
 export function nextTaskSql(options: PickOptions): Prisma.Sql {
   const { project, userId, now, secret, wait = false } = options;
   const lock = wait ? Prisma.sql`FOR UPDATE OF t` : Prisma.sql`FOR UPDATE OF t SKIP LOCKED`;
-  const eligible = eligibleFor(userId, now, Prisma.sql`${project.overlap}`);
+  const eligible = eligibleFor(userId, Prisma.sql`${project.overlap}`);
   const spaced = project.goldEvery !== null;
 
   // the first eligible task of batch `b` (of kind `c` when gold is spaced)
@@ -208,6 +209,9 @@ export function nextTaskSql(options: PickOptions): Prisma.Sql {
             FROM "Task" s
             WHERE s."batchId" = b.id AND s.status = 'OPEN'
               ${spaced ? Prisma.sql`AND s."isGold" = c.gold` : Prisma.empty}
+              -- the cheap part of eligibleFor, so full tasks are not hashed and sorted
+              AND NOT s."isQualification" AND s."goldRetiredAt" IS NULL
+              AND (s."isGold" OR s."takenSlots" < ${project.overlap} + s."extraSlots")
             ORDER BY shuffled
           ) s
           JOIN "Task" t ON t.id = s.id
@@ -284,12 +288,17 @@ export async function countAvailable(
   now = new Date(),
 ): Promise<Map<string, number>> {
   if (projectIds.length === 0) return new Map();
+  // the slot counter counts a claim past its limit until it is marked expired
+  await prisma.assignment.updateMany({
+    where: { status: 'ACTIVE', expiresAt: { lte: now }, projectId: { in: projectIds } },
+    data: { status: 'EXPIRED', ...NO_DRAFT },
+  });
   const rows = await prisma.$queryRaw<Array<{ projectId: string; count: bigint }>>`
     SELECT t."projectId", count(*) AS count
     FROM "Task" t
     JOIN "Project" p ON p.id = t."projectId"
     WHERE t."projectId" IN (${Prisma.join(projectIds)})
-      AND ${eligibleFor(userId, now, Prisma.sql`p.overlap`)}
+      AND ${eligibleFor(userId, Prisma.sql`p.overlap`)}
     GROUP BY t."projectId"`;
   return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
@@ -327,7 +336,7 @@ export async function claimNextTask(
       // counted the task's claims in its snapshot, and a claim that was
       // committed between that count and our lock is only visible now.
       const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
-        SELECT ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)} AS eligible
+        SELECT ${eligibleFor(userId, Prisma.sql`${project.overlap}`)} AS eligible
         FROM "Task" t WHERE t.id = ${taskId}`;
       if (!check?.eligible) return null;
       return tx.assignment.create({
