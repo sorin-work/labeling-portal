@@ -335,6 +335,29 @@ describe('the api', () => {
     expect(await prisma.task.count()).toBe(1);
   });
 
+  it('refuses a used Idempotency-Key with another file, and keeps the first batch', async () => {
+    const { project, write } = await setup();
+    const send = (body: string) =>
+      call(
+        batchesAction,
+        `/api/v1/projects/${project.id}/batches`,
+        {
+          token: write,
+          body,
+          headers: { 'Content-Type': 'text/csv', 'Idempotency-Key': 'same-key' },
+        },
+        { projectId: project.id },
+      );
+    expect((await send('text\nfirst\n')).status).toBe(201);
+    const other = await send('text\nsecond\nthird\n');
+    expect(other.status).toBe(422);
+    expect(other.json?.error).toMatch(/another file/);
+    // even a file that would not import is told about the key first
+    expect((await send('not,a\n"broken\n')).status).toBe(422);
+    expect((await send('text\nfirst\n')).json).toMatchObject({ repeated: true });
+    expect(await prisma.task.count()).toBe(1);
+  });
+
   it('exports what the page exports, and the export imports back to the same tasks', async () => {
     const { org, person, project, write } = await setup();
     await createTasks(project.id, [{ text: 'alpha' }, { text: 'beta' }]);
@@ -414,6 +437,31 @@ describe('the api', () => {
     expect(first).not.toBeNull();
     await call(projectsLoader, '/api/v1/projects', { token: read });
     expect((await stored()).lastUsedAt).toEqual(first);
+  });
+
+  it('records no download for a HEAD request', async () => {
+    const { project, read } = await setup();
+    const head = await call(
+      exportLoader,
+      `/api/v1/projects/${project.id}/export?format=jsonl`,
+      { token: read, method: 'HEAD' },
+      { projectId: project.id },
+    );
+    expect(head.status).toBe(200);
+    expect(head.headers.get('Content-Disposition')).toContain('attachment');
+    expect(await prisma.activity.count({ where: { action: 'export.labels' } })).toBe(0);
+  });
+
+  it('closes an /api path to the session, so a route that forgets apiRoute answers 401', async () => {
+    const { org, person } = await setup();
+    const cookie = await cookieFor(person, org.id);
+    // a page loader stands in for such a route: it asks for the session
+    const result = (await run(
+      projectsPage,
+      makeRequest('/api/v1/forgotten', { cookie }),
+    )) as Response;
+    expect(result.status).toBe(401);
+    expect(await result.json()).toEqual({ error: 'The API takes a token, not a session.' });
   });
 
   it('takes no token on a page', async () => {
