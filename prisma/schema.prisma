@@ -108,13 +108,16 @@ model User {
 }
 
 model Membership {
-  id        String       @id @default(cuid())
-  orgId     String
-  userId    String
-  role      Role
-  createdAt DateTime     @default(now())
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  orgId         String
+  userId        String
+  role          Role
+  createdAt     DateTime     @default(now())
+  /// up to when this person's working time has been credited, for any task;
+  /// time for the next submission counts from here, so no minute is paid twice
+  creditedUntil DateTime?
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, userId])
   @@index([userId])
