@@ -4,7 +4,7 @@ import type { Answer } from '~/domain/answers';
 import { scoreAgainstGold } from '~/domain/gold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
@@ -46,7 +46,7 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
       OR (
         SELECT count(*) FROM "Assignment" a
         WHERE a."taskId" = t.id
-          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${now}))
+          AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${utc(now)}))
       ) < ${overlap}
     )
   )`;

@@ -8,7 +8,7 @@ import {
 } from '@prisma/client';
 
 import { holdCutoff } from '~/domain/review-hold';
-import { prisma } from '~/lib/db.server';
+import { prisma, utc } from '~/lib/db.server';
 
 import { refreshTaskStatus } from './tasks.server';
 
@@ -26,14 +26,6 @@ export type ReviewInput = {
 };
 
 type Db = PrismaClient | Prisma.TransactionClient;
-
-/**
- * A date for raw SQL. The columns are timestamps without a zone that hold UTC,
- * and a bare parameter would be converted to the session's time zone first.
- */
-function utc(date: Date): Prisma.Sql {
-  return Prisma.sql`(${date}::timestamptz AT TIME ZONE 'UTC')`;
-}
 
 /** Why a reservation or a decision was refused. */
 export type ReviewRefusal = 'not_pending' | 'held';
