@@ -2,10 +2,11 @@ import { Link } from 'react-router';
 
 import { Badge, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
+import { shownReview } from '~/domain/disputes';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDateTime, REVIEW_BADGES } from '~/lib/format';
+import { DISPUTE_BADGES, formatDateTime, REVIEW_BADGES } from '~/lib/format';
 import { notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -34,7 +35,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     take: 50,
     include: {
       task: { select: { id: true, externalId: true, data: true, isGold: true } },
-      reviews: { orderBy: { createdAt: 'desc' }, take: 1 },
+      reviews: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: { dispute: { select: { status: true, resolution: true } } },
+      },
     },
   });
   const schema = projectSchema(project);
@@ -50,7 +55,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       status: a.status,
       reviewStatus: a.reviewStatus,
       goldScore: a.goldScore,
-      qaScore: a.reviews[0]?.qaScore ?? null,
+      // the score of an overturned decision is not shown, the dispute is
+      qaScore: shownReview(a.reviews.at(0)).qaScore,
+      dispute: a.reviews.at(0)?.dispute?.status ?? null,
       skipReason: a.skipReason,
       activeSeconds: a.activeSeconds,
       at: a.submittedAt ?? a.claimedAt,
@@ -98,6 +105,11 @@ export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
                   </Badge>
                 ) : (
                   badge && <Badge tone={badge.tone}>{badge.label}</Badge>
+                )}
+                {w.dispute && (
+                  <Badge tone={DISPUTE_BADGES[w.dispute].tone}>
+                    {DISPUTE_BADGES[w.dispute].label}
+                  </Badge>
                 )}
                 {w.qaScore !== null && (
                   <span className="text-xs text-slate-500">QA {w.qaScore}/5</span>

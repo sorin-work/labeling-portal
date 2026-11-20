@@ -28,6 +28,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
 | `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
+| `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -50,7 +51,8 @@ tests/integration/  loaders and actions against a real PostgreSQL
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
    A submission is reserved for one reviewer while they look at it (see
    "Reviewer reservations" below). Sent-back work can be revised and
-   resubmitted by the annotator, and always returns to review.
+   resubmitted by the annotator, and always returns to review. Instead of
+   revising, the annotator can dispute the decision (see "Disputes" below).
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
    `refreshTaskStatus` runs in the transaction that accepted the submission
@@ -107,6 +109,63 @@ background job that clears it.
   it at once, and so does a posted decision that does not validate. So a
   long fix keeps its submission, and a tab that was left open lets it go. A
   renewal only touches a hold that is still the reviewer's own.
+
+## Disputes
+
+An annotator who thinks a send-back or a correction is wrong can dispute it
+from `/my-work/:assignmentId`, with a reason. Approvals and gold scores cannot
+be disputed.
+
+- **Opening** (`openDispute` in `app/models/disputes.server.ts`): only the
+  annotator whose work it is, only on the latest decision while the work is
+  sent back or fixed, once per decision (`Dispute.reviewId` is unique), and
+  only within `Project.disputeWindowDays` of the review (14 by default, 0
+  turns disputes off). The dispute keeps a copy of the answer as it stood.
+- **Somebody must be there to settle it.** Opening is refused, with a message
+  that says so, when nobody but the deciding reviewer and the annotator can
+  review in the project (`countResolvers`, by the rule of `requireProject`).
+  A dispute that nobody may settle would hold the work for good: unpaid, not
+  revisable, its task never complete.
+- **Revise or dispute, never both.** Opening a dispute and `resubmitAssignment`
+  both start by locking the submission row, so the second one waits and then
+  sees what the first did: a revision is refused while a dispute is open, and
+  a dispute is refused once the work is back in review. A draft of a revision
+  is not saved while a dispute is open either (`saveRevisionDraft`); one that
+  was saved before waits for the outcome.
+- **Withdrawing** (`withdrawDispute`): the annotator can take their own open
+  dispute back. The decision stands and the work is exactly where it was,
+  sent back and revisable or fixed. The dispute is kept as `WITHDRAWN`, so
+  that decision cannot be disputed a second time.
+- **Settling** (`resolveDispute`): anyone who can review in the project,
+  except the reviewer who made the decision and the annotator who did the
+  work, with a note. The rules are checked in the model, not only on the page.
+  It is one transaction. The dispute is closed with a write that requires it
+  to be open, so of two people settling at once one gets a 409.
+- **Upheld** changes nothing but the dispute. The annotator sees the note and
+  can revise again.
+- **Overturned** takes the decision back in the same transaction:
+  - the `Review` row is kept exactly as it was and gets `overturnedAt`;
+  - the submission becomes `APPROVED` and `refreshTaskStatus` runs, so the
+    consensus is rebuilt from the annotator's own answer (`finalAnswer` skips
+    overturned corrections) and the task may complete;
+  - an overturned send-back gets `reviewedAt` set to the time of the overturn,
+    which is the day the work became payable. An overturned fix was accepted
+    and payable since the review, so its `reviewedAt` stays. That is as far
+    as it goes today: the payouts report still selects by `submittedAt`, so
+    overturned work shows in the period it was submitted in. It will show in
+    the period of the overturn, and never in one that was already paid, once
+    the report goes by the day work became payable (roadmap item 5);
+  - a draft of a revision that was started before the dispute is dropped, so
+    approved work never carries one;
+  - if the submission is not in the state the decision left it in, the
+    transaction throws and nothing is changed.
+- **Who reads an overturned review.** `standingReviews` in
+  `app/domain/outcome.ts` leaves it out, and with it the quality page
+  (reviewed, approval, sent back, QA score), the reviewer's own numbers (which
+  get an "overturned" count instead), the corrected answer and the `qa_score`
+  in the export. "My work", the revise page and the annotator page show the
+  outcome of the dispute in place of the review's feedback and score. The
+  histories on the review page and the task page keep the row and mark it.
 
 ## Drafts
 
@@ -279,10 +338,13 @@ saved. The rule lives in the model, so it holds for any form post, not only
 for the settings page. The page gets the same counts from its loader and
 shows what an edit would do while the manager types.
 
-"Stored answers" are the five places an answer is kept: submissions
+"Stored answers" are the six places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
-answers (`Task.goldAnswer`), consensus answers (`Task.consensus`) and
-qualification attempts (`QualificationAttempt.answers`).
+answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
+a dispute was about (`Dispute.answer`, counted only once the submission has
+been revised and says something else, so no answer is counted twice) and
+qualification attempts (`QualificationAttempt.answers`). A correction that a
+dispute overturned still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |

@@ -4,10 +4,11 @@ import { Link } from 'react-router';
 import { Pagination } from '~/components/pagination';
 import { Badge, Button, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
+import { shownReview } from '~/domain/disputes';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatRelative, REVIEW_BADGES } from '~/lib/format';
+import { DISPUTE_BADGES, formatRelative, REVIEW_BADGES } from '~/lib/format';
 import { paginate, readPage } from '~/lib/pagination';
 import { projectSchema } from '~/models/projects.server';
 
@@ -42,7 +43,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     include: {
       project: true,
       task: { select: { externalId: true, data: true } },
-      reviews: { orderBy: { createdAt: 'desc' }, take: 1 },
+      reviews: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: { dispute: { select: { status: true, resolution: true } } },
+      },
     },
   });
 
@@ -58,8 +63,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
       reviewStatus: a.reviewStatus,
-      feedback: a.reviews[0]?.feedback ?? '',
-      qaScore: a.reviews[0]?.qaScore ?? null,
+      // feedback and score of an overturned decision give way to the dispute's outcome
+      ...shownReview(a.reviews.at(0)),
     })),
   };
 }
@@ -106,6 +111,7 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
         <ul className="divide-y divide-slate-200 rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
           {items.map((item) => {
             const badge = item.reviewStatus ? REVIEW_BADGES[item.reviewStatus] : null;
+            const dispute = item.dispute && DISPUTE_BADGES[item.dispute.status];
             return (
               <li key={item.id} className="flex flex-wrap items-start gap-3 px-4 py-3">
                 <div className="min-w-0 flex-1">
@@ -119,9 +125,16 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                       {item.feedback}
                     </p>
                   )}
+                  {item.dispute?.resolution && (
+                    <p className="mt-1 whitespace-pre-wrap rounded bg-slate-50 px-2 py-1 text-sm text-slate-700">
+                      <span className="font-medium">{dispute?.label}:</span>{' '}
+                      {item.dispute.resolution}
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1 text-xs text-slate-500">
                   {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
+                  {dispute && <Badge tone={dispute.tone}>{dispute.label}</Badge>}
                   {item.qaScore !== null && <span>Quality {item.qaScore}/5</span>}
                   <span>
                     {item.submittedAt ? formatRelative(item.submittedAt) : ''} ·{' '}
@@ -132,13 +145,18 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                       See correction
                     </Link>
                   )}
-                  {item.reviewStatus === 'SENT_BACK' && (
-                    <Link to={`/my-work/${item.id}`}>
-                      <Button variant="secondary" className="mt-1">
-                        Revise
-                      </Button>
-                    </Link>
-                  )}
+                  {item.reviewStatus === 'SENT_BACK' &&
+                    (item.dispute?.status === 'OPEN' ? (
+                      <Link to={`/my-work/${item.id}`} className="text-indigo-700 hover:underline">
+                        See dispute
+                      </Link>
+                    ) : (
+                      <Link to={`/my-work/${item.id}`}>
+                        <Button variant="secondary" className="mt-1">
+                          Revise
+                        </Button>
+                      </Link>
+                    ))}
                 </div>
               </li>
             );

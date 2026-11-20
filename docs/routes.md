@@ -18,6 +18,8 @@ at the end. The table lists who can open each page.
 | `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                         |
 | `/projects/:id/review` (POST)       | Reserve the next submission and open it  | reviewers, managers                         |
 | `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
+| `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                         |
+| `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)    |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
 | `/projects/:id/batches[/new\|/:id]` | Import and browse tasks                  | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
@@ -26,6 +28,7 @@ at the end. The table lists who can open each page.
 | `/projects/:id/activity`            | What managers changed                    | admin, project manager                      |
 | `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                      |
 | `/my-work`                          | Your submissions, feedback, corrections  | annotators                                  |
+| `/my-work/:assignmentId`            | Revise sent-back work or dispute it      | the annotator who did the work              |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |

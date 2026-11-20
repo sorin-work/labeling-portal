@@ -85,6 +85,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       qaScore: r.qaScore,
       feedback: r.feedback,
       createdAt: r.createdAt,
+      overturned: r.overturnedAt !== null,
     })),
   };
 }
@@ -397,6 +398,9 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                       {h.decision.replace('_', ' ').toLowerCase()}
                     </span>{' '}
                     by {h.reviewer}
+                    {h.overturned && (
+                      <span className="text-slate-500"> · overturned after a dispute</span>
+                    )}
                     {h.qaScore !== null && (
                       <span className="text-slate-500"> · score {h.qaScore}</span>
                     )}

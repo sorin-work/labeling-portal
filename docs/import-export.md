@@ -43,7 +43,8 @@ The import page has links to an example CSV and JSONL file for the project.
 ## Exports
 
 Only accepted work is exported (approved, fixed by a reviewer, or accepted
-without review). Gold and qualification tasks are left out. Choose completed
+without review). A correction or a QA score from a review that a dispute
+overturned is not exported: the annotation carries the annotator's own answer. Gold and qualification tasks are left out. Choose completed
 tasks only or every task, and optionally a single batch.
 
 - **JSONL**: one task per line with `data`, `consensus`, `agreement` and every

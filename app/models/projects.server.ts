@@ -77,6 +77,7 @@ export async function createProject(orgId: string, input: ProjectInput) {
       timeLimitMinutes: input.timeLimitMinutes,
       reviewRequired: input.reviewRequired,
       reviewSamplePercent: input.reviewSamplePercent,
+      disputeWindowDays: input.disputeWindowDays,
       qualificationRequired: input.qualificationRequired,
       qualificationPassPercent: input.qualificationPassPercent,
       payMode: input.payMode,
@@ -99,10 +100,12 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
 
 /**
  * Counts what the stored work of a project uses from its schema, in one
- * statement so every number comes from the same snapshot. It reads the five
+ * statement so every number comes from the same snapshot. It reads the six
  * columns that hold answers: `Assignment.answer`, `Review.correctedAnswer`,
- * `Task.goldAnswer`, `Task.consensus` and `QualificationAttempt.answers` (a
- * map from task id to answer). Attempt answers are kept as they were posted,
+ * `Task.goldAnswer`, `Task.consensus`, `Dispute.answer` (the answer as it
+ * stood when it was disputed, counted only once the submission has been
+ * revised and says something else) and `QualificationAttempt.answers` (a map
+ * from task id to answer). Attempt answers are kept as they were posted,
  * so nothing here trusts the shape of a value before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
@@ -117,6 +120,10 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       SELECT t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
       SELECT t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
+      UNION ALL
+      SELECT d.answer
+      FROM "Dispute" d JOIN "Assignment" a ON a.id = d."assignmentId"
+      WHERE a."projectId" = ${projectId} AND d.answer IS DISTINCT FROM a.answer
       UNION ALL
       SELECT e.value
       FROM "QualificationAttempt" q
@@ -236,6 +243,7 @@ export async function updateProject(
         timeLimitMinutes: input.timeLimitMinutes,
         reviewRequired: input.reviewRequired,
         reviewSamplePercent: input.reviewSamplePercent,
+        disputeWindowDays: input.disputeWindowDays,
         qualificationRequired: input.qualificationRequired,
         qualificationPassPercent: input.qualificationPassPercent,
         payMode: input.payMode,
@@ -274,6 +282,7 @@ export async function duplicateProject(project: Project) {
       timeLimitMinutes: project.timeLimitMinutes,
       reviewRequired: project.reviewRequired,
       reviewSamplePercent: project.reviewSamplePercent,
+      disputeWindowDays: project.disputeWindowDays,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

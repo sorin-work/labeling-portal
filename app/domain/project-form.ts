@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DEFAULT_DISPUTE_WINDOW_DAYS } from './disputes';
+import { readOptionalNumber } from './form-fields';
 import { parseMoney } from './payouts';
 import { readSamplePercent } from './review-sampling';
 import { parseTaskSchema, type TaskSchema } from './task-schema';
@@ -19,6 +21,7 @@ export const projectFormSchema = z.object({
   timeLimitMinutes: int(1, 480, 'Time limit'),
   reviewRequired: z.boolean(),
   reviewSamplePercent: int(0, 100, 'Share to review'),
+  disputeWindowDays: int(0, 90, 'Dispute window'),
   qualificationRequired: z.boolean(),
   qualificationPassPercent: int(1, 100, 'Pass mark'),
   payMode: z.enum(['PER_TASK', 'HOURLY']),
@@ -43,6 +46,10 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
     timeLimitMinutes: form.get('timeLimitMinutes') ?? 30,
     reviewRequired: form.get('reviewRequired') === 'on',
     reviewSamplePercent: readSamplePercent(form.get('reviewSamplePercent')),
+    disputeWindowDays: readOptionalNumber(
+      form.get('disputeWindowDays'),
+      DEFAULT_DISPUTE_WINDOW_DAYS,
+    ),
     qualificationRequired: form.get('qualificationRequired') === 'on',
     qualificationPassPercent: form.get('qualificationPassPercent') ?? 80,
     payMode: form.get('payMode') ?? 'PER_TASK',

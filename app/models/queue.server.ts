@@ -6,6 +6,7 @@ import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma, utc } from '~/lib/db.server';
 
+import { blockedByDispute } from './disputes.server';
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
@@ -284,29 +285,33 @@ export async function skipAssignment(
 
 /**
  * Replaces the answer on a submission a reviewer sent back and puts it in the
- * review queue again. Only the annotator who made it can do this.
+ * review queue again. Only the annotator who made it can do this, and not
+ * while they dispute the decision: it is revise or dispute, never both.
  */
 export async function resubmitAssignment(
   assignmentId: string,
   userId: string,
   answer: Prisma.InputJsonValue,
   now = new Date(),
-): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
-  const result = await prisma.assignment.updateMany({
-    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-    data: {
-      answer,
-      reviewStatus: 'PENDING',
-      submittedAt: now,
-      reviewedAt: null,
-      draft: Prisma.DbNull,
-    },
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const result = await tx.assignment.updateMany({
+      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      data: {
+        answer,
+        reviewStatus: 'PENDING',
+        submittedAt: now,
+        reviewedAt: null,
+        draft: Prisma.DbNull,
+      },
+    });
+    if (result.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
   });
-  if (result.count === 0) {
-    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
-    return { ok: false, error: exists ? 'not_active' : 'not_found' };
-  }
-  return { ok: true };
 }
 
 /** Hands a claim back without an answer so someone else can take it. */
@@ -358,22 +363,26 @@ export async function saveDraft(
 /**
  * The same for the revise page. That assignment is submitted, not active, so
  * the guard is the one `resubmitAssignment` uses: the annotator's own
- * submission, while it is sent back.
+ * submission, while it is sent back and not under dispute. Work that is
+ * disputed cannot be revised, so no revision of it is saved either.
  */
 export async function saveRevisionDraft(
   assignmentId: string,
   userId: string,
   draft: Prisma.InputJsonValue,
-): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
-  const saved = await prisma.assignment.updateMany({
-    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-    data: { draft },
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const saved = await tx.assignment.updateMany({
+      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      data: { draft },
+    });
+    if (saved.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
   });
-  if (saved.count === 0) {
-    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
-    return { ok: false, error: exists ? 'not_active' : 'not_found' };
-  }
-  return { ok: true };
 }
 
 /**

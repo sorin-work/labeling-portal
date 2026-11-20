@@ -16,7 +16,9 @@ const DECISIONS: Record<string, ReviewDecision> = {
 export function parseReviewForm(
   form: FormData,
 ): { ok: true; value: ReviewForm } | { ok: false; error: string } {
-  const decision = DECISIONS[String(form.get('intent') ?? '')];
+  // own keys only: "constructor" and the like are on every object
+  const intent = String(form.get('intent') ?? '');
+  const decision = Object.hasOwn(DECISIONS, intent) ? DECISIONS[intent] : undefined;
   if (!decision) return { ok: false, error: 'Choose approve, send back or fix.' };
 
   const rawScore = String(form.get('qaScore') ?? '').trim();
