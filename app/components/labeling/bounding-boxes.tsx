@@ -18,6 +18,7 @@ import {
   parseView,
   pointerIntent,
   resizeBox,
+  storedBox,
   toImage,
   viewTransform,
   ZOOM_STEP,
@@ -51,6 +52,9 @@ import { useRemembered } from './use-remembered';
 const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899'];
 
 const NO_BOXES: Box[] = [];
+
+/** Keys that only change the view, and still work during a drag. */
+const VIEW_ACTIONS = ['zoomIn', 'zoomOut', 'fit'];
 
 /** What undo and redo walk through: the boxes, and which one was selected with them. */
 type Editing = { boxes: Box[]; selected: number | null };
@@ -121,6 +125,19 @@ export function BoundingBoxes({
     }
   }, [src]);
   const size = measured ?? (value ? { w: value.imageWidth, h: value.imageHeight } : null);
+  // How wide the whole image is on screen at zoom 1, for handles and reach
+  // that keep their size on screen whatever the image and the zoom.
+  const [fitWidth, setFitWidth] = useState(0);
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+    const measure = () => setFitWidth(image.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [src]);
   const [active, setActive] = useRemembered(
     'labeling-portal:box-label',
     schema.labels[0],
@@ -151,8 +168,16 @@ export function BoundingBoxes({
     onChange({ boxes: to.present.boxes, imageWidth: size.w, imageHeight: size.h });
     return true;
   };
+  /** A new step. Boxes are kept the way they are stored: rounded and inside the image. */
   const edit = (next: Box[], nextSelected: number | null, tag: string | null = null) =>
-    apply(commit(history, { boxes: next, selected: nextSelected }, tag));
+    size !== null &&
+    apply(
+      commit(
+        history,
+        { boxes: next.map((box) => storedBox(box, size)), selected: nextSelected },
+        tag,
+      ),
+    );
   const select = (index: number | null) =>
     setHistory((h) =>
       h.present.selected === index ? h : amend(h, { ...h.present, selected: index }),
@@ -253,9 +278,11 @@ export function BoundingBoxes({
 
   // ---------- the pointer ----------
 
-  // sizes that should look the same on screen whatever the zoom, in image pixels
-  const unit = size ? Math.max(1, size.w / 400) / shown.zoom : 1;
-  const reach = unit * 5;
+  // One screen pixel in image pixels, at this zoom: handles, lines, labels and
+  // the grab reach are measured in it, so they look the same whatever the
+  // size of the image and the zoom.
+  const unit = size && fitWidth > 0 ? size.w / (fitWidth * shown.zoom) : 1;
+  const reach = unit * 6;
 
   const drag = useRef<Drag | null>(null);
   const [preview, setPreview] = useState<{ box: number; rect: Rect } | null>(null);
@@ -263,11 +290,15 @@ export function BoundingBoxes({
   const spaceHeld = useRef(false);
   const [panReady, setPanReady] = useState(false);
 
-  const locate = (event: { clientX: number; clientY: number }, image: { w: number; h: number }) => {
+  const locate = (
+    event: { clientX: number; clientY: number },
+    image: { w: number; h: number },
+    seenIn: View = shown,
+  ) => {
     const rect = viewportRef.current!.getBoundingClientRect();
     const viewport = { w: rect.width, h: rect.height };
     const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    return { viewport, screen, image: toImage(screen, viewport, image, shown) };
+    return { viewport, screen, image: toImage(screen, viewport, image, seenIn) };
   };
 
   const dragged = (d: Drag, to: Point, image: { w: number; h: number }): Rect => {
@@ -328,9 +359,10 @@ export function BoundingBoxes({
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!size) return;
-    const at = locate(event, size);
-    pointer.current = at.screen;
     const d = drag.current;
+    // a drag is measured in the view it started in, also when the view zooms meanwhile
+    const at = locate(event, size, d?.startView);
+    pointer.current = at.screen;
     if (!d) {
       // not dragging: show what a press here would do
       if (readOnly) return;
@@ -358,7 +390,7 @@ export function BoundingBoxes({
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || event.pointerId !== d.pointerId || !size) return;
-    const at = locate(event, size);
+    const at = locate(event, size, d.startView);
     drag.current = null;
     setPreview(null);
     setCursor(null);
@@ -466,6 +498,10 @@ export function BoundingBoxes({
   };
 
   const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    // While a box is being dragged only the view keys work. The drag knows its
+    // box by position, so a removal or an undo meanwhile would let it land on
+    // another box.
+    if (drag.current && !VIEW_ACTIONS.includes(hit.action)) return true;
     switch (hit.action) {
       case 'zoomIn':
         zoomBy(ZOOM_STEP);

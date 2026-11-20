@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { storedBox } from './geometry';
+
 import type {
   BboxSchema,
   NerSchema,
@@ -124,13 +126,11 @@ export function validateBbox(schema: BboxSchema, input: unknown): AnswerResult<B
   const boxes: Box[] = [];
   for (const box of parsed.data.boxes) {
     if (!schema.labels.includes(box.label)) return fail(`Unknown label: ${box.label}`);
-    if (box.w < schema.minBoxSize || box.h < schema.minBoxSize) return fail('A box is too small');
-    const round = (n: number) => Math.round(n * 10) / 10;
-    const x = Math.max(0, round(box.x));
-    const y = Math.max(0, round(box.y));
-    const w = Math.min(round(box.w), imageWidth - x);
-    const h = Math.min(round(box.h), imageHeight - y);
+    // the box as it is stored, rounded and cut to the image, the same way the
+    // interface keeps it and `fitDraft` reads it back
+    const { x, y, w, h } = storedBox(box, { w: imageWidth, h: imageHeight });
     if (w <= 0 || h <= 0) return fail('A box is outside the image');
+    if (w < schema.minBoxSize || h < schema.minBoxSize) return fail('A box is too small');
     boxes.push({ x, y, w, h, label: box.label });
   }
   return { ok: true, answer: { boxes, imageWidth, imageHeight } };
