@@ -61,6 +61,12 @@ enum ReviewSample {
   NOT_DRAWN
 }
 
+enum DisputeStatus {
+  OPEN
+  UPHELD
+  OVERTURNED
+}
+
 enum PayMode {
   PER_TASK
   HOURLY
@@ -93,6 +99,8 @@ model User {
   assignments           Assignment[]
   reviews               Review[]
   reviewHolds           Assignment[]           @relation("ReviewHold")
+  disputesOpened        Dispute[]              @relation("DisputeOpenedBy")
+  disputesResolved      Dispute[]              @relation("DisputeResolvedBy")
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
 }
@@ -125,6 +133,8 @@ model Project {
   reviewRequired           Boolean                @default(true)
   /// share of submissions that go to a reviewer while review is on
   reviewSamplePercent      Int                    @default(100)
+  /// days after a review in which the annotator may dispute it; 0 turns disputes off
+  disputeWindowDays        Int                    @default(14)
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -220,6 +230,7 @@ model Assignment {
   /// 0..1 match against the gold answer, for gold tasks only
   goldScore     Float?
   reviews       Review[]
+  disputes      Dispute[]
   project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -242,11 +253,38 @@ model Review {
   feedback        String         @default("")
   correctedAnswer Json?
   createdAt       DateTime       @default(now())
+  /// set when a dispute overturned this decision; the row itself is kept as it was
+  overturnedAt    DateTime?
+  dispute         Dispute?
   assignment      Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   reviewer        User           @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
 
   @@index([assignmentId])
   @@index([reviewerId, createdAt])
+}
+
+/// An annotator's objection to one review decision, and how it was settled.
+model Dispute {
+  id           String        @id @default(cuid())
+  assignmentId String
+  /// the decision under dispute; a decision can be disputed once
+  reviewId     String        @unique
+  openedById   String
+  reason       String
+  /// the annotator's answer as it stood when the dispute was opened
+  answer       Json
+  status       DisputeStatus @default(OPEN)
+  resolvedById String?
+  resolution   String?
+  createdAt    DateTime      @default(now())
+  resolvedAt   DateTime?
+  assignment   Assignment    @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  review       Review        @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  openedBy     User          @relation("DisputeOpenedBy", fields: [openedById], references: [id], onDelete: Cascade)
+  resolvedBy   User?         @relation("DisputeResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([assignmentId])
+  @@index([status])
 }
 
 model QualificationAttempt {
