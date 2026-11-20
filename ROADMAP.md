@@ -877,11 +877,13 @@ after submitting unless the project turns gold feedback off, the quality page
 lists the gold tasks with the lowest scores, and batch progress counts gold
 apart. Different from the design: an edit does not rescore by itself. The
 page first says how many scores change, whose accuracy moves and who crosses
-the flag, and the manager applies it. The copy goes into the batch of its
-original, not into a batch named "Gold", because annotators see the batch
-name; it is not handed to people who labeled the original; and the work page
-no longer gets the task's id. Pay and past qualification attempts never
-follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
+the flag, and the manager applies exactly that plan. The copy does not go
+into a batch named "Gold" but among the open tasks of a batch that is being
+worked on, without the original's id, because annotators see the batch name;
+a task and its copies are one item that nobody is handed twice; and the work
+page gets no id of the task, only a reference cut from the claim's id. Gold
+feedback is on for new projects and off for the ones that existed before. Pay
+and past qualification attempts never follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
 the position of a random open task), a retired task that someone has claimed
 can still be submitted, and the server does different work for a gold
 submission than for a regular one, which a patient observer could measure.

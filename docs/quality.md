@@ -75,7 +75,10 @@ On the page of a gold task a manager (admin or project manager) can:
   accuracy moves and who would become flagged or stop being flagged. Nothing
   happens until the manager presses "Rescore". It recomputes from the stored
   answers in one transaction, so doing it twice gives the same scores as doing
-  it once, and nobody is asked to label anything again.
+  it once, and nobody is asked to label anything again. The button applies
+  the plan the page showed and no other: if the expected answer or the stored
+  answers changed in the meantime, nothing is rescored and the page shows the
+  new plan to look at.
 - **Retire** the task, with a reason: it is no longer handed out and its
   scores count for nobody. They are kept, so "Bring back" restores them. The
   page says beforehand whose accuracy moves.
@@ -83,8 +86,13 @@ On the page of a gold task a manager (admin or project manager) can:
   on the batch page. The task is copied with its consensus as the expected
   answer (if that is still a valid answer for today's schema). The original
   and its labels stay as they are and stay in the export; gold tasks never
-  are. The copy lands at the position of a random open task, in the batch of
-  its original, and is never handed to the people who labeled the original.
+  are. The copy goes into a batch that still has open tasks, the one the
+  manager picks or else the most recent, at the position of one of that
+  batch's open tasks chosen at random, and it does not take the original's
+  id. When no batch has open tasks, nothing is copied and the page says why.
+  A task has one gold copy in use at a time, and a task and its copies count
+  as one item: whoever labeled, skipped or holds one of them is handed none
+  of the others.
 
 What follows the scores, and what does not:
 
@@ -103,21 +111,40 @@ The quality page lists the gold tasks with the lowest average score (at least
 two answers). A gold task that most people miss is usually the one that is
 wrong.
 
+A corrected gold answer keeps its labels in use. The history of a gold task
+is kept for good and the schema check counts the answers in it, so a label,
+entity type or box label that an earlier expected answer used cannot be
+removed from the project's schema afterwards, even when nothing else uses it
+any more. The refusal says when it is a gold task's history that holds the
+name. The way out is the one for any redesign: "Duplicate project", which
+starts without tasks and without history.
+
 ### What annotators see
 
-While working, nothing tells an annotator that a task is gold: the work page
-gets the same fields for every task, without the task's own id or anything
-about gold, a copied gold task sits in an ordinary batch at an ordinary
-position, and people who would recognise it from the original never get it.
-The server does slightly different work for a gold submission than for a
-regular one (no review sample, no task to complete), which is not hidden.
+While working, nothing tells an annotator that a task is gold. The work page
+gets the same fields for every task and nothing about gold. It gets no id of
+the task at all: not the internal one, not the external id and not the id
+column of the import row. In their place it shows a short reference cut from
+the claim's own id, of the same form for every task, for the annotator to
+quote when they report a problem; the task page shows it next to each claim
+and the search on the batch page finds the task by it. A gold copy sits among
+the open tasks of a batch that is being worked on, and people who would
+recognise it from the original or from an earlier copy never get it. The
+server does slightly different work for a gold submission than for a regular
+one (no review sample, no task to complete), which is not hidden.
 
 After submitting, an annotator sees their score next to the submission on "My
-work" and can compare their answer with the expected one, unless the project
-turns "gold feedback" off in its settings. With it off they get neither, and
-that project's gold tasks also stay out of the gold accuracy on their own
-dashboard, which would otherwise move right after a gold task. Retired gold
-tasks are never shown as gold.
+work" and can compare their answer with the expected one, if the project has
+"gold feedback" on in its settings. A score is only shown next to the
+expected answer it was computed against: after a manager changed the answer
+and before the rescore, the submissions it affects show no gold result. With
+the setting off annotators get neither, and that project's gold tasks also
+stay out of the gold accuracy on their own dashboard, which would otherwise
+move right after a gold task. Retired gold tasks are never shown as gold.
+
+New projects start with gold feedback on. Projects that existed when this was
+installed start with it off, because it would show annotators the expected
+answer of every gold task they ever submitted; their managers can turn it on.
 
 ## Agreement
 
