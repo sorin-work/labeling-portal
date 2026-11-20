@@ -13,7 +13,7 @@ describe('pages', () => {
     renderPage({
       path: '/work/:assignmentId',
       url: '/work/a1',
-      Component: Work as never,
+      Component: Work,
       loaderData: {
         userId: 'u1',
         instructionsChanged: false,

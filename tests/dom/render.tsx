@@ -1,5 +1,4 @@
 import { render } from '@testing-library/react';
-import type { ComponentType } from 'react';
 import { createRoutesStub } from 'react-router';
 
 import AppLayout from '~/routes/app-layout';
@@ -24,16 +23,17 @@ export function renderPage({
 }: {
   path: string;
   url: string;
-  Component: ComponentType<never>;
+  /** the route module's default export */
+  Component: unknown;
   loaderData: unknown;
 }) {
   const Stub = createRoutesStub([
     {
       id: 'app',
-      Component: AppLayout as ComponentType<never>,
+      Component: AppLayout as never,
       loader: () => layoutData,
       HydrateFallback: () => null,
-      children: [{ path, Component, loader: () => loaderData }],
+      children: [{ path, Component: Component as never, loader: () => loaderData }],
     },
   ]);
   return render(<Stub initialEntries={[url]} />);
