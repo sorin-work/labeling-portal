@@ -53,13 +53,23 @@ type RequestInit = {
   cookie?: string;
   form?: Record<string, FormValue | FormValue[]>;
   headers?: Record<string, string>;
+  /** a raw body, sent as it is (an API upload); POST unless `method` says otherwise */
+  body?: string | Uint8Array;
+  method?: string;
 };
 
 export function makeRequest(path: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
   if (init.cookie) headers.set('Cookie', init.cookie);
   const url = `http://localhost${path}`;
-  if (!init.form) return new Request(url, { headers });
+  if (init.body !== undefined) {
+    return new Request(url, {
+      method: init.method ?? 'POST',
+      headers,
+      body: init.body as BodyInit,
+    });
+  }
+  if (!init.form) return new Request(url, { headers, method: init.method ?? 'GET' });
   const body = new FormData();
   for (const [key, value] of Object.entries(init.form)) {
     for (const v of Array.isArray(value) ? value : [value]) body.append(key, v);
