@@ -5,6 +5,7 @@ import {
   ANY_OTHER_KEY,
   DECISION_PAUSE_MS,
   decisionsOpen,
+  hasReadOnlyKeys,
   helpSections,
   INTERFACE_KEYS,
   interfaceAction,
@@ -39,7 +40,7 @@ const SCHEMAS: TaskSchema[] = [
   { ...SCHEMA_TEMPLATES.pairwise, allowTie: true },
   { ...SCHEMA_TEMPLATES.bbox, labels: names(30) },
 ];
-const [classification, , pairwise] = SCHEMAS;
+const [classification, , pairwise, boxes] = SCHEMAS;
 
 const at = (page: Page | null, mode = '', more: Partial<KeyContext> = {}): KeyContext => ({
   page: page ? { name: page, mode } : null,
@@ -59,7 +60,7 @@ describe('label keys', () => {
     const keys = labelKeys(30);
     expect(keys).toHaveLength(30);
     expect(new Set(keys).size).toBe(30);
-    for (const reserved of ['a', 's', 'e', 'n', 'f']) expect(keys).not.toContain(reserved);
+    for (const reserved of ['a', 's', 'e', 'n', 'f', 'r']) expect(keys).not.toContain(reserved);
   });
 
   it('are cut to the labels of the project', () => {
@@ -95,18 +96,61 @@ describe('the key map', () => {
 
   it('counts the keys of a read-only interface on the review page', () => {
     const viewing = { ...at('review', 'viewing'), readOnly: true };
-    // no interface has read-only keys yet; the editing keys must be off
     for (const schema of SCHEMAS) {
       const actions = liveKeys(schema, viewing).map((k) => k.action);
       expect(actions).not.toContain('label');
       expect(actions).not.toContain('remove');
       expect(actions).toContain('armApprove');
     }
-    expect(
-      Object.values(INTERFACE_KEYS)
-        .flat()
-        .some((b) => b.readOnly),
-    ).toBe(false);
+    // a reviewer who only looks can zoom the image, and "f" is not a page key
+    const live = liveKeys(boxes, viewing);
+    expect(live.map((k) => k.action)).toEqual(expect.arrayContaining(['zoomIn', 'zoomOut', 'fit']));
+    expect(live.filter((k) => k.key === 'f')).toEqual([{ key: 'f', action: 'fit' }]);
+    expect(hasReadOnlyKeys(boxes)).toBe(true);
+    expect(hasReadOnlyKeys(classification)).toBe(false);
+  });
+
+  it('lets a read-only box view look around and change nothing', () => {
+    const looking = { ...at(null), readOnly: true };
+    expect(interfaceAction(boxes, '+', looking)?.action).toBe('zoomIn');
+    expect(interfaceAction(boxes, '=', looking)?.action).toBe('zoomIn');
+    expect(interfaceAction(boxes, '-', looking)?.action).toBe('zoomOut');
+    expect(interfaceAction(boxes, 'f', looking)?.action).toBe('fit');
+    const edits = ['1', 'n', 'r', 'Delete', 'Backspace', 'ArrowLeft', 'Shift+ArrowUp', 'Mod+z'];
+    for (const key of edits) expect(interfaceAction(boxes, key, looking), key).toBeNull();
+    for (const key of edits) {
+      expect(interfaceAction(boxes, key, editing(at('work', 'labeling'))), key).not.toBeNull();
+    }
+  });
+
+  it('gives a box interface that the page holds back no keys at all', () => {
+    const skipping = editing(at('work', 'skipping'));
+    for (const key of ['+', 'f', 'n', 'ArrowLeft', 'Mod+z']) {
+      expect(interfaceAction(boxes, key, skipping), key).toBeNull();
+    }
+  });
+
+  it('repeats only the keys that are meant to be held', () => {
+    const held = editing(at('work', 'labeling', { repeat: true }));
+    expect(interfaceAction(boxes, 'ArrowRight', held)?.action).toBe('nudge');
+    expect(interfaceAction(boxes, 'Shift+ArrowRight', held)?.action).toBe('nudgeFar');
+    expect(interfaceAction(boxes, '+', held)?.action).toBe('zoomIn');
+    for (const key of ['1', 'n', 'r', 'Delete', 'Mod+z', 'f']) {
+      expect(interfaceAction(boxes, key, held), key).toBeNull();
+    }
+    expect(pageAction('s', at('work', 'labeling', { repeat: true }))).toBeNull();
+    expect(pageAction('Mod+Enter', at('work', 'labeling', { repeat: true }))).toBeNull();
+  });
+
+  it('lists passive rows without acting on them', () => {
+    const passive = interfaceKeys(boxes).filter((b) => b.passive);
+    expect(passive.map((b) => b.action).sort()).toEqual(['cancelDrag', 'pan', 'select']);
+    const context = editing(at('review', 'fixing'));
+    // Escape cancels a drag inside the interface; in the key map it is the page's
+    expect(interfaceAction(boxes, 'Escape', context)).toBeNull();
+    expect(pageAction('Escape', context)).toBe('cancelFix');
+    expect(interfaceAction(boxes, 'Tab', context)).toBeNull();
+    expect(liveKeys(boxes, context).map((k) => k.key)).not.toContain('Tab');
   });
 
   it('names a mode that exists for every limited page key', () => {
@@ -302,9 +346,26 @@ describe('keyName', () => {
     expect(keyName(press('ArrowDown', 'Numpad2'))).toBe('ArrowDown');
   });
 
-  it('takes "?" as typed, even from a digit key', () => {
-    expect(keyName(press('?', 'Slash'))).toBe('?');
-    expect(keyName(press('?', 'Digit6'))).toBe('?');
+  it('takes a symbol typed with Shift on a digit key as the symbol', () => {
+    expect(keyName(press('?', 'Slash', { shiftKey: true }))).toBe('?');
+    expect(keyName(press('?', 'Digit6', { shiftKey: true }))).toBe('?'); // Canadian French
+    expect(keyName(press('+', 'Digit1', { shiftKey: true }))).toBe('+'); // Swiss
+    expect(keyName(press('=', 'Digit0', { shiftKey: true }))).toBe('='); // German
+    expect(keyName(press('+', 'Equal', { shiftKey: true }))).toBe('+');
+    expect(keyName(press('-', 'Minus'))).toBe('-');
+    expect(keyName(press('+', 'NumpadAdd'))).toBe('+');
+    expect(keyName(press('-', 'NumpadSubtract'))).toBe('-');
+    // AZERTY has "-" on the 6 key without Shift: there the digit wins
+    expect(keyName(press('-', 'Digit6'))).toBe('6');
+    expect(keyName(press('6', 'Digit6', { shiftKey: true }))).toBe('6');
+  });
+
+  it('writes Shift only for the arrow keys and Tab', () => {
+    expect(keyName(press('ArrowLeft', 'ArrowLeft'))).toBe('ArrowLeft');
+    expect(keyName(press('ArrowLeft', 'ArrowLeft', { shiftKey: true }))).toBe('Shift+ArrowLeft');
+    expect(keyName(press('Tab', 'Tab', { shiftKey: true }))).toBe('Shift+Tab');
+    expect(keyName(press('Delete', 'Delete', { shiftKey: true }))).toBe('Delete');
+    expect(keyName(press(' ', 'Space'))).toBe(' ');
   });
 
   it('lowers letters and keeps named keys', () => {
@@ -332,8 +393,21 @@ describe('keyName', () => {
     }
   });
 
-  it('ignores a key that is held down and text being composed', () => {
-    expect(keyName(press('1', 'Digit1', { repeat: true }))).toBeNull();
+  it('knows undo and redo, and no other Ctrl or Cmd letter', () => {
+    expect(keyName(press('z', 'KeyZ', { ctrlKey: true }))).toBe('Mod+z');
+    expect(keyName(press('z', 'KeyZ', { metaKey: true }))).toBe('Mod+z');
+    expect(keyName(press('Z', 'KeyZ', { ctrlKey: true, shiftKey: true }))).toBe('Mod+Shift+z');
+    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBeNull();
+    expect(keyName(press('f', 'KeyF', { ctrlKey: true }))).toBeNull();
+    expect(keyName(press('ArrowLeft', 'ArrowLeft', { altKey: true }))).toBeNull();
+    expect(keyName(press('ArrowLeft', 'ArrowLeft', { ctrlKey: true }))).toBeNull();
+    // in a text box Ctrl+Z stays the browser's own undo
+    expect(interfaceAction(boxes, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
+    expect(interfaceAction(boxes, 'Mod+z', editing(at(null)))?.action).toBe('undo');
+    expect(interfaceAction(boxes, 'Mod+Shift+z', editing(at(null)))?.action).toBe('redo');
+  });
+
+  it('ignores text being composed', () => {
     expect(keyName(press('a', 'KeyA', { isComposing: true }))).toBeNull();
   });
 });
@@ -441,6 +515,13 @@ describe('the cheat sheet', () => {
     expect(showKeys(labelKeys(10))).toBe('1 - 9, 0');
     expect(showKeys(labelKeys(14))).toBe('1 - 9, 0, then the letter on the label');
     expect(showKeys(LABEL_KEYS)).toBe('1 - 9, 0, then the letter on the label');
+    expect(showKeys(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])).toBe('Arrows');
+    expect(
+      showKeys(['Shift+ArrowLeft', 'Shift+ArrowRight', 'Shift+ArrowUp', 'Shift+ArrowDown']),
+    ).toBe('Shift + arrows');
+    expect(showKeys(['Mod+z'])).toBe('Ctrl + Z');
+    expect(showKeys(['Mod+Shift+z'])).toBe('Ctrl + Shift + Z');
+    expect(showKeys(['Tab', 'Shift+Tab'])).toBe('Tab / Shift + Tab');
   });
 
   it('gives buttons the hint of their own row', () => {
