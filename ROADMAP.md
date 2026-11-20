@@ -43,7 +43,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
-| 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
+| 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
 | 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Later   | labeling      | M    | -          |
@@ -288,64 +288,6 @@ checks any of it. Gaps I already know about:
 
 ## Later
 
-### 10. Gold tasks: add, fix and rescore
-
-Gold tasks can only be created with a `_gold` column at import (`createBatch`
-sets `isGold` when the row has one). After that they are frozen:
-`routes/task-detail.tsx` has no action at all. A gold answer that turns out to
-be wrong keeps marking good annotators down, and can put them on the "needs
-attention" list, until the batch is deleted, which `deleteBatch` refuses once
-anyone has worked on it. Annotators only ever see one number, "Gold accuracy"
-on the dashboard, and never which tasks they got wrong.
-
-- Actions on the task page for managers (`manageProjects`):
-  - edit the gold answer in the normal interface. Pairwise gold is only a
-    preference (`parseGold` stores empty scores and rationale), so it needs
-    its own small form, not `validatePairwise`;
-  - retire a gold task: it is no longer handed out and its scores stop
-    counting (probably a `goldRetiredAt` on `Task`, checked in `eligibleFor`
-    and wherever `goldScore` is averaged);
-  - "Use as gold" on a completed task with a consensus. This makes a copy
-    (same `data`, `goldAnswer` from the consensus, in a batch named "Gold")
-    and leaves the original alone, because gold tasks are left out of the
-    export (`isGold: false` in `loadExportTasks`) and the original's labels
-    are real data.
-- Rescore after an edit: recompute `goldScore` for every submission of that
-  task with `scoreAgainstGold`, the call `submitAssignment` makes, in one
-  transaction, and log an activity entry with the old and new answer.
-  `describe()` in `routes/project-activity.tsx` needs the new action names.
-- For annotators: gold submissions show as "Accepted" in `routes/my-work.tsx`,
-  like any work that needed no review. Show the score there, and on
-  `/my-work/:assignmentId` reuse the comparison built for reviewer corrections
-  (the `compare` mode of `routes/my-work-revise.tsx`, which its loader only
-  allows for `SENT_BACK` and `FIXED` work today) with the expected answer on
-  the right. A project setting turns this off.
-- For managers: a small table on the quality page of the gold tasks with the
-  lowest average score. A gold task that most people miss is usually the one
-  that is wrong.
-- Retiring adds a condition to `eligibleFor` in `models/queue.server.ts`.
-  Items 11 (extra slots) and 12 (paused batches) change the same function. The
-  three changes are independent, but whoever lands later has to merge them.
-- Tricky: where a new gold task appears. `createBatch` appends after the last
-  position and the queue goes strictly by `position`, so a copy made today
-  would be served after everything else. `position` is not unique: give the
-  copy a random position among the project's open tasks. Item 12 makes gold
-  spacing a proper setting.
-- Tricky: `listBatches` counts gold tasks in a batch's total, but gold tasks
-  never complete, so a batch with gold never reads as done. Count them
-  separately, as `projectProgress` does.
-- Tricky: qualification questions carry a `goldAnswer` too. Editing one should
-  not regrade past attempts: `scorePercent`, `passed` and `qualifiedAt` are
-  stored results. Say so on the page.
-- Tricky: the gold answer must not reach the browser before the submission.
-  The work loader sends `task.data` only. Keep a test for it, like the one for
-  the qualification page.
-- Undecided: showing the expected answer lets annotators tell each other which
-  tasks are gold. Each person meets a gold task only once, so I lean towards
-  showing it by default.
-- Tests: `tests/integration/gold.test.ts`: edit and rescore, retire, copy from
-  a completed task, permissions, what the annotator's page shows.
-
 ### 11. Low-agreement tasks: extras and adjudication
 
 When a task has `overlap` accepted answers it is complete, whatever they say.
@@ -420,8 +362,11 @@ disagreed on.
 - Tricky: an extra slot can stay empty for ever when every member has already
   answered the task. Managers should be able to send a task that is waiting
   for an extra annotator to adjudication from its page.
-- Items 10 and 12 add their own conditions to `eligibleFor`. The three changes
-  are independent, but whoever lands later has to merge them.
+- Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
+  two that must stay: a retired gold task is never eligible
+  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
+  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
+  Gold tasks stay outside the slot count, extra slots included.
 - Undecided: whether an adjudicated answer should feed back into the
   annotators' numbers (agreement with the adjudicator, per person). I lean
   towards not yet.
@@ -470,9 +415,13 @@ else. They are the ordering rules that item 17 has to keep.
   tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
 - Tricky: with default settings the behaviour must stay exactly as it is. The
   queue tests rely on position order.
-- Items 10 (retired gold tasks) and 11 (extra slots) each add a condition to
-  `eligibleFor` as well. The three changes are independent, but whoever lands
-  later has to merge them.
+- Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
+  has shipped two that must stay: a retired gold task is never eligible
+  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
+  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
+  Gold spacing has to treat those copies like any other gold task, and a new
+  order must not single them out: today a copy takes the position of a random
+  open task.
 - Follow-ups, each small enough for a pull request of its own and not part of
   this one:
   - a daily limit per annotator, so one fast person cannot label most of a
@@ -917,3 +866,22 @@ submitted in until item 5 makes the report go by the day work became payable
 (the date is stamped for it). Gold scores and low QA scores on approved work
 cannot be disputed, and nobody is told about a new dispute or its outcome
 except by the tab count and the "My work" page.
+
+### 10. Gold tasks: add, fix and rescore
+
+On the task page a manager can change a gold answer, rescore, retire a gold
+task or bring it back, and copy a completed task into a gold task (also for
+several tasks from the batch page). Every change is kept in `GoldRevision`
+with who, when and why. Annotators see their score and the expected answer
+after submitting unless the project turns gold feedback off, the quality page
+lists the gold tasks with the lowest scores, and batch progress counts gold
+apart. Different from the design: an edit does not rescore by itself. The
+page first says how many scores change, whose accuracy moves and who crosses
+the flag, and the manager applies it. The copy goes into the batch of its
+original, not into a batch named "Gold", because annotators see the batch
+name; it is not handed to people who labeled the original; and the work page
+no longer gets the task's id. Pay and past qualification attempts never
+follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
+the position of a random open task), a retired task that someone has claimed
+can still be submitted, and the server does different work for a gold
+submission than for a regular one, which a patient observer could measure.
