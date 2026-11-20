@@ -1,15 +1,6 @@
 -- AlterTable
 ALTER TABLE "Task" ADD COLUMN     "takenSlots" INTEGER NOT NULL DEFAULT 0;
 
--- what the queue used to count per candidate: claims and submissions
-UPDATE "Task" t SET "takenSlots" = c.n
-FROM (
-  SELECT "taskId", count(*)::int AS n FROM "Assignment"
-  WHERE status IN ('ACTIVE', 'SUBMITTED')
-  GROUP BY "taskId"
-) c
-WHERE t.id = c."taskId";
-
 -- kept up to date in the statement that writes the assignment, whatever writes it
 CREATE FUNCTION "task_taken_slots"() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -26,6 +17,23 @@ BEGIN
 END
 $$;
 
-CREATE TRIGGER "Assignment_taken_slots"
-AFTER INSERT OR DELETE OR UPDATE OF status, "taskId" ON "Assignment"
-FOR EACH ROW EXECUTE FUNCTION "task_taken_slots"();
+-- One statement, so one transaction: assignments are locked against writes,
+-- the trigger is put in place, and the counters are filled from the rows as
+-- they are. Nothing written while the app keeps running can fall between the
+-- count and the trigger.
+DO $$
+BEGIN
+  LOCK TABLE "Assignment" IN SHARE ROW EXCLUSIVE MODE;
+  CREATE TRIGGER "Assignment_taken_slots"
+  AFTER INSERT OR DELETE OR UPDATE OF status, "taskId" ON "Assignment"
+  FOR EACH ROW EXECUTE FUNCTION "task_taken_slots"();
+  -- what the queue used to count per candidate: claims and submissions
+  UPDATE "Task" t SET "takenSlots" = c.n
+  FROM (
+    SELECT "taskId", count(*)::int AS n FROM "Assignment"
+    WHERE status IN ('ACTIVE', 'SUBMITTED')
+    GROUP BY "taskId"
+  ) c
+  WHERE t.id = c."taskId";
+END
+$$;
