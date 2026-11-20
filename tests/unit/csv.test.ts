@@ -68,7 +68,7 @@ describe('parseCsv', () => {
   });
 
   it('returns an empty table for empty input', () => {
-    expect(parseCsv('')).toEqual({ header: [], rows: [] });
+    expect(parseCsv('')).toEqual({ header: [], rows: [], openQuoteLine: null });
   });
 });
 
@@ -156,5 +156,15 @@ describe('cells a spreadsheet would run as a formula', () => {
     }
     // a quote in front of ordinary text is not a guard
     expect(unguardFormula("'plain")).toBe("'plain");
+  });
+});
+
+describe('a quote that is never closed', () => {
+  it('says where it opened', () => {
+    expect(parseCsv('text\na\n"b\nc\n').openQuoteLine).toBe(3);
+    expect(parseCsv('id,text\n1,"x\n2,y\n').openQuoteLine).toBe(2);
+    expect(parseCsv('id,text\n1,"x\ny"\n2,z\n').openQuoteLine).toBeNull();
+    // a quote in the middle of a field opens nothing
+    expect(parseCsv('id,text\n1,5" disk\n').openQuoteLine).toBeNull();
   });
 });

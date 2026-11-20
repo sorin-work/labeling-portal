@@ -4,7 +4,18 @@
  * then contain the delimiter and line breaks.
  */
 
-export type CsvTable = { header: string[]; rows: Array<{ line: number; values: string[] }> };
+export type CsvTable = {
+  header: string[];
+  rows: Array<{ line: number; values: string[] }>;
+  /**
+   * The line where a quoted field opened that is still open at the end of the
+   * file, or null. Such a field has taken in everything after it, so the
+   * rows are not to be trusted.
+   */
+  openQuoteLine: number | null;
+};
+
+type Scan = { records: Array<{ line: number; values: string[] }>; openQuoteLine: number | null };
 
 export type Delimiter = ',' | ';' | '\t';
 
@@ -33,6 +44,10 @@ export function parseCsvRecords(
   text: string,
   delimiter: Delimiter = ',',
 ): Array<{ line: number; values: string[] }> {
+  return scanCsv(text, delimiter).records;
+}
+
+function scanCsv(text: string, delimiter: Delimiter): Scan {
   const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const records: Array<{ line: number; values: string[] }> = [];
   let field = '';
@@ -41,6 +56,7 @@ export function parseCsvRecords(
   // a quote only opens a quoted field at the start of a field; in the middle
   // of one, as in `5" disk`, it is an ordinary character
   let quoted = false;
+  let quoteLine = 1;
   let line = 1;
   let recordLine = 1;
   let sawAnything = false;
@@ -72,6 +88,7 @@ export function parseCsvRecords(
     if (ch === '"' && field === '' && !quoted) {
       inQuotes = true;
       quoted = true;
+      quoteLine = line;
       sawAnything = true;
     } else if (ch === delimiter) {
       values.push(field);
@@ -89,14 +106,14 @@ export function parseCsvRecords(
     }
   }
   if (sawAnything || field !== '' || values.length > 0) endRecord();
-  return records;
+  return { records, openQuoteLine: inQuotes ? quoteLine : null };
 }
 
 export function parseCsv(text: string, delimiter: Delimiter = ','): CsvTable {
-  const records = parseCsvRecords(text, delimiter);
-  if (records.length === 0) return { header: [], rows: [] };
+  const { records, openQuoteLine } = scanCsv(text, delimiter);
+  if (records.length === 0) return { header: [], rows: [], openQuoteLine };
   const [first, ...rest] = records;
-  return { header: first.values.map((h) => h.trim()), rows: rest };
+  return { header: first.values.map((h) => h.trim()), rows: rest, openQuoteLine };
 }
 
 function escapeField(value: string): string {
