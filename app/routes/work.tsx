@@ -5,6 +5,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 import { Countdown } from '~/components/countdown';
 import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
+import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
@@ -20,6 +21,7 @@ import {
   type ImageSize,
 } from '~/domain/answers';
 import { droppedNote, fitDraft } from '~/domain/drafts';
+import { pageShortcut } from '~/domain/hotkeys';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -201,13 +203,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const skipForm = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (!skipping) return;
-    skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSkipping(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    if (skipping) skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
   }, [skipping]);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
@@ -231,17 +227,16 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   });
   const submitRef = useRef<HTMLButtonElement>(null);
 
-  // Ctrl/Cmd+Enter submits, even from the rationale box
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        submitRef.current?.click();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  // The keys of this page are rows of the key map (domain/hotkeys.ts). While
+  // the skip form is open the labeling interface gets no keys.
+  useHotkeyPage('work', skipping ? 'skipping' : 'labeling');
+  usePageHotkeys((action) => {
+    if (action === 'submit') submitRef.current?.click();
+    else if (action === 'skip') setSkipping(true);
+    else if (action === 'closeSkip') setSkipping(false);
+    else return false;
+    return true;
+  });
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -261,7 +256,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             <span className="ml-3 text-xs text-slate-500">{loaderData.doneToday} done today</span>
           </div>
           <div className="flex items-center gap-3">
-            <KeyboardHelp />
+            <KeyboardHelp page="work" schema={schema} />
             <span
               className="text-xs text-slate-500"
               title="Time you have actively worked on this task"
@@ -305,11 +300,17 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             name="intent"
             value="submit"
             disabled={busy || !toSubmit}
-            title="Ctrl+Enter"
+            title={`Shortcut: ${pageShortcut('work', 'submit')}`}
           >
             Submit and next
           </Button>
-          <Button type="button" variant="secondary" onClick={() => setSkipping((s) => !s)}>
+          <Button
+            type="button"
+            variant="secondary"
+            title={`Shortcut: ${pageShortcut('work', 'skip')}`}
+            aria-expanded={skipping}
+            onClick={() => setSkipping((s) => !s)}
+          >
             Skip…
           </Button>
           <Button

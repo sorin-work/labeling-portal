@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
@@ -191,6 +192,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
               <span className="text-sm text-slate-500">
                 {answered} of {tasks.length} answered
               </span>
+              <KeyboardHelp page={null} schema={schema} />
             </Form>
           </>
         )}

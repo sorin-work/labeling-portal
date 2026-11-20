@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 
 import type { BboxAnswer, Box } from '~/domain/answers';
+import { labelKeys } from '~/domain/hotkeys';
 import type { BboxSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { useHotkeys } from './use-hotkeys';
+import { useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
 const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899'];
@@ -99,21 +100,22 @@ export function BoundingBoxes({
     setCursor(null);
   };
 
-  useHotkeys((key) => {
-    if ((key === 'Delete' || key === 'Backspace') && selected !== null) {
+  const keys = labelKeys(schema.labels.length);
+  const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action === 'remove') {
+      if (selected === null) return false;
       emit(boxes.filter((_, i) => i !== selected));
       setSelected(null);
       return true;
     }
-    const index = Number(key) - 1;
-    if (Number.isInteger(index) && index >= 0 && index < Math.min(9, schema.labels.length)) {
-      const label = schema.labels[index];
+    if (hit.action === 'label') {
+      const label = schema.labels[hit.index];
       if (selected !== null) emit(boxes.map((b, i) => (i === selected ? { ...b, label } : b)));
       else setActive(label);
       return true;
     }
     return false;
-  }, !readOnly);
+  });
 
   const preview =
     start && cursor
@@ -127,7 +129,7 @@ export function BoundingBoxes({
   const stroke = size ? Math.max(1, size.w / 400) : 1;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" {...inUse}>
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Label</span>
@@ -143,7 +145,7 @@ export function BoundingBoxes({
               )}
             >
               <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: colorOf(label) }} />
-              {index < 9 && <kbd className="font-mono text-xs text-slate-400">{index + 1}</kbd>}
+              {keys[index] && <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>}
               {label}
             </button>
           ))}
@@ -212,7 +214,7 @@ export function BoundingBoxes({
         {readOnly
           ? `${boxes.length} box${boxes.length === 1 ? '' : 'es'}`
           : selected !== null
-            ? 'Box selected: press a number to relabel it or Delete to remove it.'
+            ? 'Box selected: press the key of a label to relabel it, or Delete to remove it.'
             : 'Drag on the image to draw a box. Submit with no boxes if nothing is there.'}
       </p>
       {boxes.length > 0 && (

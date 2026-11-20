@@ -1,10 +1,11 @@
 import type { ClassificationAnswer } from '~/domain/answers';
+import { labelKeys } from '~/domain/hotkeys';
 import type { TextClassificationSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { useHotkeys } from './use-hotkeys';
+import { useInterfaceHotkeys } from './use-hotkeys';
 
 export function TextClassification({
   schema,
@@ -25,24 +26,20 @@ export function TextClassification({
     onChange({ labels: next });
   };
 
-  useHotkeys((key) => {
-    const index = Number(key) - 1;
-    if (!Number.isInteger(index) || index < 0 || index >= Math.min(9, schema.labels.length)) {
-      return false;
-    }
-    toggle(schema.labels[index]);
+  const keys = labelKeys(schema.labels.length);
+  const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action !== 'label') return false;
+    toggle(schema.labels[hit.index]);
     return true;
-  }, !readOnly);
+  });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" {...inUse}>
       <p className="whitespace-pre-wrap text-base leading-7">{text}</p>
       <div>
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
           {schema.multiple ? 'Pick every label that applies' : 'Pick one label'}
-          {!readOnly && (
-            <span className="ml-2 normal-case text-slate-400">(number keys work too)</span>
-          )}
+          {!readOnly && <span className="ml-2 normal-case text-slate-400">(or press its key)</span>}
         </div>
         <div className="flex flex-wrap gap-2" role={schema.multiple ? 'group' : 'radiogroup'}>
           {schema.labels.map((label, index) => {
@@ -62,14 +59,14 @@ export function TextClassification({
                     : 'bg-white text-slate-700 ring-slate-300 hover:bg-slate-50',
                 )}
               >
-                {index < 9 && !readOnly && (
+                {keys[index] && !readOnly && (
                   <kbd
                     className={cx(
                       'mr-1.5 font-mono text-xs',
                       active ? 'text-indigo-200' : 'text-slate-400',
                     )}
                   >
-                    {index + 1}
+                    {keys[index]}
                   </kbd>
                 )}
                 {label}

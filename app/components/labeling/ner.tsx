@@ -1,13 +1,14 @@
 import { useRef } from 'react';
 
 import type { NerAnswer } from '~/domain/answers';
+import { labelKeys } from '~/domain/hotkeys';
 import { addSpan, removeSpan, segmentText, spanText, trimSelection } from '~/domain/spans';
 import type { NerSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { useHotkeys } from './use-hotkeys';
+import { useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
 const FALLBACK_COLORS = ['#f59e0b', '#6366f1', '#10b981', '#ef4444', '#0ea5e9', '#a855f7'];
@@ -41,14 +42,12 @@ export function NerSpans({
   );
   const container = useRef<HTMLDivElement>(null);
 
-  useHotkeys((key) => {
-    const index = Number(key) - 1;
-    if (!Number.isInteger(index) || index < 0 || index >= Math.min(9, schema.entities.length)) {
-      return false;
-    }
-    setActive(schema.entities[index].name);
+  const keys = labelKeys(schema.entities.length);
+  const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action !== 'label') return false;
+    setActive(schema.entities[hit.index].name);
     return true;
-  }, !readOnly);
+  });
 
   const onMouseUp = () => {
     if (readOnly) return;
@@ -66,7 +65,7 @@ export function NerSpans({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" {...inUse}>
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -87,7 +86,7 @@ export function NerSpans({
                 className="h-3 w-3 rounded-sm"
                 style={{ backgroundColor: colorFor(schema, entity.name) }}
               />
-              {index < 9 && <kbd className="font-mono text-xs text-slate-400">{index + 1}</kbd>}
+              {keys[index] && <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>}
               {entity.name}
             </button>
           ))}

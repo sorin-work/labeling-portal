@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { DraftNote } from '~/components/draft-note';
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useDraftSave } from '~/components/use-draft-save';
@@ -169,6 +170,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
           Resubmit for review
         </Button>
         <DraftNote state={draftState} />
+        <KeyboardHelp page={null} schema={schema} />
       </Form>
     </div>
   );

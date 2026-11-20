@@ -1,10 +1,11 @@
 import type { PairwiseAnswer, Preference } from '~/domain/answers';
+import { interfaceShortcut } from '~/domain/hotkeys';
 import type { PairwiseSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { useHotkeys } from './use-hotkeys';
+import { useInterfaceHotkeys } from './use-hotkeys';
 
 // The preference starts out unset; the server rejects drafts without one.
 const EMPTY = {
@@ -68,15 +69,17 @@ export function PairwiseRubric({
   ];
   const length = draft.rationale.trim().length;
 
-  useHotkeys((key) => {
-    const pick = { a: 'A', b: 'B', t: 'tie' }[key.toLowerCase()] as Preference | undefined;
-    if (!pick || (pick === 'tie' && !schema.allowTie)) return false;
+  const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    const pick = ({ preferA: 'A', preferB: 'B', preferTie: 'tie' } as const)[
+      hit.action as 'preferA' | 'preferB' | 'preferTie'
+    ] as Preference | undefined;
+    if (!pick) return false;
     update({ preference: pick });
     return true;
-  }, !readOnly);
+  });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" {...inUse}>
       <section>
         <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">Prompt</h3>
         <p className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm leading-6">
@@ -144,7 +147,7 @@ export function PairwiseRubric({
           Overall preference
           {!readOnly && (
             <span className="ml-2 normal-case text-slate-400">
-              (keys a, b{schema.allowTie ? ', t' : ''})
+              (keys {interfaceShortcut(schema, ['preferA', 'preferB', 'preferTie'])})
             </span>
           )}
         </legend>
