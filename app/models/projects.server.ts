@@ -1,5 +1,6 @@
-import { Prisma, type PrismaClient, type Project } from '@prisma/client';
+import { Prisma, type PrismaClient, type Project, type ProjectStatus } from '@prisma/client';
 
+import { settingsChanges } from '~/domain/activity';
 import type { ProjectInput } from '~/domain/project-form';
 import {
   breakingChanges,
@@ -14,6 +15,8 @@ import type { CurrentUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { forbidden, notFound } from '~/lib/http';
 import { can, type Capability } from '~/lib/permissions';
+
+import { logActivity } from './activity.server';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -68,29 +71,42 @@ export function projectSchema(project: Pick<Project, 'schema'>): TaskSchema {
   return parsed.schema;
 }
 
-export async function createProject(orgId: string, input: ProjectInput) {
-  return prisma.project.create({
-    data: {
+/** Creates a project as a draft, with its entry in the audit trail. */
+export async function createProject(orgId: string, input: ProjectInput, actorId: string) {
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.project.create({ data: projectData(orgId, input) });
+    await logActivity(tx, {
       orgId,
-      name: input.name,
-      description: input.description,
-      instructions: input.instructions,
-      overlap: input.overlap,
-      timeLimitMinutes: input.timeLimitMinutes,
-      reviewRequired: input.reviewRequired,
-      reviewSamplePercent: input.reviewSamplePercent,
-      disputeWindowDays: input.disputeWindowDays,
-      goldFeedback: input.goldFeedback,
-      queueOrder: input.queueOrder,
-      goldEvery: input.goldEvery,
-      qualificationRequired: input.qualificationRequired,
-      qualificationPassPercent: input.qualificationPassPercent,
-      payMode: input.payMode,
-      rateCents: input.rateCents,
-      kind: KIND_TO_ENUM[input.schema.kind],
-      schema: input.schema as Prisma.InputJsonValue,
-    },
+      projectId: project.id,
+      actorId,
+      action: 'project.created',
+      detail: { projectName: project.name },
+    });
+    return project;
   });
+}
+
+function projectData(orgId: string, input: ProjectInput) {
+  return {
+    orgId,
+    name: input.name,
+    description: input.description,
+    instructions: input.instructions,
+    overlap: input.overlap,
+    timeLimitMinutes: input.timeLimitMinutes,
+    reviewRequired: input.reviewRequired,
+    reviewSamplePercent: input.reviewSamplePercent,
+    disputeWindowDays: input.disputeWindowDays,
+    goldFeedback: input.goldFeedback,
+    queueOrder: input.queueOrder,
+    goldEvery: input.goldEvery,
+    qualificationRequired: input.qualificationRequired,
+    qualificationPassPercent: input.qualificationPassPercent,
+    payMode: input.payMode,
+    rateCents: input.rateCents,
+    kind: KIND_TO_ENUM[input.schema.kind],
+    schema: input.schema as Prisma.InputJsonValue,
+  } satisfies Prisma.ProjectUncheckedCreateInput;
 }
 
 /** A JSON array, or an empty one when the value is anything else. */
@@ -249,6 +265,7 @@ export type UpdateProjectResult =
 export async function updateProject(
   projectId: string,
   input: ProjectInput,
+  actorId: string,
   now = new Date(),
 ): Promise<UpdateProjectResult> {
   return prisma.$transaction(async (tx) => {
@@ -258,10 +275,7 @@ export async function updateProject(
     // pointing at the project (claims, imports, activity entries) for as long
     // as the usage count runs.
     await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${projectId} FOR NO KEY UPDATE`;
-    const before = await tx.project.findUniqueOrThrow({
-      where: { id: projectId },
-      select: { instructions: true, schema: true },
-    });
+    const before = await tx.project.findUniqueOrThrow({ where: { id: projectId } });
 
     // a stored schema that no longer parses cannot be compared; saving a
     // valid one is the only way to repair it
@@ -297,12 +311,55 @@ export async function updateProject(
         schema: input.schema as Prisma.InputJsonValue,
       },
     });
-    return {
-      ok: true,
-      project,
-      changes,
-      schemaChange: saved.ok && changes.length > 0 ? [saved.schema, input.schema] : null,
-    };
+    const schemaChange: [TaskSchema, TaskSchema] | null =
+      saved.ok && changes.length > 0 ? [saved.schema, input.schema] : null;
+    // what changed, field by field, in the same transaction as the save
+    await logActivity(tx, {
+      orgId: before.orgId,
+      projectId,
+      actorId,
+      action: 'project.settings',
+      detail: {
+        changes: {
+          ...settingsChanges(before, { ...input, rateCents: input.rateCents }),
+          ...(schemaChange ? { schema: schemaChange } : {}),
+        },
+      } as Prisma.InputJsonValue,
+      createdAt: now,
+    });
+    return { ok: true, project, changes, schemaChange };
+  });
+}
+
+/**
+ * Moves a project to another status, if it is still in one of `from`. The
+ * write names the status it expects, so two managers pressing the button at
+ * once leave one change and one entry.
+ */
+export async function setProjectStatus(
+  project: Pick<Project, 'id' | 'orgId'>,
+  actorId: string,
+  change: { from: readonly ProjectStatus[]; to: ProjectStatus },
+): Promise<{ ok: true; from: ProjectStatus } | { ok: false }> {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.project.findUniqueOrThrow({
+      where: { id: project.id },
+      select: { status: true },
+    });
+    if (!change.from.includes(current.status)) return { ok: false };
+    const updated = await tx.project.updateMany({
+      where: { id: project.id, status: current.status },
+      data: { status: change.to },
+    });
+    if (updated.count === 0) return { ok: false };
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: 'project.status',
+      detail: { from: current.status, to: change.to },
+    });
+    return { ok: true, from: current.status };
   });
 }
 
@@ -310,32 +367,49 @@ export async function updateProject(
  * Copies a project's setup (schema, instructions, rates, members) into a new
  * draft. Tasks, submissions and qualification results are not copied.
  */
-export async function duplicateProject(project: Project) {
+export async function duplicateProject(project: Project, actorId: string) {
   const members = await prisma.projectMember.findMany({
     where: { projectId: project.id },
     select: { userId: true },
   });
-  return prisma.project.create({
-    data: {
+  return prisma.$transaction(async (tx) => {
+    const copy = await tx.project.create({
+      data: {
+        orgId: project.orgId,
+        name: `${project.name} (copy)`.slice(0, 120),
+        description: project.description,
+        instructions: project.instructions,
+        kind: project.kind,
+        schema: project.schema as Prisma.InputJsonValue,
+        overlap: project.overlap,
+        timeLimitMinutes: project.timeLimitMinutes,
+        reviewRequired: project.reviewRequired,
+        reviewSamplePercent: project.reviewSamplePercent,
+        disputeWindowDays: project.disputeWindowDays,
+        goldFeedback: project.goldFeedback,
+        queueOrder: project.queueOrder,
+        goldEvery: project.goldEvery,
+        qualificationRequired: project.qualificationRequired,
+        qualificationPassPercent: project.qualificationPassPercent,
+        payMode: project.payMode,
+        rateCents: project.rateCents,
+        members: { create: members },
+      },
+    });
+    await logActivity(tx, {
       orgId: project.orgId,
-      name: `${project.name} (copy)`.slice(0, 120),
-      description: project.description,
-      instructions: project.instructions,
-      kind: project.kind,
-      schema: project.schema as Prisma.InputJsonValue,
-      overlap: project.overlap,
-      timeLimitMinutes: project.timeLimitMinutes,
-      reviewRequired: project.reviewRequired,
-      reviewSamplePercent: project.reviewSamplePercent,
-      disputeWindowDays: project.disputeWindowDays,
-      goldFeedback: project.goldFeedback,
-      queueOrder: project.queueOrder,
-      goldEvery: project.goldEvery,
-      qualificationRequired: project.qualificationRequired,
-      qualificationPassPercent: project.qualificationPassPercent,
-      payMode: project.payMode,
-      rateCents: project.rateCents,
-      members: { create: members },
-    },
+      projectId: project.id,
+      actorId,
+      action: 'project.duplicated',
+      detail: { copyId: copy.id, copyName: copy.name },
+    });
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: copy.id,
+      actorId,
+      action: 'project.created',
+      detail: { projectName: copy.name, copiedFrom: project.id },
+    });
+    return copy;
   });
 }

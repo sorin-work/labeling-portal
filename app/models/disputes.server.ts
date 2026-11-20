@@ -10,6 +10,7 @@ import {
 import { prisma } from '~/lib/db.server';
 import { can, ROLES } from '~/lib/permissions';
 
+import { logActivity } from './activity.server';
 import { refreshTaskStatus } from './tasks.server';
 
 type Db = typeof prisma | Prisma.TransactionClient;
@@ -184,6 +185,32 @@ export async function resolveDispute(
       },
     });
     if (settled.count === 0) return { ok: false, error: 'already_resolved' };
+    const [task, annotator] = await Promise.all([
+      tx.task.findUniqueOrThrow({
+        where: { id: dispute.assignment.taskId },
+        select: { position: true, projectId: true },
+      }),
+      tx.user.findUniqueOrThrow({
+        where: { id: dispute.assignment.userId },
+        select: { name: true },
+      }),
+    ]);
+    // the outcome, not the reasons: the dispute row keeps those
+    await logActivity(tx, {
+      projectId: task.projectId,
+      actorId: resolverId,
+      action: 'dispute.resolved',
+      detail: {
+        disputeId,
+        assignmentId: dispute.assignmentId,
+        position: task.position,
+        userId: dispute.assignment.userId,
+        userName: annotator.name,
+        decision: dispute.review.decision,
+        outcome: input.outcome,
+      },
+      createdAt: now,
+    });
     if (input.outcome === 'UPHELD') return { ok: true };
 
     await tx.review.update({ where: { id: dispute.reviewId }, data: { overturnedAt: now } });

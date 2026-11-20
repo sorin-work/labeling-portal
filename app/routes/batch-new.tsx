@@ -7,7 +7,6 @@ import { requireUser } from '~/lib/auth.server';
 import { internalImageHosts } from '~/lib/env.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { readBoundedForm } from '~/lib/upload.server';
-import { logActivity } from '~/models/activity.server';
 import { createBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -87,6 +86,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     rows: outcome.rows,
     qualification,
     schema,
+    actorId: current.user.id,
   });
   if (!created.ok) {
     return data<ActionResult>(
@@ -97,12 +97,6 @@ export async function action({ request, params }: Route.ActionArgs) {
       { status: 409 },
     );
   }
-  await logActivity({
-    projectId: project.id,
-    actorId: current.user.id,
-    action: 'batch.imported',
-    detail: { batchId: created.batch.id, name, tasks: outcome.rows.length, qualification },
-  });
   return redirectWithFlash(
     request,
     `/projects/${project.id}/batches/${created.batch.id}`,

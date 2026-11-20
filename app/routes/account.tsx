@@ -5,6 +5,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from '~/lib/password.server';
 import { ROLE_LABELS } from '~/lib/permissions';
+import { logActivity } from '~/models/activity.server';
 
 import type { Route } from './+types/account';
 
@@ -20,7 +21,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 type ActionData = { error?: string; field?: string; message?: string };
 
 export async function action({ request }: Route.ActionArgs) {
-  const { user } = await requireUser(request);
+  const { user, membership } = await requireUser(request);
   const form = await request.formData();
   const current = String(form.get('current') ?? '');
   const next = String(form.get('next') ?? '');
@@ -45,9 +46,15 @@ export async function action({ request }: Route.ActionArgs) {
       { status: 400 },
     );
   }
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { passwordHash: await hashPassword(next) },
+  const passwordHash = await hashPassword(next);
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+    // who, and nothing about the password
+    await logActivity(tx, {
+      orgId: membership.orgId,
+      actorId: user.id,
+      action: 'account.password',
+    });
   });
   return data<ActionData>({ message: 'Password changed.' });
 }

@@ -5,6 +5,8 @@ import { diffSchema } from '~/domain/schema-diff';
 import { parseTaskSchema, type TaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
+import { logActivity } from './activity.server';
+
 export type CreateBatchResult = { ok: true; batch: Batch } | { ok: false; error: 'schema_changed' };
 
 /**
@@ -26,6 +28,8 @@ export async function createBatch(
     rows: ImportRow[];
     qualification?: boolean;
     schema: TaskSchema;
+    /** who imports it, for the audit trail */
+    actorId: string;
   },
 ): Promise<CreateBatchResult> {
   return prisma.$transaction(async (tx) => {
@@ -52,6 +56,18 @@ export async function createBatch(
         isQualification: input.qualification ?? false,
         goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
       })),
+    });
+    await logActivity(tx, {
+      projectId,
+      actorId: input.actorId,
+      action: 'batch.imported',
+      detail: {
+        batchId: batch.id,
+        name: input.name,
+        format: input.format,
+        tasks: input.rows.length,
+        qualification: input.qualification ?? false,
+      },
     });
     return { ok: true, batch };
   });
@@ -107,14 +123,12 @@ export async function setBatchPriority(
       data: { priority },
     });
     if (changed.count === 0) return { ok: false, error: 'unchanged' };
-    await tx.activity.create({
-      data: {
-        projectId,
-        actorId,
-        action: 'batch.priority',
-        detail: { name: batch.name, from: batch.priority, to: priority },
-        createdAt: now,
-      },
+    await logActivity(tx, {
+      projectId,
+      actorId,
+      action: 'batch.priority',
+      detail: { batchId, name: batch.name, from: batch.priority, to: priority },
+      createdAt: now,
     });
     return { ok: true };
   });
@@ -143,14 +157,12 @@ export async function setBatchPaused(
       data: { pausedAt: paused ? now : null },
     });
     if (changed.count === 0) return { ok: false, error: 'unchanged' };
-    await tx.activity.create({
-      data: {
-        projectId,
-        actorId,
-        action: paused ? 'batch.paused' : 'batch.resumed',
-        detail: { name: batch.name },
-        createdAt: now,
-      },
+    await logActivity(tx, {
+      projectId,
+      actorId,
+      action: paused ? 'batch.paused' : 'batch.resumed',
+      detail: { batchId, name: batch.name },
+      createdAt: now,
     });
     return { ok: true };
   });
@@ -181,7 +193,11 @@ export type DeleteBatchResult = { ok: true; tasks: number } | { ok: false; error
  * Removes a batch and its tasks. Only allowed while nobody has submitted or
  * skipped any of its tasks, so no paid or reviewed work is lost.
  */
-export async function deleteBatch(projectId: string, batchId: string): Promise<DeleteBatchResult> {
+export async function deleteBatch(
+  projectId: string,
+  batchId: string,
+  actorId: string,
+): Promise<DeleteBatchResult> {
   return prisma.$transaction(async (tx) => {
     const batch = await tx.batch.findFirst({ where: { id: batchId, projectId } });
     if (!batch) return { ok: false, error: 'Batch not found.' };
@@ -193,6 +209,12 @@ export async function deleteBatch(projectId: string, batchId: string): Promise<D
     }
     const tasks = await tx.task.count({ where: { batchId } });
     await tx.batch.delete({ where: { id: batchId } });
+    await logActivity(tx, {
+      projectId,
+      actorId,
+      action: 'batch.deleted',
+      detail: { batchId, name: batch.name, tasks },
+    });
     return { ok: true, tasks };
   });
 }
