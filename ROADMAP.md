@@ -47,7 +47,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 11  | Low-agreement tasks: extras and adjudication | Shipped | quality       | M    | -          |
 | 12  | Queue order, batch priority and gold spacing | Shipped | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Shipped | labeling      | M    | -          |
-| 14  | Image classification                         | Later   | labeling      | M    | -          |
+| 14  | Image classification                         | Shipped | labeling      | M    | -          |
 | 15  | Audit trail                                  | Later   | ops           | M    | -          |
 | 16  | API tokens and a JSON API                    | Later   | api           | L    | -          |
 | 17  | Faster on large projects                     | Maybe   | performance   | L    | 12         |
@@ -56,58 +56,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 ## Next
 
 ## Later
-
-### 14. Image classification
-
-The only image kind is boxes. Sorting images into classes (is there a person
-in it, is this product photo usable, which category) is as common as boxes and
-much simpler, and today it can only be faked by putting an image URL into a
-text field.
-
-- A new kind, `image_classification`, with `imageField`, `labels` and
-  `multiple`. The answer is the existing `ClassificationAnswer`, checked by
-  `validateClassification`, merged by `classificationConsensus` and scored
-  against gold with the same label overlap. Loosen the parameter types that
-  name `TextClassificationSchema`.
-- The steps are in "Adding a labeling kind" in `docs/architecture.md`. That
-  list says TypeScript points at every place. It does for the `switch`
-  statements that have no `default`. It does not for these, which the list
-  leaves out and should gain:
-  - `categoricalValue` in `domain/agreement.ts`. Its `switch` ends in
-    `default: return null`, so a new kind compiles and silently gets no kappa.
-    Add the kind there by hand, with a case in
-    `tests/unit/agreement.test.ts`;
-  - `categorical` in `models/quality.server.ts`, which names two kinds instead
-    of asking `categoricalValue`. Left alone, the quality page loads no
-    answers for an image project and shows it the F1 tile;
-  - `taskPreview` in `domain/preview.ts` and the same three-way choice in
-    `routes/batch-detail.tsx` (which field to show and search);
-  - the image check in `parseImport` (`schema.kind === 'bbox'`);
-  - `KIND_NAMES` in `lib/format.ts`, a second copy of `KIND_LABELS` in
-    `domain/task-schema.ts`, keyed by the Prisma enum;
-  - the `kinds` map in `createTestProject` (`tests/integration/helpers.ts`).
-- The interface: the image, then the label buttons. Take the button group out
-  of `text-classification.tsx` so both kinds share it, including its number
-  keys.
-- The demo gets a fifth project (the README promises one per kind). The street
-  images in `public/demo/` can be reused.
-- Tricky: images are plain URLs that the annotator's browser loads
-  (`isImageRef` accepts http(s) and paths on this site). A dead link shows the
-  alt text and nothing else; `BoundingBoxes` has no `onError` either. Show a
-  clear "image did not load" state and point to Skip, which already has
-  "Content is broken or unreadable".
-- Tricky: `TaskContext` hides `width` and `height` from the context list
-  because box imports use them. Harmless here, but check what an image row
-  shows.
-- Not here: uploading images. The app stores no files.
-- Undecided: a new kind, or an optional `imageField` on `text_classification`.
-  I lean towards the new kind: `kind` picks the interface everywhere, and the
-  Prisma enum (`TaskKind`, with a migration) keeps lists and filters simple.
-- Tests: the unit test files for schema, answers, consensus, gold, agreement,
-  export and template each get the new kind; one integration test that
-  imports, labels, completes and exports an image project, and one in
-  `tests/integration/quality.test.ts` that the quality page reports kappa for
-  it.
 
 ### 15. Audit trail
 
@@ -611,3 +559,22 @@ page until it has been zoomed with a button or a key. Still open: no pinch
 zoom on touch screens; entity spans keep their one-step undo and do not use
 the history yet; on an AZERTY keyboard `-` is on the 6 key, where the label
 wins, so zooming out there takes the number pad, the wheel or the button.
+
+### 14. Image classification
+
+A new kind, `image_classification` (`imageField`, `labels`, `multiple`), with
+a `TaskKind` enum value and a migration. The answer is `ClassificationAnswer`
+and goes through the same validation, consensus, gold scoring, agreement and
+export as text classification; the label group was taken out of the text
+interface (`label-choices.tsx`), keys included, and both kinds use it. The
+places TypeScript does not point at were found by hand and are now listed
+under "Adding a labeling kind": `categoricalValue` names every kind and has no
+default, the quality page asks `isCategorical`, `mainField` and `isImageKind`
+cover the preview, the batch search and the image check of the import,
+`KIND_NAMES` and the test helper use the app's own maps. An image that does
+not load shows its address and points to Skip, on box tasks as well;
+`TaskContext` now hides `width` and `height` only for boxes. Image addresses
+follow the rule from item 6 and the server never fetches them. The demo has a
+fifth project. Decided: a new kind rather than an `imageField` on text
+classification. Still open: uploading images, which stays out because the app
+stores no files.
