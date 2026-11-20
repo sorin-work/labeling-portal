@@ -6,6 +6,7 @@ import { Alert, Badge, Button, EmptyState, Input, PageHeader } from '~/component
 import { taskPreview } from '~/domain/preview';
 import { MAX_BATCH_PRIORITY, parseBatchPriority } from '~/domain/queue-order';
 import { refSuffix } from '~/domain/reference';
+import { mainField } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDate, formatDateTime, TASK_STATUS_BADGES } from '~/lib/format';
@@ -43,12 +44,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const status = STATUSES.find((s) => s === statusParam) ?? null;
   const q = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
   const schema = projectSchema(project);
-  const textField =
-    schema.kind === 'pairwise'
-      ? schema.promptField
-      : schema.kind === 'bbox'
-        ? schema.imageField
-        : schema.textField;
+  const textField = mainField(schema);
   // a reference an annotator quoted from the work page finds the task they had
   const ref = refSuffix(q);
   const where: Prisma.TaskWhereInput = {

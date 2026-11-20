@@ -48,6 +48,7 @@ import type { BboxSchema } from '~/domain/task-schema';
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
+import { ImageFailed } from './task-image';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
@@ -117,11 +118,16 @@ export function BoundingBoxes({
   useEffect(() => {
     reportSize.current = onImageSize;
   });
+  // an image that does not load: the picture says so and points to Skip
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = failedSrc === src;
   useEffect(() => {
     const image = imageRef.current;
     if (image?.complete && image.naturalWidth > 0) {
       setMeasured({ w: image.naturalWidth, h: image.naturalHeight });
       reportSize.current?.({ width: image.naturalWidth, height: image.naturalHeight });
+    } else if (image?.complete && image.currentSrc) {
+      setFailedSrc(src);
     }
   }, [src]);
   const size = measured ?? (value ? { w: value.imageWidth, h: value.imageHeight } : null);
@@ -721,6 +727,7 @@ export function BoundingBoxes({
             alt="Task to label"
             className="block max-h-[70vh] max-w-full"
             draggable={false}
+            onError={() => setFailedSrc(src)}
             onLoad={(event) => {
               const { naturalWidth, naturalHeight } = event.currentTarget;
               setMeasured({ w: naturalWidth, h: naturalHeight });
@@ -825,6 +832,7 @@ export function BoundingBoxes({
           )}
         </div>
       </div>
+      {failed && <ImageFailed src={src} readOnly={readOnly} />}
       <p className="text-sm text-slate-500">{hint}</p>
       <p role="status" className="sr-only">
         {said}

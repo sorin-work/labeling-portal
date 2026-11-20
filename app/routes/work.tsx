@@ -26,6 +26,7 @@ import { extensionPayNote } from '~/domain/active-time';
 import { droppedNote, fitDraft } from '~/domain/drafts';
 import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
+import { SKIP_REASONS } from '~/domain/skip';
 import { renderMarkdown } from '~/domain/markdown';
 import { assignmentRef } from '~/domain/reference';
 import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
@@ -44,14 +45,6 @@ import {
 } from '~/models/queue.server';
 
 import type { Route } from './+types/work';
-
-export const SKIP_REASONS = [
-  'Instructions do not cover this case',
-  'Content is broken or unreadable',
-  'Content is offensive or disturbing',
-  'Not in a language I can label',
-  'Other',
-];
 
 export function meta() {
   return [{ title: 'Labeling · Labeling Portal' }];

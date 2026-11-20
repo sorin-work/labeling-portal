@@ -9,6 +9,7 @@ import type {
 import type { TaskSchema } from '~/domain/task-schema';
 
 import { BoundingBoxes } from './bounding-boxes';
+import { ImageClassification } from './image-classification';
 import { NerSpans } from './ner';
 import { PairwiseRubric } from './pairwise';
 import { TextClassification } from './text-classification';
@@ -36,6 +37,15 @@ export function LabelingInterface(props: LabelingProps) {
     case 'text_classification':
       return (
         <TextClassification
+          {...props}
+          schema={schema}
+          value={value as ClassificationAnswer | null}
+          onChange={onChange}
+        />
+      );
+    case 'image_classification':
+      return (
+        <ImageClassification
           {...props}
           schema={schema}
           value={value as ClassificationAnswer | null}

@@ -9,6 +9,7 @@ import type { TaskSchema } from '~/domain/task-schema';
 function schemaChoices(schema: TaskSchema): { title: string; items: string[] } {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return {
         title: schema.multiple ? 'Labels (pick any)' : 'Labels (pick one)',
         items: schema.labels,

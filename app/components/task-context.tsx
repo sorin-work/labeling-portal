@@ -1,6 +1,8 @@
 import { requiredFields, type TaskSchema } from '~/domain/task-schema';
 
-const HIDDEN = new Set(['id', 'width', 'height']);
+// box imports carry the image size, which the interface reads itself
+const HIDDEN = new Set(['id']);
+const HIDDEN_FOR_BOXES = new Set(['width', 'height']);
 
 /** Extra columns from the import (source, url, language, ...) shown as context. */
 export function TaskContext({
@@ -12,7 +14,11 @@ export function TaskContext({
 }) {
   const used = new Set(requiredFields(schema));
   const extra = Object.entries(data).filter(
-    ([key, value]) => !used.has(key) && !HIDDEN.has(key) && value !== '',
+    ([key, value]) =>
+      !used.has(key) &&
+      !HIDDEN.has(key) &&
+      !(schema.kind === 'bbox' && HIDDEN_FOR_BOXES.has(key)) &&
+      value !== '',
   );
   if (extra.length === 0) return null;
   return (
