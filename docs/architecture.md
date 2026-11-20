@@ -136,10 +136,47 @@ and the extra slots on the task's own row, so a task that is full (waiting for
 review, say) is passed over without a query per task. A claim past its time
 limit stays counted until it is marked expired, so `claimNextTask` and
 `countAvailable` first mark expired claims with the same `now`; after that the
-counter is exactly what the old per-task count gave. The trigger takes a lock
-on the task row when an assignment enters or leaves those two states (a new
-claim, a skip, a release, an expiry): such a write now waits for a claim that
-holds the same task row, for the moment that claim takes.
+counter is exactly what the old per-task count gave.
+
+**Lock order: the task row before the assignment row.** When an assignment
+enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release, an expiry,
+a deletion), the trigger updates its task's row, which takes that row's
+`FOR NO KEY UPDATE` lock. So every transaction that writes an assignment
+takes its task row first, with `lockTaskOfAssignment` in `lib/db.server.ts`
+(or, for a claim, the pick's `FOR UPDATE`): submit, skip, release, the expiry
+of a late submission, a resubmission, a review decision and the overturn of a
+dispute. Gold scoring reads the expected answer under that same
+`FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock can never be
+upgraded in a circle. Expiry of many claims (`expireClaims`) first locks all
+their tasks in id order and only then writes the claims, so two expiries and a
+submission cannot cycle either. Writes that never change an assignment's state
+and never lock a task (draft saves, extensions, review holds) take only the
+assignment row. As a backstop, `retryOnLockConflict` runs the queue's transactions (claim, submit, skip, release, expiry) once more if PostgreSQL still aborts one with a deadlock (40P01) or a serialization failure (40001). The cost: writers of the same task queue on its
+row for the moment each takes, including annotators submitting the same gold
+task. `tests/integration/lock-order.test.ts` holds the locks from a second
+connection and checks the order.
+
+The migration puts the trigger in place and fills the counters in one
+statement, with the `Assignment` table locked against writes, so nothing
+written while the app runs is missed. To check the counters, or to repair them
+after a restore that skipped triggers:
+
+```sql
+-- tasks whose counter disagrees with their assignments
+SELECT t.id, t."takenSlots", c.n
+FROM "Task" t
+LEFT JOIN (
+  SELECT "taskId", count(*)::int AS n FROM "Assignment"
+  WHERE status IN ('ACTIVE', 'SUBMITTED') GROUP BY "taskId"
+) c ON c."taskId" = t.id
+WHERE t."takenSlots" <> COALESCE(c.n, 0);
+
+-- set them right (run inside BEGIN; LOCK TABLE "Assignment" IN SHARE ROW EXCLUSIVE MODE; ... COMMIT;)
+UPDATE "Task" t SET "takenSlots" = COALESCE((
+  SELECT count(*)::int FROM "Assignment" a
+  WHERE a."taskId" = t.id AND a.status IN ('ACTIVE', 'SUBMITTED')
+), 0);
+```
 
 ## Review sampling
 
