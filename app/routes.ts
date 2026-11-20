@@ -5,6 +5,7 @@ export default [
   route('logout', 'routes/logout.tsx'),
   route('healthz', 'routes/healthz.ts'),
   route('payouts/export', 'routes/payouts-export.ts'),
+  route('audit/export', 'routes/audit-export.ts'),
   route('projects/:projectId/download', 'routes/project-download.ts'),
   route('projects/:projectId/example', 'routes/project-sample.ts'),
   route('projects/:projectId/quality.csv', 'routes/project-quality-export.ts'),
@@ -20,6 +21,7 @@ export default [
     route('payouts', 'routes/payouts.tsx'),
     route('earnings', 'routes/earnings.tsx'),
     route('people', 'routes/people.tsx'),
+    route('audit', 'routes/audit.tsx'),
     route('account', 'routes/account.tsx'),
     route('my-work/:assignmentId', 'routes/my-work-revise.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
