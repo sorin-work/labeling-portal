@@ -495,7 +495,8 @@ and next", which a live region announces; span and box changes, the time
 left and a failed draft save are said too. The list of shortcuts is a modal
 dialog that keeps and gives back focus. `text-slate-400` is gone, `aria-sort`
 is on the `<th>` and each rationale has its own id. More time can be asked for
-three times per claim (a new `extensions` column). A `dom` test project runs
+three times per claim, each in the last two minutes (a new `extensions`
+column); a first submission is still credited at most two time limits. A `dom` test project runs
 axe over the four interfaces and the main pages, with one shared helper and
 only `color-contrast` switched off; contrast is worked out from the
 stylesheet in a unit test instead. Different from the design: the contrast

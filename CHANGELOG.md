@@ -90,7 +90,9 @@
   are said aloud
 - The list of shortcuts holds focus while it is open and gives it back when
   it closes; so do the skip form and the armed approval
-- More time can be asked for up to three times per claim instead of once
+- More time can be asked for up to three times per claim instead of once,
+  each time in the last two minutes; the server refuses it earlier. A first
+  submission is still credited at most two time limits
 - Hints, key caps and meta text are darker (`text-slate-500`, 4.5:1 or more)
 - Tests: a `dom` test project (jsdom, Testing Library, `vitest-axe`) checks
   the interfaces and the main pages with axe, and a unit test works out the

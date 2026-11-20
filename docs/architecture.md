@@ -45,8 +45,11 @@ tests/integration/  loaders and actions against a real PostgreSQL
    the annotator can ask for more time, up to three times per claim
    (`MAX_EXTENSIONS` in `domain/time-limit.ts`), and each time adds another
    full limit. Three leaves room for people who need longer and keeps one
-   person from sitting on a task for ever. `extendAssignment` only updates the
-   claim as it read it, so two requests at once count once.
+   person from sitting on a task for ever. `extendAssignment` refuses a
+   request outside the last two minutes (`inExtendWindow`), so extensions
+   cannot be stacked, and only updates the claim as it read it, so two
+   requests at once count once. However many extensions a claim got, its
+   first submission is credited at most two limits (see "Pay").
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. A text without
@@ -454,8 +457,10 @@ What a keyboard or screen reader user gets, and where it is checked.
   reason. The only one is `color-contrast`, because jsdom computes no
   colours: `tests/unit/contrast.test.ts` reads Tailwind's palette from the
   theme the stylesheet imports, finds every text colour class in `app/` and
-  the background it sits on (its own class string, else the page and card
-  surfaces, else a listed parent), and works the ratios out
+  the background it sits on, in every state the class string names (a
+  hover or focus background is checked with the text colour in effect then):
+  its own class string first, else a parent background listed for that file,
+  else the page and card surfaces. It works the ratios out
   (`domain/contrast.ts`). It also checks the focus ring (3:1) and the text on
   the default entity colours. Small key tests in `tests/dom` cover the
   entity cursor, the radio groups, the shortcut list, the box list and the
@@ -650,10 +655,14 @@ same way.
   and no two credits overlap.
 - The submit and resubmit transactions lock the person's membership row
   first, so two submissions of one person are credited one after the other.
-  The stretches are written back merged. A credit reaches back at most 24
-  hours (`CREDIT_WINDOW_MS`): a claim lives at most two time limits of at
-  most 480 minutes each, and a revision, which has no deadline, is credited
-  only in the last day before it is handed in. Stretches that end before
+  The stretches are written back merged. A credit reaches back as far as the
+  longest claim can live (`CREDIT_WINDOW_MS`, which is `MAX_CLAIM_MS`: a time
+  limit of at most 480 minutes and three extensions, 32 hours), so no claim
+  is cut off; a revision, which has no deadline, is credited only within that
+  far back. A first submission is credited at most two time limits
+  (`FIRST_SUBMISSION_LIMITS`), however many extensions it got: extensions
+  give the time to finish, and the credit stays where it was with one
+  extension, so the total of three limits per assignment still holds. Stretches that end before
   that are removed, so the table holds a few rows per person.
 - The clock is per organisation and not per project, so the same minutes
   cannot be paid on two projects. A person in two organisations has two
