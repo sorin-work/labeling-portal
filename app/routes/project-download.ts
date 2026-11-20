@@ -2,7 +2,9 @@ import { findExportFormat, type ExportContext } from '~/domain/export';
 import { KIND_LABELS } from '~/domain/task-schema';
 import { MAX_ZIP_ENTRIES } from '~/domain/zip';
 import { requireUser } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
 import { badRequest } from '~/lib/http';
+import { logActivity } from '~/models/activity.server';
 import { countExportTasks, exportTasks } from '~/models/export.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -69,6 +71,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     );
   }
 
+  // who took the labels, and in which form; recorded before the first byte goes out
+  await logActivity(prisma, {
+    orgId: project.orgId,
+    projectId: project.id,
+    actorId: current.user.id,
+    action: 'export.labels',
+    detail: { projectName: project.name, format: format.name, scope, batch: batchId, annotators },
+  });
   const context: ExportContext = { schema, projectName: project.name, now: new Date() };
   const tasks = exportTasks(project, { scope, batchId, annotators, needs: format.needs });
   return new Response(stream(format.write(context, tasks)), {

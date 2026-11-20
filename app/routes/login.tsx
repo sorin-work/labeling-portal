@@ -2,9 +2,11 @@ import { data, Form, redirect, useNavigation, useSearchParams } from 'react-rout
 
 import { Alert, Button, Field, Input } from '~/components/ui';
 import { authenticate, getCurrentUser } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
 import { loginLimiter } from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
 import { createUserSession } from '~/lib/session.server';
+import { logActivity } from '~/models/activity.server';
 
 import type { Route } from './+types/login';
 
@@ -36,6 +38,7 @@ export async function action({ request }: Route.ActionArgs) {
   const key = email.trim().toLowerCase();
   const limit = loginLimiter.hit(key);
   if (!limit.allowed) {
+    if (limit.justLocked) await recordLockout(key);
     const minutes = Math.ceil(limit.retryAfterSeconds / 60);
     return data(
       {
@@ -50,11 +53,31 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
   loginLimiter.reset(key);
+  await logActivity(prisma, {
+    orgId: result.membership.orgId,
+    actorId: result.user.id,
+    action: 'auth.signed_in',
+  });
   return createUserSession(
     request,
     { userId: result.user.id, orgId: result.membership.orgId },
     next,
   );
+}
+
+/**
+ * A lockout is recorded for an account that exists, in the organisation it
+ * signs in to, with the account as the actor. An email nobody has records
+ * nothing, so the sign-in form is not a way for anyone to write to the log.
+ */
+async function recordLockout(email: string) {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { memberships: { orderBy: { createdAt: 'asc' }, take: 1 } },
+  });
+  const membership = user?.memberships[0];
+  if (!user || !membership) return;
+  await logActivity(prisma, { orgId: membership.orgId, actorId: user.id, action: 'auth.locked' });
 }
 
 export default function Login({ loaderData, actionData }: Route.ComponentProps) {

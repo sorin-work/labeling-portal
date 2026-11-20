@@ -10,18 +10,26 @@ export class RateLimiter {
     private readonly windowMs: number,
   ) {}
 
-  /** Records an attempt and says whether it is allowed. */
-  hit(key: string, now = Date.now()): { allowed: boolean; retryAfterSeconds: number } {
+  /**
+   * Records an attempt and says whether it is allowed. `justLocked` is true
+   * for the first attempt that is refused in a window, so a lockout can be
+   * recorded once.
+   */
+  hit(
+    key: string,
+    now = Date.now(),
+  ): { allowed: boolean; retryAfterSeconds: number; justLocked: boolean } {
     const entry = this.hits.get(key);
     if (!entry || entry.resetAt <= now) {
       this.hits.set(key, { count: 1, resetAt: now + this.windowMs });
       this.prune(now);
-      return { allowed: true, retryAfterSeconds: 0 };
+      return { allowed: true, retryAfterSeconds: 0, justLocked: false };
     }
     entry.count += 1;
     return {
       allowed: entry.count <= this.limit,
       retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000),
+      justLocked: entry.count === this.limit + 1,
     };
   }
 
