@@ -6,6 +6,7 @@ import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
+import { blockedByDispute } from './disputes.server';
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
@@ -266,23 +267,27 @@ export async function skipAssignment(
 
 /**
  * Replaces the answer on a submission a reviewer sent back and puts it in the
- * review queue again. Only the annotator who made it can do this.
+ * review queue again. Only the annotator who made it can do this, and not
+ * while they dispute the decision: it is revise or dispute, never both.
  */
 export async function resubmitAssignment(
   assignmentId: string,
   userId: string,
   answer: Prisma.InputJsonValue,
   now = new Date(),
-): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
-  const result = await prisma.assignment.updateMany({
-    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-    data: { answer, reviewStatus: 'PENDING', submittedAt: now, reviewedAt: null },
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const result = await tx.assignment.updateMany({
+      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      data: { answer, reviewStatus: 'PENDING', submittedAt: now, reviewedAt: null },
+    });
+    if (result.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
   });
-  if (result.count === 0) {
-    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
-    return { ok: false, error: exists ? 'not_active' : 'not_found' };
-  }
-  return { ok: true };
 }
 
 /** Hands a claim back without an answer so someone else can take it. */
