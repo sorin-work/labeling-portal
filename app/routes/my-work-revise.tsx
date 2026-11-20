@@ -53,9 +53,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   const decision = assignment.reviews.at(0) ?? null;
+  const disputes = annotatorDisputeState(
+    {
+      reviewStatus: assignment.reviewStatus,
+      annotatorId: user.id,
+      review: decision,
+      windowDays: assignment.project.disputeWindowDays,
+      resolvers: decision
+        ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
+        : 0,
+    },
+    new Date(),
+  );
+  const mode = assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const);
   return {
     userId: user.id,
-    mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
+    mode,
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
     projectName: assignment.project.name,
@@ -66,18 +79,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     draftNote: droppedNote(schema, draft.dropped),
     draftSeconds: assignment.draftSeconds,
     feedback: assignment.reviews[0]?.feedback ?? '',
-    ...annotatorDisputeState(
-      {
-        reviewStatus: assignment.reviewStatus,
-        annotatorId: user.id,
-        review: decision,
-        windowDays: assignment.project.disputeWindowDays,
-        resolvers: decision
-          ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
-          : 0,
-      },
-      new Date(),
-    ),
+    ...disputes,
+    // The answer can only change, and the draft be saved, on a revision that
+    // is not disputed. While a dispute is open the page is read-only and the
+    // draft route refuses saves, so the page does not send any.
+    editable: mode === 'revise' && disputes.dispute?.status !== 'OPEN',
   };
 }
 
@@ -138,8 +144,8 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   // revising is work too: on an hourly project this time is paid. It is
   // saved with the draft, so a reload does not start the count again
-  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds);
-  const disputeOpen = loaderData.dispute?.status === 'OPEN';
+  const { editable } = loaderData;
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds, editable);
   const disputePanel = (
     <DisputePanel
       dispute={loaderData.dispute}
@@ -157,6 +163,8 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
     seconds: mode === 'revise' ? activeSeconds : 0,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
+    // a withdrawn dispute reloads this page's data, and saving starts then
+    paused: !editable,
     onRecover: (unsaved) => {
       raiseActiveSeconds(unsaved.seconds);
       const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
@@ -227,12 +235,12 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
         <LabelingInterface
           schema={schema}
           data={taskData}
-          value={disputeOpen ? answer : value}
+          value={editable ? value : answer}
           onChange={setValue}
-          readOnly={disputeOpen}
+          readOnly={!editable}
         />
       </Card>
-      {!disputeOpen && (
+      {editable && (
         <Form method="post" className="flex items-center gap-3">
           <input type="hidden" name="answer" value={JSON.stringify(value)} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
