@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { resubmitAssignment } from '~/models/queue.server';
+import { resubmitAssignment, saveRevisionDraft } from '~/models/queue.server';
 import { recordReview } from '~/models/reviews.server';
 import { loader as earningsLoader } from '~/routes/earnings';
-import { action as reviseAction } from '~/routes/my-work-revise';
+import { action as reviseDraftAction } from '~/routes/my-work-draft';
+import { action as reviseAction, loader as reviseLoader } from '~/routes/my-work-revise';
 import { loader as exportLoader } from '~/routes/payouts-export';
 import { loader as payoutsLoader } from '~/routes/payouts';
 
@@ -474,6 +475,73 @@ describe('the day work becomes payable', () => {
     expect(
       await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } }),
     ).toMatchObject({ reviewStatus: 'PENDING', activeSeconds: 30 + 45 });
+  });
+});
+
+describe('revising time and drafts', () => {
+  beforeEach(resetDb);
+
+  it('keeps the revising time with the draft, so a reload does not lose it', async () => {
+    const { org, project, ann } = await setup();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const submission = await submitWork(project, ann.id, { labels: ['positive'] });
+    const sentBackAt = new Date(Date.now() - 10 * 60_000);
+    await recordReview(
+      submission.id,
+      reviewer.id,
+      { decision: 'SEND_BACK', qaScore: 2, feedback: 'Look again.' },
+      sentBackAt,
+    );
+    const cookie = await cookieFor(ann, org.id);
+    const path = `/my-work/${submission.id}`;
+    const params = { assignmentId: submission.id };
+    const saveTime = async (activeSeconds: string) => {
+      const response = (await run(
+        reviseDraftAction,
+        makeRequest(`${path}/draft`, { cookie, form: { activeSeconds } }),
+        params,
+      )) as Response;
+      return { status: response.status, body: await response.json() };
+    };
+
+    // the page saves its time every half minute, without a changed answer
+    expect(await saveTime('40')).toEqual({ status: 200, body: { ok: true, draftSeconds: 40 } });
+    // an older tab cannot take seconds away
+    expect((await saveTime('25')).body).toEqual({ ok: true, draftSeconds: 40 });
+    // and four minutes after the review nobody has spent more than four minutes
+    expect(
+      await saveRevisionDraft(
+        submission.id,
+        ann.id,
+        { activeSeconds: 99_999 },
+        new Date(sentBackAt.getTime() + 240_000),
+      ),
+    ).toEqual({ ok: true, draftSeconds: 240 });
+
+    // after a reload the page counts on from there
+    const page = payload<{ draftSeconds: number }>(
+      await run(reviseLoader, makeRequest(path, { cookie }), params),
+    );
+    expect(page.draftSeconds).toBe(240);
+
+    // and a form that lost its count still hands in what was saved
+    await run(
+      reviseAction,
+      makeRequest(path, {
+        cookie,
+        form: { answer: JSON.stringify({ labels: ['negative'] }), activeSeconds: '0' },
+      }),
+      params,
+    );
+    expect(
+      await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } }),
+    ).toMatchObject({
+      reviewStatus: 'PENDING',
+      activeSeconds: 30 + 240,
+      draft: null,
+      draftSeconds: 0,
+    });
   });
 });
 
