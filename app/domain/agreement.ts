@@ -1,5 +1,5 @@
 import type { Answer, ClassificationAnswer, PairwiseAnswer } from './answers';
-import type { TaskSchema } from './task-schema';
+import type { SchemaKind, TaskSchema } from './task-schema';
 
 /**
  * Inter-annotator agreement for categorical answers. Classification labels
@@ -20,17 +20,24 @@ export function categoricalValue(schema: TaskSchema, answer: Answer): string | n
   }
 }
 
-/** True for the kinds that get kappa: those with a categorical value. */
+/**
+ * An answer of each kind, only to ask `categoricalValue` whether the kind has
+ * a categorical value. `Record<SchemaKind, ...>` makes a new kind name one.
+ */
+const PROBES: Record<SchemaKind, Answer> = {
+  text_classification: { labels: [] },
+  image_classification: { labels: [] },
+  pairwise: { preference: 'A', scores: { a: {}, b: {} }, rationale: '' },
+  ner: { spans: [] },
+  bbox: { boxes: [], imageWidth: 1, imageHeight: 1 },
+};
+
+/**
+ * True for the kinds that get kappa. It is not a second list: it asks
+ * `categoricalValue`, so the two cannot disagree.
+ */
 export function isCategorical(schema: TaskSchema): boolean {
-  switch (schema.kind) {
-    case 'text_classification':
-    case 'image_classification':
-    case 'pairwise':
-      return true;
-    case 'ner':
-    case 'bbox':
-      return false;
-  }
+  return categoricalValue(schema, PROBES[schema.kind]) !== null;
 }
 
 /** Cohen's kappa for two raters who labelled the same items. */

@@ -175,8 +175,10 @@ moderate, substantial, almost perfect).
 Image classification counts as categorical, like text classification: its
 label sets get kappa. Entity and box projects use F1 between annotators
 instead; the page shows the mean agreement of completed tasks. Which kinds
-are categorical is decided in one place, `isCategorical` and
-`categoricalValue` in `app/domain/agreement.ts`, which name every kind.
+are categorical is decided by `categoricalValue` in
+`app/domain/agreement.ts`, which names every kind and has no default.
+`isCategorical`, which the quality page asks, is derived from it, so the
+two cannot disagree.
 
 ## Consensus
 
