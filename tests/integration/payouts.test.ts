@@ -7,6 +7,7 @@ import {
   saveRevisionDraft,
   submitAssignment,
 } from '~/models/queue.server';
+import { removePerson } from '~/models/people.server';
 import { recordReview } from '~/models/reviews.server';
 import { loader as earningsLoader } from '~/routes/earnings';
 import { action as reviseDraftAction } from '~/routes/my-work-draft';
@@ -1003,22 +1004,99 @@ describe('one working clock per person', () => {
     expect(await seconds([work[0].id, claim.assignment.id])).toEqual([30 + 900, 600]);
   });
 
-  it('keeps the moment on the membership, and moves it only by what was credited', async () => {
-    const { org, ann, work } = await sentBackWork(1);
-    const clock = () =>
-      prisma.membership.findUniqueOrThrow({
-        where: { orgId_userId: { orgId: org.id, userId: ann.id } },
-        select: { creditedUntil: true },
-      });
-    // the first submission: claimed at 09:00, credited 30 seconds
-    expect((await clock()).creditedUntil).toEqual(new Date('2026-03-10T09:00:30Z'));
+  it('pays a claim in full when a revision started after it was handed in first', async () => {
+    const { org, project, ann } = await setup();
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { reviewRequired: true, timeLimitMinutes: 60 },
+    });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const earlier = await submitWork(
+      project,
+      ann.id,
+      { labels: ['positive'] },
+      {
+        now: new Date('2026-03-10T08:00:00Z'),
+      },
+    );
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const claim = await claimNextTask(fresh, ann.id, new Date('2026-03-10T09:00:00Z'));
+    if (!claim.ok) throw new Error(claim.reason);
+    // the earlier work comes back at 09:10 and is revised by 09:15
+    await recordReview(
+      earlier.id,
+      reviewer.id,
+      { decision: 'SEND_BACK', qaScore: 2, feedback: 'Again.' },
+      new Date('2026-03-10T09:10:00Z'),
+    );
+    await resubmitAssignment(
+      earlier.id,
+      ann.id,
+      { answer: { labels: ['negative'] }, activeSeconds: 300 },
+      new Date('2026-03-10T09:15:00Z'),
+    );
+    // the claim, handed in at 09:30 after 25 minutes of work, gets all 25
+    const submitted = await submitAssignment(
+      claim.assignment.id,
+      ann.id,
+      { answer: { labels: ['positive'] }, activeSeconds: 1500, reviewRequired: true },
+      new Date('2026-03-10T09:30:00Z'),
+    );
+    expect(submitted.ok && submitted.assignment.activeSeconds).toBe(1500);
+    // the stretches are kept merged: 08:00 to 08:00:30, then 09:00 to 09:30
+    const stretches = await prisma.creditedInterval.findMany({
+      where: { orgId: org.id, userId: ann.id },
+      orderBy: { start: 'asc' },
+      select: { start: true, end: true },
+    });
+    expect(stretches).toEqual([
+      { start: new Date('2026-03-10T08:00:00Z'), end: new Date('2026-03-10T08:00:30Z') },
+      { start: new Date('2026-03-10T09:00:00Z'), end: new Date('2026-03-10T09:30:00Z') },
+    ]);
+  });
+
+  it('remembers what was credited when a person is removed and added again', async () => {
+    const { org, ann, work, seconds } = await sentBackWork(2);
+    const ids = work.map((submission) => submission.id);
+    const before = await seconds(ids);
+    const resubmit = (id: string) =>
+      resubmitAssignment(
+        id,
+        ann.id,
+        { answer: { labels: ['negative'] }, activeSeconds: 1200 },
+        new Date('2026-03-10T09:50:00Z'),
+      );
+    expect(await resubmit(ids[0])).toEqual({ ok: true });
+    const admin = await createMember(org.id, 'ADMIN');
+    expect(await removePerson(org.id, admin.id, ann.id)).toMatchObject({ ok: true });
+    await prisma.membership.create({ data: { orgId: org.id, userId: ann.id, role: 'ANNOTATOR' } });
+    expect(await resubmit(ids[1])).toEqual({ ok: true });
+    const after = await seconds(ids);
+    expect(after.map((value, i) => value - before[i])).toEqual([1200, 0]);
+  });
+
+  it('keeps two clocks for a person in two organisations', async () => {
+    const { ann, work, seconds } = await sentBackWork(1);
+    const other = await createOrg('Other');
+    await prisma.membership.create({
+      data: { orgId: other.id, userId: ann.id, role: 'ANNOTATOR' },
+    });
+    await prisma.creditedInterval.create({
+      data: {
+        orgId: other.id,
+        userId: ann.id,
+        start: new Date('2026-03-10T09:00:00Z'),
+        end: new Date('2026-03-10T10:00:00Z'),
+      },
+    });
     await resubmitAssignment(
       work[0].id,
       ann.id,
-      { answer: { labels: ['negative'] }, activeSeconds: 0 },
+      { answer: { labels: ['negative'] }, activeSeconds: 600 },
       new Date('2026-03-10T09:50:00Z'),
     );
-    expect((await clock()).creditedUntil).toEqual(new Date('2026-03-10T09:00:30Z'));
+    // the time credited in the other organisation does not count here
+    expect(await seconds([work[0].id])).toEqual([30 + 600]);
   });
 });
 
