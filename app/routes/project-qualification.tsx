@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
 import type { Answer } from '~/domain/answers';
+import { restoreTestAnswers } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { forbidden } from '~/lib/http';
@@ -65,6 +66,33 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
   const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const navigation = useNavigation();
+
+  // The test has no row to keep a draft on, so the answers so far stay in this
+  // browser tab, tagged with the attempt they belong to. They come back after
+  // hydration, like the choices `useRemembered` keeps.
+  const storageKey = `labeling-portal:qualification:${project.id}`;
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(storageKey);
+      const restored = restoreTestAnswers(schema, tasks, status.attempts, stored);
+      if (Object.keys(restored).length > 0) setAnswers(restored);
+    } catch {
+      // storage can be disabled; the test still works without it
+    }
+  }, [storageKey, schema, tasks, status.attempts]);
+
+  useEffect(() => {
+    if (Object.keys(answers).length === 0) return;
+    try {
+      window.sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({ attempt: status.attempts, answers }),
+      );
+    } catch {
+      // ignore
+    }
+  }, [storageKey, status.attempts, answers]);
+
   const answered = tasks.filter((t) => answers[t.id]).length;
 
   return (
