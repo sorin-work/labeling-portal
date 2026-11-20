@@ -369,7 +369,11 @@ breaking one of them loses backups:
   does not count towards `BACKUP_KEEP`. Sorted by name such dumps would pass
   for the newest ones and push the real dumps out. Every start and every dump
   logs a warning that names them. If every dump is dated in the future the
-  loop waits a full interval before its first dump.
+  loop waits a full interval before its first dump. The date is checked by
+  writing it back as a name: busybox `date` in the postgres image turns
+  `2026-02-31` into 3 March instead of refusing it, so a dump whose date does
+  not come back as the same name counts as one with a date that does not
+  exist.
 - After every attempt, whether it worked or not, the loop pauses before the
   next one, and it waits in steps of a minute with a look at the clock after
   each, so a suspended machine still gets its daily dump.

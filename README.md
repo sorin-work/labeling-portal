@@ -142,8 +142,9 @@ left alone: rename a dump to keep it for good. How old a dump is, and which
 ones are the oldest, is read from the time in the file name and never from
 the file's modification time.
 
-A dump dated in the future is what a wrong clock leaves behind. Such dumps
-are left out everywhere:
+A dump dated in the future is what a wrong clock leaves behind. Such dumps,
+and dumps whose name holds a date that does not exist, are left out
+everywhere:
 
 - They do not say how old the newest dump is. The newest dump that is not
   dated in the future decides, so next to an older dump a new one is made at
