@@ -14,7 +14,8 @@ import {
  *
  * "Stored answers" are submissions, reviewer corrections, gold answers,
  * consensus answers, the answer a dispute was about (once the submission has
- * moved on from it) and the answers of qualification attempts.
+ * moved on from it), the expected answers a gold task had before it was
+ * edited, and the answers of qualification attempts.
  */
 export type SchemaUsage = {
   /** Imported tasks, gold and qualification tasks included. */

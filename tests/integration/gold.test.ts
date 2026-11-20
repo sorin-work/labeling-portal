@@ -434,6 +434,12 @@ describe('changing a gold answer', () => {
     const usage = await schemaUsage(s.project.id);
     expect(usage.names.get('neutral')).toBe(1);
     expect(usage.names.get('negative')).toBe(2);
+    // changed back and forth, every answer the task ever had still counts once
+    await s.post(wrong.id, editForm('neutral', 'Back again.'));
+    await s.post(wrong.id, editForm('negative', 'And once more.'));
+    const later = await schemaUsage(s.project.id);
+    expect(later.names.get('neutral')).toBe(1);
+    expect(later.names.get('negative')).toBe(2);
     const refused = await run(
       settingsAction,
       makeRequest(`/projects/${s.project.id}/settings`, {

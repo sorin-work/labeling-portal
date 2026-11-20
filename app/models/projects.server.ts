@@ -129,9 +129,13 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       FROM "Dispute" d JOIN "Assignment" a ON a.id = d."assignmentId"
       WHERE a."projectId" = ${projectId} AND d.answer IS DISTINCT FROM a.answer
       UNION ALL
-      SELECT g."previousAnswer"
-      FROM "GoldRevision" g JOIN "Task" t ON t.id = g."taskId"
-      WHERE t."projectId" = ${projectId}
+      SELECT earlier."previousAnswer"
+      FROM (
+        SELECT DISTINCT g."taskId", g."previousAnswer"
+        FROM "GoldRevision" g JOIN "Task" t ON t.id = g."taskId"
+        WHERE t."projectId" = ${projectId}
+          AND g."previousAnswer" IS DISTINCT FROM t."goldAnswer"
+      ) earlier
       UNION ALL
       SELECT e.value
       FROM "QualificationAttempt" q
