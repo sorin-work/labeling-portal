@@ -4,6 +4,7 @@ import { Badge, cx } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
+import { countAdjudication } from '~/models/adjudication.server';
 import { countOpenDisputes } from '~/models/disputes.server';
 import { requireProject } from '~/models/projects.server';
 import { countPendingReviews } from '~/models/reviews.server';
@@ -16,9 +17,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const role = current.membership.role;
   const pendingReviews = can(role, 'review') ? await countPendingReviews(project.id) : 0;
   const openDisputes = can(role, 'review') ? await countOpenDisputes(project.id) : 0;
+  const adjudication = can(role, 'review') ? await countAdjudication(project.id) : 0;
   return {
     pendingReviews,
     openDisputes,
+    adjudication,
+    // the tab is there while the rule is on, or while tasks still wait for it
+    lowAgreement: project.agreementThreshold !== null || adjudication > 0,
     project: {
       id: project.id,
       name: project.name,
@@ -45,6 +50,12 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
       label: 'Disputes',
       show: can.review,
       count: loaderData.openDisputes,
+    },
+    {
+      to: `${base}/adjudication`,
+      label: 'Adjudication',
+      show: can.review && loaderData.lowAgreement,
+      count: loaderData.adjudication,
     },
     { to: `${base}/quality`, label: 'Quality', show: can.quality },
     { to: `${base}/batches`, label: 'Batches', show: can.manage },

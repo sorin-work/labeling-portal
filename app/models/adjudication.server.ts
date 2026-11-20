@@ -155,6 +155,8 @@ export async function listAdjudication(projectId: string, userId: string) {
   return tasks.map((task) => ({
     id: task.id,
     position: task.position,
+    externalId: task.externalId,
+    data: task.data,
     batch: task.batch.name,
     agreement: task.agreement,
     answers: task.assignments.length,

@@ -1,22 +1,30 @@
 import { data, Form, Link, useNavigation } from 'react-router';
 
+import { AdjudicationPanel } from '~/components/adjudication-panel';
 import { CopyButton } from '~/components/copy-button';
 import { GoldPanel } from '~/components/gold-panel';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Badge, Button, Card, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
+import { consensusSource, parseAdjudicationNote } from '~/domain/adjudication';
 import { parseAnswerJson, type Answer } from '~/domain/answers';
 import { formatGoldScore, parseGoldReason } from '~/domain/gold';
-import { finalAnswer } from '~/domain/outcome';
+import { finalAnswer, isAccepted } from '~/domain/outcome';
 import { assignmentRef } from '~/domain/reference';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDateTime, REVIEW_BADGES, titleCase } from '~/lib/format';
+import { formatDateTime, REVIEW_BADGES, TASK_STATUS_BADGES, titleCase } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest, forbidden, notFound } from '~/lib/http';
 import { can } from '~/lib/permissions';
+import {
+  adjudicateTask,
+  sendToAdjudication,
+  type AdjudicationChoice,
+  type AdjudicationRefusal,
+} from '~/models/adjudication.server';
 import {
   applyRescore,
   editGoldAnswer,
@@ -44,6 +52,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     where: { id: params.taskId, projectId: project.id },
     include: {
       batch: { select: { id: true, name: true } },
+      adjudicatedBy: { select: { name: true } },
       assignments: {
         orderBy: { claimedAt: 'asc' },
         include: {
@@ -63,6 +72,26 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // reviewers see that a task is gold and how each answer scored, as before
   const canManage = can(role, 'manageProjects');
   const gold = canManage ? await goldTaskView(project, task.id) : null;
+  // who labeled the task (a submission or a claim being worked on) cannot settle it
+  const labeled = task.assignments.some(
+    (a) => a.userId === current.user.id && (a.status === 'SUBMITTED' || a.status === 'ACTIVE'),
+  );
+  const adjudication =
+    task.status === 'ADJUDICATION'
+      ? {
+          threshold: project.agreementThreshold,
+          extraSlots: task.extraSlots,
+          choices: task.assignments
+            .filter((a) => a.status === 'SUBMITTED' && isAccepted(a.reviewStatus))
+            .map((a) => ({ assignmentId: a.id, annotator: a.user.name })),
+          hasConsensus: task.consensus !== null,
+          refusal: !can(role, 'review')
+            ? 'Reviewers settle tasks in adjudication.'
+            : labeled
+              ? 'You labeled this task, so someone else has to settle it.'
+              : null,
+        }
+      : null;
 
   return {
     projectId: project.id,
@@ -76,6 +105,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       !task.isQualification &&
       task.status === 'COMPLETE' &&
       task.consensus !== null,
+    adjudication,
+    // a task that waits for an extra annotator nobody may be left to be
+    canEscalate: canManage && task.status === 'OPEN' && task.extraSlots > 0,
     task: {
       id: task.id,
       externalId: task.externalId,
@@ -86,6 +118,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       data: task.data as Record<string, unknown>,
       consensus: task.consensus as Answer | null,
       agreement: task.agreement,
+      extraSlots: task.extraSlots,
+      source: consensusSource(task),
+      adjudicated: task.adjudicatedAt
+        ? {
+            by: task.adjudicatedBy?.name ?? 'Someone',
+            at: task.adjudicatedAt,
+            note: task.adjudicatedNote ?? '',
+          }
+        : null,
       batch: task.batch,
     },
     assignments: task.assignments.map((a) => ({
@@ -129,13 +170,74 @@ const REFUSALS: Record<GoldRefusal['error'], string> = {
   invalid: 'The expected answer is not valid.',
 };
 
-/** POST: what a manager does to a gold task. Everything here needs `manageProjects`. */
+const ADJUDICATION_REFUSALS: Record<Exclude<AdjudicationRefusal['error'], 'invalid'>, string> = {
+  not_found: 'Task not found.',
+  not_waiting: 'This task is not waiting for adjudication any more.',
+  own_work: 'You labeled this task, so someone else has to settle it.',
+  no_consensus: 'The answers have no consensus to keep.',
+  no_submission: 'That answer is not one of the accepted answers of this task.',
+};
+
+/**
+ * POST: settling a task in adjudication needs `review`; everything else here
+ * (gold tasks, sending a task to adjudication) needs `manageProjects`.
+ */
 export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
-  const project = await requireProject(current, params.projectId, 'manageProjects');
   const form = await request.formData();
   const intent = String(form.get('intent') ?? '');
+  const project = await requireProject(
+    current,
+    params.projectId,
+    intent === 'adjudicate' ? 'review' : 'manageProjects',
+  );
   const here = `/projects/${project.id}/tasks/${params.taskId}`;
+
+  if (intent === 'adjudicate') {
+    const note = parseAdjudicationNote(form.get('note'));
+    if (!note.ok) return data({ error: note.error }, { status: 400 });
+    const kind = String(form.get('kind') ?? '');
+    let choice: AdjudicationChoice;
+    if (kind === 'consensus') choice = { kind };
+    else if (kind === 'submission') {
+      choice = { kind, assignmentId: String(form.get('assignmentId') ?? '') };
+    } else if (kind === 'own') choice = { kind, answer: parseAnswerJson(form.get('answer')) };
+    else throw badRequest('Choose how to settle the task');
+    const result = await adjudicateTask(
+      project,
+      params.taskId,
+      current.user.id,
+      choice,
+      note.value,
+    );
+    if (!result.ok) {
+      if (result.error === 'not_found') throw notFound('Task not found');
+      if (result.error === 'invalid') {
+        return data({ error: `The answer is not valid: ${result.message}` }, { status: 400 });
+      }
+      return data(
+        { error: ADJUDICATION_REFUSALS[result.error] },
+        { status: result.error === 'own_work' ? 403 : 409 },
+      );
+    }
+    return redirectWithFlash(
+      request,
+      here,
+      'Settled. The chosen answer is the result of this task.',
+    );
+  }
+
+  if (intent === 'escalate') {
+    const result = await sendToAdjudication(project, params.taskId, current.user.id);
+    if (!result.ok && result.error === 'not_found') throw notFound('Task not found');
+    if (!result.ok) {
+      return data(
+        { error: 'Only a task that waits for an extra annotator can be sent to adjudication.' },
+        { status: 409 },
+      );
+    }
+    return redirectWithFlash(request, here, 'Sent to adjudication.');
+  }
   const refuse = (refusal: GoldRefusal) => {
     if (refusal.error === 'not_found') throw notFound('Task not found');
     const message =
@@ -220,7 +322,17 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { projectId, schema, task, assignments, gold, canUseAsGold, openBatches } = loaderData;
+  const {
+    projectId,
+    schema,
+    task,
+    assignments,
+    gold,
+    canUseAsGold,
+    openBatches,
+    adjudication,
+    canEscalate,
+  } = loaderData;
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
   const submitted = assignments.filter((a) => a.answer);
@@ -249,9 +361,14 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
               {task.batch.name}
             </Link>{' '}
             ·{' '}
-            <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
-              {titleCase(task.status)}
+            <Badge tone={TASK_STATUS_BADGES[task.status].tone}>
+              {TASK_STATUS_BADGES[task.status].label}
             </Badge>
+            {task.source === 'adjudicated' && (
+              <span className="ml-1">
+                <Badge tone="sky">Adjudicated</Badge>
+              </span>
+            )}
             {task.isGold && (
               <span className="ml-1">
                 <Badge tone="amber">{task.goldRetired ? 'Gold, retired' : 'Gold'}</Badge>
@@ -265,6 +382,29 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
       />
 
       {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {adjudication && (
+        <AdjudicationPanel
+          key={task.id}
+          schema={schema}
+          data={task.data}
+          view={adjudication}
+          busy={busy}
+        />
+      )}
+      {canEscalate && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <p className="text-slate-600">
+            The answers agreed too little, so this task waits for{' '}
+            {task.extraSlots === 1 ? 'an extra annotator' : 'extra annotators'}. When nobody is left
+            who could take it, send it to adjudication now.
+          </p>
+          <Form method="post">
+            <Button name="intent" value="escalate" variant="secondary" disabled={busy}>
+              Send to adjudication
+            </Button>
+          </Form>
+        </Card>
+      )}
       {gold && (gold.isGold || gold.isQualification) && (
         <GoldPanel
           key={task.id}
@@ -327,8 +467,14 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
       {task.consensus && (
         <Card>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Consensus
+            {task.status === 'ADJUDICATION' ? 'Consensus so far' : 'Consensus'}
           </h2>
+          {task.adjudicated && (
+            <p className="mb-3 text-sm text-slate-600">
+              Adjudicated by {task.adjudicated.by} on {formatDateTime(task.adjudicated.at)}: “
+              {task.adjudicated.note}”
+            </p>
+          )}
           <LabelingInterface
             schema={schema}
             data={task.data}
