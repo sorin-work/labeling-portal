@@ -259,9 +259,9 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             >
               {project.name}
             </Link>
-            <span className="ml-2 text-xs text-slate-400">{task.batch}</span>
+            <span className="ml-2 text-xs text-slate-500">{task.batch}</span>
             <span
-              className="ml-2 font-mono text-xs text-slate-400"
+              className="ml-2 font-mono text-xs text-slate-500"
               title="Quote this reference when you report a problem with this task"
             >
               ref {task.ref}

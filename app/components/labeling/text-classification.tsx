@@ -39,7 +39,7 @@ export function TextClassification({
       <div>
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
           {schema.multiple ? 'Pick every label that applies' : 'Pick one label'}
-          {!readOnly && <span className="ml-2 normal-case text-slate-400">(or press its key)</span>}
+          {!readOnly && <span className="ml-2 normal-case text-slate-500">(or press its key)</span>}
         </div>
         <div className="flex flex-wrap gap-2" role={schema.multiple ? 'group' : 'radiogroup'}>
           {schema.labels.map((label, index) => {
@@ -63,7 +63,7 @@ export function TextClassification({
                   <kbd
                     className={cx(
                       'mr-1.5 font-mono text-xs',
-                      active ? 'text-indigo-200' : 'text-slate-400',
+                      active ? 'text-indigo-100' : 'text-slate-500',
                     )}
                   >
                     {keys[index]}

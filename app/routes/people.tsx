@@ -125,7 +125,7 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                         name="intent"
                         value="remove"
                         variant="ghost"
-                        className="text-rose-600"
+                        className="text-rose-700"
                       >
                         Remove
                       </Button>

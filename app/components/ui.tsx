@@ -35,7 +35,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cx(
-        'block w-full rounded-md border-0 px-3 py-2 text-sm shadow-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-600',
+        'block w-full rounded-md border-0 px-3 py-2 text-sm shadow-sm ring-1 ring-slate-300 placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-600',
         className,
       )}
       {...props}
@@ -64,7 +64,7 @@ export function Field({
       {children}
       {hint && !error && <p className="text-xs text-slate-500">{hint}</p>}
       {error && (
-        <p className="text-xs text-rose-600" role="alert">
+        <p className="text-xs text-rose-700" role="alert">
           {error}
         </p>
       )}

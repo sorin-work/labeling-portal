@@ -115,7 +115,7 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
             <ul className="max-h-60 space-y-1 overflow-y-auto font-mono text-xs">
               {result.errors.map((e, i) => (
                 <li key={i}>
-                  {e.line > 0 && <span className="text-slate-400">line {e.line}: </span>}
+                  {e.line > 0 && <span className="text-slate-500">line {e.line}: </span>}
                   {e.message}
                 </li>
               ))}

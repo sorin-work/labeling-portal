@@ -239,7 +239,7 @@ export function GoldPanel({
                 <span className="font-medium">{r.by}</span> {CHANGE_WORDS[r.change]}
                 {r.change === 'EDITED' && ` from “${r.from}” to “${r.to}”`}
                 {r.change === 'CREATED' && r.to && ` with “${r.to}”`}
-                <span className="text-slate-400"> · {formatDateTime(r.at)}</span>
+                <span className="text-slate-500"> · {formatDateTime(r.at)}</span>
                 <div className="text-slate-500">{r.reason}</div>
               </li>
             ))}

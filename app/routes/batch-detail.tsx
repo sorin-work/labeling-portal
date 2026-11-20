@@ -175,7 +175,7 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
               if (!confirm('Delete this batch and all of its tasks?')) event.preventDefault();
             }}
           >
-            <Button name="intent" value="delete" variant="ghost" className="text-rose-600">
+            <Button name="intent" value="delete" variant="ghost" className="text-rose-700">
               Delete batch
             </Button>
           </Form>
@@ -273,14 +273,14 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
                       />
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-400">{task.position}</td>
+                  <td className="px-4 py-2 text-slate-500">{task.position}</td>
                   <td className="max-w-0 px-4 py-2">
                     <Link
                       to={`/projects/${projectId}/tasks/${task.id}`}
                       className="block truncate hover:text-indigo-700"
                     >
                       {task.externalId && (
-                        <span className="mr-2 font-mono text-xs text-slate-400">
+                        <span className="mr-2 font-mono text-xs text-slate-500">
                           {task.externalId}
                         </span>
                       )}

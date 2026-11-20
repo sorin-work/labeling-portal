@@ -119,7 +119,7 @@ export default function ProjectDispute({ loaderData, actionData }: Route.Compone
         </h2>
         <Badge tone={badge.tone}>{badge.label}</Badge>
         {task.externalId && (
-          <span className="font-mono text-xs text-slate-400">{task.externalId}</span>
+          <span className="font-mono text-xs text-slate-500">{task.externalId}</span>
         )}
       </div>
 

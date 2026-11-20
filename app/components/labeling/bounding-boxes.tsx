@@ -41,6 +41,7 @@ import {
   type History,
 } from '~/domain/history';
 import { interfaceShortcut, isNativeKey, isTextEntry, labelKeys } from '~/domain/hotkeys';
+import { BOX_COLORS } from '~/domain/palette';
 import type { BboxSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
@@ -48,8 +49,6 @@ import { cx } from '../ui';
 import type { LabelingProps } from './index';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
-
-const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899'];
 
 const NO_BOXES: Box[] = [];
 
@@ -143,7 +142,7 @@ export function BoundingBoxes({
     schema.labels[0],
     schema.labels,
   );
-  const colorOf = (label: string) => COLORS[schema.labels.indexOf(label) % COLORS.length];
+  const colorOf = (label: string) => BOX_COLORS[schema.labels.indexOf(label) % BOX_COLORS.length];
   const keys = labelKeys(schema.labels.length);
 
   // ---------- the answer and its history ----------
@@ -586,7 +585,7 @@ export function BoundingBoxes({
               >
                 <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: colorOf(label) }} />
                 {keys[index] && (
-                  <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>
+                  <kbd className="font-mono text-xs text-slate-500">{keys[index]}</kbd>
                 )}
                 {label}
               </button>
@@ -806,7 +805,7 @@ export function BoundingBoxes({
                   style={{ backgroundColor: colorOf(box.label) }}
                 />
                 {box.label}
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500">
                   {Math.round(box.w)}×{Math.round(box.h)}
                 </span>
               </button>
@@ -815,7 +814,7 @@ export function BoundingBoxes({
                   type="button"
                   aria-label={`Remove ${box.label} box`}
                   onClick={() => removeBox(i)}
-                  className="text-slate-400 hover:text-rose-600"
+                  className="text-slate-500 hover:text-rose-700"
                 >
                   ×
                 </button>

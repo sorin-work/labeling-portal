@@ -154,7 +154,7 @@ export function PairwiseRubric({
             <section key={side} className="rounded-md ring-1 ring-slate-200">
               <h3 className="flex justify-between border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold">
                 Response {side}
-                <span className="font-normal text-slate-400">
+                <span className="font-normal text-slate-500">
                   {words} word{words === 1 ? '' : 's'}
                 </span>
               </h3>
@@ -171,7 +171,7 @@ export function PairwiseRubric({
             <th className="py-1">
               Dimension
               {!readOnly && (
-                <span className="ml-2 normal-case text-slate-400">
+                <span className="ml-2 normal-case text-slate-500">
                   (keys {interfaceShortcut(schema, ['score'])}, row by row)
                 </span>
               )}
@@ -215,7 +215,7 @@ export function PairwiseRubric({
         <legend className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
           Overall preference
           {!readOnly && (
-            <span className="ml-2 normal-case text-slate-400">
+            <span className="ml-2 normal-case text-slate-500">
               (keys {interfaceShortcut(schema, ['preferA', 'preferB', 'preferTie'])})
             </span>
           )}

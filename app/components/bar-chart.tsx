@@ -39,7 +39,7 @@ export function BarChart({ bars, height = 120 }: { bars: Bar[]; height?: number 
           );
         })}
       </svg>
-      <figcaption className="mt-1 flex justify-between text-xs text-slate-400">
+      <figcaption className="mt-1 flex justify-between text-xs text-slate-500">
         <span>{bars[0]?.label}</span>
         <span>{bars[bars.length - 1]?.label}</span>
       </figcaption>

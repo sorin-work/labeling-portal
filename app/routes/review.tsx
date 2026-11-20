@@ -324,7 +324,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
                 Quality score{' '}
-                <span className="font-normal text-slate-400">
+                <span className="font-normal text-slate-500">
                   (keys {pageShortcut('review', 'score')})
                 </span>
               </legend>
@@ -363,7 +363,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                 className="mt-1 block w-full rounded-md px-3 py-2 text-sm font-normal ring-1 ring-slate-300"
                 placeholder="Required when sending work back"
               />
-              <span className="mt-0.5 block text-right text-xs font-normal text-slate-400">
+              <span className="mt-0.5 block text-right text-xs font-normal text-slate-500">
                 {feedback.length} / 2000
               </span>
             </label>
@@ -451,7 +451,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                     <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{h.feedback}</p>
                   )}
                   <div
-                    className="text-xs text-slate-400"
+                    className="text-xs text-slate-500"
                     title={formatDateTime(h.createdAt)}
                     suppressHydrationWarning
                   >

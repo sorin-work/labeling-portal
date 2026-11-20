@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { NerAnswer, Span } from '~/domain/answers';
 import { interfaceShortcut, isTextEntry, labelKeys } from '~/domain/hotkeys';
+import { ENTITY_COLORS, ENTITY_TINT } from '~/domain/palette';
 import {
   addSpan,
   relabelSpan,
@@ -18,11 +19,9 @@ import type { LabelingProps } from './index';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
-const FALLBACK_COLORS = ['#f59e0b', '#6366f1', '#10b981', '#ef4444', '#0ea5e9', '#a855f7'];
-
 function colorFor(schema: NerSchema, label: string): string {
   const index = schema.entities.findIndex((e) => e.name === label);
-  return schema.entities[index]?.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+  return schema.entities[index]?.color ?? ENTITY_COLORS[index % ENTITY_COLORS.length];
 }
 
 /** Offset of a DOM position inside the text, using the data-start of its segment. */
@@ -146,7 +145,7 @@ export function NerSpans({
                 className="h-3 w-3 rounded-sm"
                 style={{ backgroundColor: colorFor(schema, entity.name) }}
               />
-              {keys[index] && <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>}
+              {keys[index] && <kbd className="font-mono text-xs text-slate-500">{keys[index]}</kbd>}
               {entity.name}
             </button>
           ))}
@@ -169,7 +168,7 @@ export function NerSpans({
                 !readOnly && 'cursor-pointer',
                 same(segment, picked) && 'ring-2 ring-slate-800',
               )}
-              style={{ backgroundColor: `${colorFor(schema, segment.span.label)}55` }}
+              style={{ backgroundColor: `${colorFor(schema, segment.span.label)}${ENTITY_TINT}` }}
             >
               {segment.text}
               <sup className="ml-0.5 select-none text-[10px] font-semibold uppercase text-slate-600">
@@ -234,7 +233,7 @@ export function NerSpans({
                     type="button"
                     aria-label={`Remove ${span.label} “${spanText(text, span)}”`}
                     onClick={() => remove(span)}
-                    className="text-slate-400 hover:text-rose-600"
+                    className="text-slate-500 hover:text-rose-700"
                   >
                     ×
                   </button>

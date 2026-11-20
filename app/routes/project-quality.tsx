@@ -212,7 +212,7 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                   className="min-w-0 flex-1 truncate hover:text-indigo-700"
                 >
                   {g.externalId && (
-                    <span className="mr-2 font-mono text-xs text-slate-400">{g.externalId}</span>
+                    <span className="mr-2 font-mono text-xs text-slate-500">{g.externalId}</span>
                   )}
                   {g.preview}
                 </Link>
@@ -255,7 +255,7 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
               {agreement.pairs.map((p) => (
                 <li key={`${p.a}-${p.b}`} className="flex justify-between px-4 py-2">
                   <span>
-                    {p.a} &amp; {p.b} <span className="text-slate-400">({p.shared} shared)</span>
+                    {p.a} &amp; {p.b} <span className="text-slate-500">({p.shared} shared)</span>
                   </span>
                   <span>
                     {p.kappa === null ? '–' : p.kappa.toFixed(2)}{' '}
