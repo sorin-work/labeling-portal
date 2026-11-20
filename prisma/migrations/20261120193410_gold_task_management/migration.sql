@@ -4,6 +4,10 @@ CREATE TYPE "GoldChange" AS ENUM ('CREATED', 'EDITED', 'RETIRED', 'RESTORED');
 -- AlterTable
 ALTER TABLE "Project" ADD COLUMN     "goldFeedback" BOOLEAN NOT NULL DEFAULT true;
 
+-- Projects that exist now never showed annotators their gold results. Turning
+-- that on is for their managers to decide; new projects start with it on.
+UPDATE "Project" SET "goldFeedback" = false;
+
 -- AlterTable
 ALTER TABLE "Task" ADD COLUMN     "goldRetiredAt" TIMESTAMP(3),
 ADD COLUMN     "goldSourceId" TEXT;
