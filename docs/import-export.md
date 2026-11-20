@@ -241,6 +241,10 @@ the new task, after the same checks any gold answer gets, so tasks with a
 consensus come back as gold tasks (or as test questions, with "qualification
 test" ticked) and the others as ordinary tasks.
 
+- A file is taken for an export by its shape: a JSON object with `task_id`,
+  `data`, `consensus` and `annotations`, or a CSV file with the columns
+  `task_id`, `annotator`, `answer` and `data`. Anything else is read as
+  ordinary rows.
 - The annotations of the single annotators are not imported. They belong to
   people and reviews in the project they came from.
 - A gold answer for a pairwise task is the preference. The rubric scores of a
