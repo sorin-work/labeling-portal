@@ -44,6 +44,7 @@ Errors are JSON, `{ "error": "..." }`, never a redirect or a page:
 | 405    | The wrong method: reads are `GET`, the upload is `POST`                  |
 | 409    | The project's schema changed while the file was read; send it again      |
 | 413    | The file is larger than 5 MB                                             |
+| 422    | The `Idempotency-Key` was used for another file                          |
 | 429    | Too many requests with this token                                        |
 
 ## Routes
@@ -73,8 +74,9 @@ page takes ([import-export](import-export.md)), with the same limits (5 MB,
 - `Idempotency-Key: <1 to 200 characters>`: send the same upload again with
   the same key and you get the batch the first one made, with
   `"repeated": true`, and nothing is imported twice. The key belongs to the
-  project, for good. It does not compare the files: a different file with a
-  used key also gets the first batch.
+  project, for good, and is kept with the SHA-256 of the body: a different
+  file with a used key answers 422 and imports nothing. Use a new key for a
+  new file.
 
 ```
 curl -X POST \
@@ -96,7 +98,8 @@ many beyond those), `unit` (`line`, or `item` for a JSON array) and
 The same file as the download on the export page, with the same parameters:
 `format` (`jsonl`, `csv`, `coco`, `conll`, `yolo`, `voc`), `scope`
 (`complete` or `all`), `batch` and `annotators=email`. Managers and admins.
-Every download is recorded in the audit trail.
+Every download is recorded in the audit trail; a `HEAD` request gets the
+headers only and is not recorded.
 
 ```
 curl -H "Authorization: Bearer $LP_TOKEN" -o labels.jsonl \

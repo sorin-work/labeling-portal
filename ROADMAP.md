@@ -538,7 +538,9 @@ else under `/api`. Each token may make 120 requests a minute. Different from
 the design: the import page and the API share `importFile`, the download and
 the API share `labelExport`, and the task page and the lookup share
 `requireTaskViewer`, so no check exists twice; the lookup lists every task
-with the external id, as ids are unique only within a file; a repeated
-`Idempotency-Key` returns the first batch without comparing the files; making
+with the external id, as ids are unique only within a file; the key is kept
+with the SHA-256 of the body, and a used key with another file answers 422;
+an `/api/` path refuses the session even in a route that forgets `apiRoute`;
+making
 and revoking tokens is in the audit trail. Still open: webhooks and scopes
 beyond read-only, and the limit is per process like the sign-in limit.
