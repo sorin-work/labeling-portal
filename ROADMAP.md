@@ -165,24 +165,41 @@ every task. Skip has no key. The review page knows `1` to `5` and `a`. The
 list behind `?` (`KeyboardHelp`) is a hard-coded table that only the work page
 shows.
 
-- One description of the shortcuts as data, in a new `domain/hotkeys.ts`: for
-  each page and labeling kind, which key does what. The handlers and
-  `KeyboardHelp` both read it, so the help cannot drift from the behaviour,
-  and the review page can show its own list.
-- Labels beyond nine: `0` for the tenth, then letters, shown on the buttons
-  the way the digits are today. The letters must not collide with the page's
-  own keys.
-- Pairwise scores: a current cell that moves through the rubric (A then B for
-  each dimension). `1` to `5` score the cell and move on, the arrow keys move
-  without scoring. The digits are free in this interface. `a`, `b` and `t`
-  stay.
+- One key map as data, in a new `domain/hotkeys.ts`: for each page (work,
+  review) and labeling kind, which key does what, plus a function that hands
+  out the label keys. The handlers and `KeyboardHelp` both read it, so the
+  help cannot drift from the behaviour, and the review page can show its own
+  list. This item owns the module. Items 8 and 13 add their keys to it, and if
+  one of them is built first it creates the module in this shape with its own
+  keys.
+- Label keys: `1` to `9`, `0` for the tenth, then letters, shown on the
+  buttons the way the digits are today. Letters that the page or the interface
+  uses for something else are skipped: `s` on the work page, `a`, `s` and `e`
+  on the review page, `n` and `f` in the box interface (item 13).
+- Pairwise scores: every score row (one dimension, one side) is a radio group.
+  Inside a group the arrow keys choose, the same as in a native radio group,
+  and Tab moves to the next group. `1` to `5` set the score of the group that
+  has focus and move focus to the next one (A then B for each dimension), so a
+  rubric can be filled in by typing digits. The digits are free in this
+  interface. `a`, `b` and `t` stay. Item 8 asks for the same radio behaviour,
+  so the two items agree and can land in either order.
 - Entities: clicking a span removes it today (`onClick` on the `<mark>` calls
   `removeSpan`), so a span with the wrong type has to be deleted and selected
   again. Make a click select the span; a number then changes its type and
   Delete removes it, as for boxes.
 - Work page: `s` opens the skip form (Escape already closes it). Review page:
-  `s` moves to the feedback box for sending back, `f` starts "Fix it myself",
-  Escape cancels the fix.
+  `s` moves to the feedback box for sending back, `e` starts "Fix it myself",
+  Escape cancels the fix. Not `f`: that is zoom to fit in the box interface
+  (item 13), which the read-only view on the review page has too.
+- `isTyping` in `components/labeling/use-hotkeys.ts` stops the handler for
+  every `INPUT` element, radio buttons and checkboxes included. So shortcuts
+  go dead while a radio has focus (the skip form focuses one today), and they
+  would go dead inside any score group made of real radio inputs. The hook
+  must stop only for text entry: text inputs, textareas, selects and editable
+  content. The arrow keys and Space still belong to a focused radio or
+  checkbox. While the skip form is open the interface keys should stay off,
+  which the focused radio did by accident until now. Items 8 and 13 need this
+  change as well; whichever of the three lands first makes it.
 - Tricky: `useHotkeys` listens on `window` for every mounted interface. The
   qualification test renders one interface per question
   (`routes/project-qualification.tsx`), so pressing `1` there picks the first
@@ -198,10 +215,12 @@ shows.
   next task loads). It is the fastest way to work and the easiest way to
   submit a slip, and there is no way back to a submitted task. I lean towards
   an option per annotator, off by default.
-- Tests: unit tests for the table (no key used twice on one page, keys for 30
-  labels) and for the pairwise cursor as a pure reducer. Key handling inside
-  components cannot be tested until item 8 adds a DOM test setup, so keep the
-  logic outside the components.
+- Tests: unit tests for the map (no key used twice on one page and kind, the
+  read-only interface keys counted on the review page, label keys for 30
+  labels skipping the reserved letters), for the order in which the digits
+  walk through the pairwise groups, and for the "is this text entry" rule as a
+  pure function. Key handling inside components cannot be tested until item 8
+  adds a DOM test setup, so keep the logic outside the components.
 
 ### 4. Review sampling and reviewer reservations
 
@@ -393,11 +412,16 @@ checks any of it. Gaps I already know about:
 
 - Entity spans can only be made with a mouse. `NerSpans` reads
   `window.getSelection()` on `mouseup`, and a span is removed by clicking it.
-  It needs a keyboard path: a cursor that moves word by word, Shift to extend,
-  Enter to apply the active type.
+  It needs a keyboard path: while the text has focus, a cursor that the arrow
+  keys move word by word, Shift with an arrow to extend, Enter to apply the
+  active type.
 - Boxes can only be drawn with a pointer. Item 13 adds moving and resizing by
-  keyboard and a key that drops a new box in the middle of the view. That part
-  lives there, and this item does not wait for it.
+  keyboard and a key (`n`) that drops a new box in the middle of the view.
+  That part lives there, and this item does not wait for it.
+- New keys go into the one key map in `domain/hotkeys.ts` that item 3
+  describes (pages and kinds, key to action, read by the handlers and by
+  `KeyboardHelp`). If that module does not exist yet, create it in that shape
+  with the keys of this item.
 - After "Submit and next" the next task loads without any announcement, and
   focus stays wherever it was. Move focus to the task, or announce it in a
   live region, in `routes/work.tsx`, and move focus to `<main id="main">` on
@@ -406,8 +430,16 @@ checks any of it. Gaps I already know about:
   (`routes/project-quality.tsx`). It belongs on the `<th>`.
 - The score buttons (`ScoreButtons` in `pairwise.tsx`) and the label buttons
   in `text-classification.tsx` have `role="radio"`, but each one is a tab stop
-  and the arrow keys do nothing. Either one tab stop with arrows, or real
-  radio inputs.
+  and the arrow keys do nothing. Make every group behave like a native radio
+  group: one tab stop, and the arrow keys choose. Real radio inputs give that
+  for free. Item 3 describes the same behaviour for the pairwise scores and
+  puts the digits on top of it, so the two items agree whichever lands first.
+- `isTyping` in `components/labeling/use-hotkeys.ts` returns true for every
+  `INPUT` element, so a focused radio or checkbox silences all shortcuts. With
+  real radio inputs in the interfaces the number keys would go dead as soon as
+  a score has focus. The hook must stop only for text inputs, textareas,
+  selects and editable content. Items 3 and 13 need the same change; whichever
+  of the three lands first makes it.
 - `id="rationale"` is fixed in `PairwiseRubric`, so a page with two interfaces
   (the comparison in `routes/my-work-revise.tsx`, the qualification test) has
   the id twice. `useId` fixes it.
@@ -660,14 +692,25 @@ there is no undo: Delete on the wrong box is final.
   `moveBox`, `resizeBox` (flipping when a handle is dragged past the opposite
   edge) and clamping to the image and to `minBoxSize`. The server needs no
   change: `validateBbox` already clamps and rounds.
-- Keyboard: arrows nudge the selected box by one image pixel, with Shift by
-  ten; another modifier resizes; Tab walks through the boxes; `n` drops a new
-  box in the middle of the view, so the tool works without a pointer.
-  `useHotkeys` passes only `event.key` and drops anything pressed with Ctrl,
-  Meta or Alt, so it has to hand over the event.
+- Keyboard: every box can take focus, so Tab walks through them. While a box
+  has focus the arrows nudge it by one image pixel, with Shift by ten, and
+  another modifier resizes. `n` drops a new box in the middle of the view, so
+  the tool works without a pointer. Elsewhere the arrows keep their native
+  meaning, for example in a radio group (items 3 and 8).
 - Zoom and pan: wheel or `+` and `-` around the pointer, drag with Space held
-  to pan, `0` to fit. Read-only views (review before "Fix it myself", the task
-  page, the comparison) get zoom too.
+  to pan, `f` to fit. Not `0`: that is the tenth label (item 3). Read-only
+  views (review before "Fix it myself", the task page, the comparison) get
+  zoom too.
+- These keys go into the one key map in `domain/hotkeys.ts` that item 3
+  describes, so the help list shows them and the test for keys used twice
+  covers them. Label letters skip `n` and `f`. If the module does not exist
+  yet, create it in that shape with the keys of this item.
+- `useHotkeys` needs two changes. It passes only `event.key` and drops
+  anything pressed with Ctrl, Meta or Alt, so it has to hand over the event.
+  And `isTyping` stops it for every `INPUT` element, radios and checkboxes
+  included; it must stop only for text inputs, textareas, selects and editable
+  content. Items 3 and 8 need that second change too; whichever of the three
+  lands first makes it.
 - Undo and redo (`Ctrl+Z`, `Ctrl+Shift+Z`): a small history reducer in
   `domain/` (past, present, future, capped) that `NerSpans` can use as well.
   A whole drag is one entry.
