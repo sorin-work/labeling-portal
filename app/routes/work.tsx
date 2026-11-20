@@ -164,7 +164,16 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect(`/work/${next.assignment.id}`);
 }
 
-export default function Work({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * "Submit and next" moves from one assignment to the next without leaving this
+ * route, so React would keep the page's state. The key makes the answer, the
+ * skip form and the working time start fresh for every task.
+ */
+export default function Work(props: Route.ComponentProps) {
+  return <WorkPage key={props.loaderData.assignment.id} {...props} />;
+}
+
+function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [skipping, setSkipping] = useState(false);
