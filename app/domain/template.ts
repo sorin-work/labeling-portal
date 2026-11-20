@@ -64,6 +64,7 @@ export function sampleFile(schema: TaskSchema, format: 'csv' | 'jsonl'): string 
   const rows = sampleRows(schema);
   if (format === 'jsonl') return rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
   const header = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  // an import file: its cells go back in as they are, so nothing is guarded
   return toCsv(
     header,
     rows.map((r) =>
@@ -72,5 +73,6 @@ export function sampleFile(schema: TaskSchema, format: 'csv' | 'jsonl'): string 
         return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
       }),
     ),
+    'keep',
   );
 }
