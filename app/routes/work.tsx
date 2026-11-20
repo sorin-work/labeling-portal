@@ -22,6 +22,7 @@ import {
   type Answer,
   type ImageSize,
 } from '~/domain/answers';
+import { extensionPayNote } from '~/domain/active-time';
 import { droppedNote, fitDraft } from '~/domain/drafts';
 import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
@@ -98,6 +99,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
       extensionsLeft: extensionsLeft(assignment.extensions),
+      extensionPayNote: extensionPayNote(project.timeLimitMinutes, project.payMode),
       draft: draft.answer,
       draftNote: droppedNote(schema, draft.dropped),
       draftSeconds: assignment.draftSeconds,
@@ -317,6 +319,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}
           extensionsLeft={assignment.extensionsLeft}
+          payNote={assignment.extensionPayNote}
         />
         {instructionsChanged && (
           <Alert tone="info">

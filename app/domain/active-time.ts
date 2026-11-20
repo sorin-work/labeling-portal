@@ -27,6 +27,20 @@ export const MAX_CREDITED_LIMITS = 3;
  */
 export const FIRST_SUBMISSION_LIMITS = 2;
 
+/**
+ * What the extend button says on an hourly project: extensions are time to
+ * finish, and what is worked past the first submission's cap is not paid.
+ * Null on a project paid per task, where time does not change the pay.
+ */
+export function extensionPayNote(
+  limitMinutes: number,
+  payMode: 'PER_TASK' | 'HOURLY',
+): string | null {
+  if (payMode !== 'HOURLY') return null;
+  const paid = Math.max(0, Math.floor(limitMinutes)) * FIRST_SUBMISSION_LIMITS;
+  return `Extra time to finish; time beyond ${paid} minutes is not paid.`;
+}
+
 /** The cap of a first submission, in seconds, for a project's time limit in minutes. */
 export function firstSubmissionCap(limitMinutes: number): number {
   return Number.isFinite(limitMinutes)

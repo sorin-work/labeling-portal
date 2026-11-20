@@ -93,6 +93,9 @@
 - More time can be asked for up to three times per claim instead of once,
   each time in the last two minutes; the server refuses it earlier. A first
   submission is still credited at most two time limits
+- On hourly projects the "I need more time" button says that the extra time
+  is time to finish and that time beyond two time limits is not paid, and the
+  earnings page says the same
 - Hints, key caps and meta text are darker (`text-slate-500`, 4.5:1 or more)
 - Tests: a `dom` test project (jsdom, Testing Library, `vitest-axe`) checks
   the interfaces and the main pages with axe, and a unit test works out the

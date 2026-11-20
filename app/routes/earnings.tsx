@@ -191,8 +191,10 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
           <li>
             Hourly work is paid for active time. That includes the time you spend revising work that
             was sent back, up to the project&apos;s time limit for each revision and three time
-            limits for a task in all. The amount is rounded once, to the nearest cent, for each line
-            above, not for each task. Adding up your tasks one by one can differ by a cent.
+            limits for a task in all. A first submission is paid for at most two time limits: asking
+            for more time gives you time to finish, and time beyond two limits is not paid. The
+            amount is rounded once, to the nearest cent, for each line above, not for each task.
+            Adding up your tasks one by one can differ by a cent.
           </li>
         </ul>
       </Card>

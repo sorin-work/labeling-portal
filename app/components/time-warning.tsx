@@ -12,9 +12,12 @@ import { Button } from './ui';
 export function TimeWarning({
   expiresAt,
   extensionsLeft,
+  payNote,
 }: {
   expiresAt: string;
   extensionsLeft: number;
+  /** on an hourly project: that time past the paid part is not paid (`extensionPayNote`) */
+  payNote: string | null;
 }) {
   const end = new Date(expiresAt).getTime();
   const [left, setLeft] = useState(() => end - Date.now());
@@ -38,8 +41,9 @@ export function TimeWarning({
           </Button>
           <span className="text-xs">
             {extensionsLeft === 1
-              ? 'Last time you can ask'
-              : `You can ask ${extensionsLeft} more times`}
+              ? 'Last time you can ask.'
+              : `You can ask ${extensionsLeft} more times.`}
+            {payNote && ` ${payNote}`}
           </span>
         </Form>
       ) : (

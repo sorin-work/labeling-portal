@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampActiveSeconds,
   CREDIT_WINDOW_MS,
+  extensionPayNote,
   creditHorizon,
   creditTime,
   mergeIntervals,
@@ -189,5 +190,14 @@ describe('mergeIntervals', () => {
     expect(
       mergeIntervals([span(20, 30), span(0, 5), span(5, 10), span(8, 12), span(40, 40)]),
     ).toEqual([span(0, 12), span(20, 30)]);
+  });
+});
+
+describe('extensionPayNote', () => {
+  it('tells an hourly project where the paid time ends, and says nothing per task', () => {
+    expect(extensionPayNote(30, 'HOURLY')).toBe(
+      'Extra time to finish; time beyond 60 minutes is not paid.',
+    );
+    expect(extensionPayNote(30, 'PER_TASK')).toBeNull();
   });
 });

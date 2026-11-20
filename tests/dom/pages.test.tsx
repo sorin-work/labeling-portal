@@ -19,6 +19,7 @@ function workData(kind: Kind, id = 'a1'): Awaited<ReturnType<typeof workLoader>>
       claimedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
       extensionsLeft: 3,
+      extensionPayNote: null,
       draft: null,
       draftNote: null,
       draftSeconds: 0,
