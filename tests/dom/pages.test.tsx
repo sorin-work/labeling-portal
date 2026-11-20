@@ -63,6 +63,23 @@ describe('work page', () => {
     expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Task' }));
   });
 
+  it('hands nothing in while the image has failed, and leaves Skip', async () => {
+    renderPage({
+      path: '/work/:assignmentId',
+      url: '/work/a1',
+      Component: Work,
+      loaderData: workData('image_classification'),
+    });
+    const submit = await screen.findByRole('button', { name: 'Submit and next' });
+    await userEvent.setup().keyboard('1');
+    expect(submit).toHaveProperty('disabled', false);
+    act(() => {
+      screen.getByRole('img', { name: 'The image to classify' }).dispatchEvent(new Event('error'));
+    });
+    expect(submit).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Skip…' })).toHaveProperty('disabled', false);
+  });
+
   it('opens the skip form and gives focus back when it closes', async () => {
     const user = userEvent.setup();
     renderPage({

@@ -3,7 +3,7 @@ import type { ImageClassificationSchema } from '~/domain/task-schema';
 
 import type { LabelingProps } from './index';
 import { LabelChoices, useLabelChoices } from './label-choices';
-import { TaskImage } from './task-image';
+import { TaskImage, useImageFailed, useReportImageFailed } from './task-image';
 
 /**
  * Sorting an image into classes: the image, then the same label buttons and
@@ -16,19 +16,30 @@ export function ImageClassification({
   value,
   onChange,
   readOnly,
+  onImageFailed,
 }: LabelingProps<ImageClassificationSchema, ClassificationAnswer>) {
   const src = String(data[schema.imageField] ?? '');
-  const { selected, toggle, inUse } = useLabelChoices({ schema, value, onChange, readOnly });
+  const image = useImageFailed(src);
+  useReportImageFailed(image.failed, onImageFailed);
+  // nothing can be labelled on a picture nobody can see: labels and keys are
+  // off while it has failed, and the page offers only Skip
+  const locked = Boolean(readOnly) || image.failed;
+  const { selected, toggle, inUse } = useLabelChoices({
+    schema,
+    value,
+    onChange,
+    readOnly: locked,
+  });
   return (
     <div className="space-y-5" {...inUse}>
       <TaskImage
-        key={src}
         src={src}
+        image={image}
         alt="The image to classify"
         readOnly={readOnly}
         className="block max-h-[70vh] max-w-full rounded-md ring-1 ring-slate-200"
       />
-      <LabelChoices schema={schema} selected={selected} toggle={toggle} readOnly={readOnly} />
+      <LabelChoices schema={schema} selected={selected} toggle={toggle} readOnly={locked} />
     </div>
   );
 }

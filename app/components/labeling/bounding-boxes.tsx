@@ -48,7 +48,7 @@ import type { BboxSchema } from '~/domain/task-schema';
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { ImageFailed } from './task-image';
+import { ImageFailed, useReportImageFailed } from './task-image';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
@@ -104,9 +104,10 @@ export function BoundingBoxes({
   data,
   value,
   onChange,
-  readOnly,
+  readOnly: givenReadOnly,
   onImageSize,
   viewKey,
+  onImageFailed,
 }: LabelingProps<BboxSchema, BboxAnswer>) {
   const src = String(data[schema.imageField] ?? '');
   const imageRef = useRef<HTMLImageElement>(null);
@@ -121,6 +122,9 @@ export function BoundingBoxes({
   // an image that does not load: the picture says so and points to Skip
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const failed = failedSrc === src;
+  useReportImageFailed(failed, onImageFailed);
+  // a picture nobody can see takes no boxes: it is read-only while it has failed
+  const readOnly = Boolean(givenReadOnly) || failed;
   useEffect(() => {
     const image = imageRef.current;
     if (image?.complete && image.naturalWidth > 0) {
@@ -832,7 +836,7 @@ export function BoundingBoxes({
           )}
         </div>
       </div>
-      {failed && <ImageFailed src={src} readOnly={readOnly} />}
+      {failed && <ImageFailed src={src} readOnly={givenReadOnly} />}
       <p className="text-sm text-slate-500">{hint}</p>
       <p role="status" className="sr-only">
         {said}

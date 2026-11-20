@@ -155,6 +155,8 @@ export default function Revise(props: Route.ComponentProps) {
 function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
+  // a picture that did not load cannot be revised and handed in again
+  const [imageFailed, setImageFailed] = useState(false);
   const navigation = useNavigation();
   // revising is work too: on an hourly project this time is paid. It is
   // saved with the draft, so a reload does not start the count again
@@ -268,13 +270,14 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
           onChange={setValue}
           readOnly={!editable}
           viewKey={loaderData.id}
+          onImageFailed={setImageFailed}
         />
       </Card>
       {editable && (
         <Form method="post" className="flex items-center gap-3">
           <input type="hidden" name="answer" value={JSON.stringify(value)} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
-          <Button type="submit" disabled={navigation.state !== 'idle'}>
+          <Button type="submit" disabled={navigation.state !== 'idle' || imageFailed}>
             Resubmit for review
           </Button>
           <DraftNote state={draftState} />

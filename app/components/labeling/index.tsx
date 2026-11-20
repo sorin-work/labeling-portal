@@ -28,6 +28,12 @@ export type LabelingProps<S extends TaskSchema = TaskSchema, A = Answer> = {
    * answer.
    */
   viewKey?: string;
+  /**
+   * Image kinds: called with true when the task's image did not load, and
+   * with false when it is there. While it has failed the interface takes no
+   * labels, and the page lets nothing be handed in: Skip is the way on.
+   */
+  onImageFailed?: (failed: boolean) => void;
 };
 
 /** Picks the interface for the project's labeling kind. */

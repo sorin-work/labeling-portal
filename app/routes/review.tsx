@@ -222,7 +222,10 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
     window.addEventListener('pointerdown', disarm);
     return () => window.removeEventListener('pointerdown', disarm);
   }, [armed]);
+  // a picture that did not load can be sent back, not approved or fixed
+  const [imageFailed, setImageFailed] = useState(false);
   const startFix = () => {
+    if (imageFailed) return;
     setArmed(false);
     setFixing(true);
     renewHold();
@@ -239,7 +242,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
     // whatever else is pressed after "a" (the list of shortcuts, too) calls it off
     if (armed && action !== 'approve') setArmed(false);
     if (action === 'score') setScore(Number(key));
-    else if (action === 'armApprove') setArmed(settled);
+    else if (action === 'armApprove') setArmed(settled && !imageFailed);
     else if (action === 'approve') {
       setArmed(false);
       if (settled) approveRef.current?.click();
@@ -289,6 +292,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
             value={fixing ? corrected : assignment.answer}
             onChange={setCorrected}
             readOnly={!fixing}
+            onImageFailed={setImageFailed}
             viewKey={assignment.id}
           />
         </Card>
@@ -384,7 +388,11 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
             <div className="flex flex-wrap gap-2">
               {fixing ? (
                 <>
-                  <Button name="intent" value="fix" disabled={navigation.state !== 'idle'}>
+                  <Button
+                    name="intent"
+                    value="fix"
+                    disabled={navigation.state !== 'idle' || imageFailed}
+                  >
                     Save fix
                   </Button>
                   <Button
@@ -403,7 +411,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                     name="intent"
                     value="approve"
                     title={`Shortcut: ${pageShortcut('review', 'armApprove')}, then ${pageShortcut('review', 'approve')}`}
-                    disabled={navigation.state !== 'idle'}
+                    disabled={navigation.state !== 'idle' || imageFailed}
                     className={cx(armed && 'ring-2 ring-indigo-600 ring-offset-2')}
                   >
                     Approve
@@ -421,6 +429,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                     type="button"
                     variant="ghost"
                     title={`Shortcut: ${pageShortcut('review', 'fix')}`}
+                    disabled={imageFailed}
                     onClick={startFix}
                   >
                     Fix it myself

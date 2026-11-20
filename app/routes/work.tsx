@@ -223,6 +223,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
   // A text without entities or an image without objects is submitted as it
   // is: nothing marked is the answer. For boxes that needs the loaded image.
   const [imageSize, setImageSize] = useState<ImageSize | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
   const toSubmit = answer ?? emptyAnswer(schema, imageSize);
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
@@ -329,6 +330,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
               value={answer}
               onChange={setAnswer}
               onImageSize={setImageSize}
+              onImageFailed={setImageFailed}
               viewKey={assignment.id}
             />
           </Card>
@@ -342,7 +344,8 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
             type="submit"
             name="intent"
             value="submit"
-            disabled={busy || !toSubmit}
+            // a picture that did not load cannot be labelled: Skip is the way on
+            disabled={busy || !toSubmit || imageFailed}
             title={`Shortcut: ${pageShortcut('work', 'submit')}`}
           >
             Submit and next

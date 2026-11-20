@@ -39,17 +39,31 @@ export function useImageFailed(src: string) {
   return { ref, failed: failed === src, onError: () => setFailed(src) };
 }
 
+/** Tells the page when an image fails or loads (`LabelingProps.onImageFailed`). */
+export function useReportImageFailed(failed: boolean, report?: (failed: boolean) => void) {
+  const latest = useRef(report);
+  useEffect(() => {
+    latest.current = report;
+  });
+  useEffect(() => {
+    latest.current?.(failed);
+  }, [failed]);
+}
+
 /** The image of a task, or the message that it did not load. */
 export function TaskImage({
   src,
   alt,
   readOnly,
+  image,
   ...props
-}: { src: string; alt: string; readOnly?: boolean } & Omit<
-  ImgHTMLAttributes<HTMLImageElement>,
-  'src' | 'alt'
->) {
-  const { ref, failed, onError } = useImageFailed(src);
-  if (failed) return <ImageFailed src={src} readOnly={readOnly} />;
-  return <img ref={ref} src={src} alt={alt} onError={onError} {...props} />;
+}: {
+  src: string;
+  alt: string;
+  readOnly?: boolean;
+  /** from `useImageFailed`, when the caller needs to know as well */
+  image: ReturnType<typeof useImageFailed>;
+} & Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt'>) {
+  if (image.failed) return <ImageFailed src={src} readOnly={readOnly} />;
+  return <img ref={image.ref} src={src} alt={alt} onError={image.onError} {...props} />;
 }

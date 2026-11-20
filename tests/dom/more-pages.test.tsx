@@ -1,5 +1,5 @@
-import { screen } from '@testing-library/react';
-import { describe, it } from 'vitest';
+import { act, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 
 import MyWorkRevise, { type loader as reviseLoader } from '~/routes/my-work-revise';
 import Earnings, { type loader as earningsLoader } from '~/routes/earnings';
@@ -379,5 +379,24 @@ describe('manager pages have no axe violations', () => {
     renderPage({ path: '/payouts', url: '/payouts', Component: Payouts, loaderData: payouts });
     await screen.findAllByText('Ann');
     await expectAccessible();
+  });
+});
+
+describe('a review of an image that did not load', () => {
+  it('can be sent back, not approved or fixed', async () => {
+    renderPage({
+      path: '/review/:assignmentId',
+      url: '/review/a1',
+      Component: Review,
+      loaderData: review('image_classification'),
+    });
+    const approve = await screen.findByRole('button', { name: 'Approve' });
+    expect(approve).toHaveProperty('disabled', false);
+    act(() => {
+      screen.getByRole('img', { name: 'The image to classify' }).dispatchEvent(new Event('error'));
+    });
+    expect(approve).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Fix it myself' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Send back' })).toHaveProperty('disabled', false);
   });
 });

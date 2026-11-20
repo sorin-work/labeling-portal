@@ -190,17 +190,26 @@ describe('an image that does not load', () => {
     expect(alert.textContent).toContain('/street.png');
     expect(alert.textContent).toContain('Content is broken or unreadable');
     expect(screen.queryByRole('img')).toBeNull();
-    // the labels stay: what the person sees may still be enough
+    // nothing can be labelled on a picture nobody saw: no key and no click
     await user.keyboard('1');
-    expect(answer).toEqual({ labels: ['person'] });
+    for (const box of screen.getAllByRole('checkbox')) {
+      expect(box).toHaveProperty('disabled', true);
+      await user.click(box);
+    }
+    expect(answer).toBeNull();
     await expectAccessible();
   });
 
-  it('on a box task says the same, under the picture', () => {
-    render(<Labeling kind="bbox" />);
+  it('on a box task says the same, under the picture, and takes no box', async () => {
+    const user = userEvent.setup();
+    let answer: Answer | null = null;
+    render(<Labeling kind="bbox" onAnswer={(a) => (answer = a)} />);
     act(() => {
       screen.getByRole('img', { name: 'Task to label' }).dispatchEvent(new Event('error'));
     });
     expect(screen.getByRole('alert').textContent).toContain('The image did not load.');
+    await user.keyboard('n');
+    expect(answer).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New box' })).toBeNull();
   });
 });
