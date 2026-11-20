@@ -127,6 +127,20 @@ export const sceneRows = [
   { id: 'scene-7', image_url: '/demo/street-missing.svg' },
 ];
 
+/**
+ * The demo's suggestion rule for the news project: a short name list, the
+ * kind a team starts with. It knows some names and misses others on purpose,
+ * so annotators see suggestions that need fixing.
+ */
+export const NEWS_PHRASES = {
+  rule: 'phrases',
+  entities: {
+    PERSON: ['Maria Okonkwo', 'Tomás Herrera', 'Lena Vogt', 'Piotr Nowak'],
+    ORG: ['Brightwater Energy', 'Kestrel Airlines', 'Greenfield Foods'],
+    LOCATION: ['Lagos', 'Porto', 'Valencia', 'Nairobi', 'Hanoi', 'Dublin', 'Cork', 'Lima'],
+  },
+} as const;
+
 export const INSTRUCTIONS = {
   sentiment: `# Product review sentiment
 

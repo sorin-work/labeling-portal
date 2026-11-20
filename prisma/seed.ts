@@ -13,8 +13,12 @@ import {
   seedPairwiseActivity,
   seedSentimentActivity,
 } from './seed-activity';
+import { parsePrelabel, suggest } from '../app/domain/prelabel';
+import { parseTaskSchema } from '../app/domain/task-schema';
+
 import {
   INSTRUCTIONS,
+  NEWS_PHRASES,
   newsRows,
   pairwiseRows,
   reviewRows,
@@ -75,6 +79,8 @@ async function main() {
     /** share of submissions that go to review; everything when left out */
     reviewSamplePercent?: number;
     rows: Array<Record<string, unknown>>;
+    /** a suggestion rule; its suggestions are made here, as an import would */
+    prelabel?: object;
   }> = [
     {
       name: 'Product review sentiment',
@@ -113,6 +119,7 @@ async function main() {
       payMode: 'PER_TASK',
       rateCents: 12,
       rows: newsRows,
+      prelabel: NEWS_PHRASES,
     },
     {
       name: 'Assistant response comparison',
@@ -184,12 +191,22 @@ async function main() {
         payMode: spec.payMode,
         rateCents: spec.rateCents,
         reviewSamplePercent: spec.reviewSamplePercent,
+        prelabel: spec.prelabel as Prisma.InputJsonValue | undefined,
         members: { create: workers.map((u) => ({ userId: u.id })) },
       },
     });
     const batch = await prisma.batch.create({
-      data: { projectId: project.id, name: 'Demo batch', format: 'JSONL' },
+      data: {
+        projectId: project.id,
+        name: 'Demo batch',
+        format: 'JSONL',
+        prelabelState: spec.prelabel ? 'DONE' : null,
+      },
     });
+    const parsedSchema = parseTaskSchema(spec.schema);
+    const rule =
+      spec.prelabel && parsedSchema.ok ? parsePrelabel(spec.prelabel, parsedSchema.schema) : null;
+    const config = rule?.ok ? rule.config : null;
     await prisma.task.createMany({
       data: spec.rows.map((row, i) => {
         const { id, ...data } = row;
@@ -199,6 +216,13 @@ async function main() {
           externalId: String(id),
           position: i + 1,
           data: { id, ...data } as Prisma.InputJsonValue,
+          ...(config && parsedSchema.ok
+            ? {
+                suggestion: (suggest(parsedSchema.schema, data, config) ?? undefined) as
+                  Prisma.InputJsonValue | undefined,
+                suggestionSource: config.rule,
+              }
+            : {}),
         };
       }),
     });
