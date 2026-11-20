@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { reviewerStats } from '~/models/annotator-stats.server';
-import { openDispute, resolveDispute } from '~/models/disputes.server';
+import { openDispute, resolveDispute, withdrawDispute } from '~/models/disputes.server';
 import { payoutReport } from '~/models/payouts.server';
 import { schemaUsage } from '~/models/projects.server';
 import { projectQuality } from '~/models/quality.server';
-import { resubmitAssignment } from '~/models/queue.server';
+import { resubmitAssignment, saveRevisionDraft } from '~/models/queue.server';
+import { action as draftAction } from '~/routes/my-work-draft';
 import { action as reviseAction, loader as reviseLoader } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as disputeAction, loader as disputeLoader } from '~/routes/project-dispute';
@@ -349,7 +350,7 @@ describe('settling a dispute', () => {
     });
   });
 
-  it('makes an overturned send-back approved work, payable from the overturn', async () => {
+  it('makes an overturned send-back approved work and dates it at the overturn', async () => {
     const s = await disputed();
     const overturnedAt = new Date(s.decidedAt.getTime() + 2 * 24 * 60 * 60_000);
 
@@ -363,7 +364,7 @@ describe('settling a dispute', () => {
     ).toEqual({ ok: true });
 
     const after = await stored(s);
-    // dated at the overturn, so it never lands in a period that was already paid
+    // dated at the overturn: that is the day the work became payable
     expect(after).toMatchObject({ reviewStatus: 'APPROVED', reviewedAt: overturnedAt });
     // the decision itself stays on record as it was made
     expect(after.reviews[0]).toEqual({ ...s.decision, overturnedAt });
@@ -376,6 +377,9 @@ describe('settling a dispute', () => {
 
     const task = await prisma.task.findUniqueOrThrow({ where: { id: s.task.id } });
     expect(task).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
+    // The report still selects by the day of submission, so that is where the
+    // work shows up today. It follows `reviewedAt` once the report goes by
+    // the day work became payable (roadmap item 5).
     const day = s.submission.submittedAt!.toISOString().slice(0, 10);
     const report = await payoutReport(s.org.id, { from: day, to: day });
     expect(report.lines).toMatchObject([{ name: 'Ann', tasks: 1 }]);
@@ -496,6 +500,8 @@ describe('settling a dispute', () => {
 
   it('keeps the disputed answer as stored work that a schema edit must respect', async () => {
     const s = await disputed();
+    // while the submission still says the same, it is one stored answer, not two
+    expect((await schemaUsage(s.project.id)).names.get('positive')).toBe(1);
     await settle(s, s.disputeId, s.cookies.second, { intent: 'uphold', resolution: 'Stands' });
     await resubmitAssignment(s.submission.id, s.ann.id, { labels: ['negative'] });
 
@@ -534,5 +540,179 @@ describe('settling a dispute', () => {
       open: [],
       settled: [{ id: s.disputeId, status: 'UPHELD', resolver: 'Sam' }],
     });
+  });
+});
+
+describe('a dispute always has a way out', () => {
+  beforeEach(resetDb);
+
+  it('is not opened when nobody but the deciding reviewer could settle it', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    await createTasks(project.id, [{ text: 'one' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Ann' });
+    const reviewer = await createMember(org.id, 'REVIEWER', { name: 'Rafael' });
+    // a reviewer of the organisation who is not on this project cannot open it
+    const elsewhere = await createMember(org.id, 'REVIEWER', { name: 'Not here' });
+    await addToProject(project.id, ann, reviewer);
+    const submission = await submitWork(project, ann.id, { labels: ['positive'] });
+    await run(
+      reviewAction,
+      makeRequest(`/review/${submission.id}`, {
+        cookie: await cookieFor(reviewer, org.id),
+        form: { intent: 'send_back', feedback: 'Negative.' },
+      }),
+      { assignmentId: submission.id },
+    );
+    const annCookie = await cookieFor(ann, org.id);
+    const form = { intent: 'dispute', reason: 'I was right' };
+
+    const refused = await postMyWork(submission.id, annCookie, form);
+    expect(statusOf(refused)).toBe(409);
+    expect(payload<{ error: string }>(refused).error).toMatch(/Nobody could settle a dispute/);
+    expect(await prisma.dispute.count()).toBe(0);
+    const page = await run(
+      reviseLoader,
+      makeRequest(`/my-work/${submission.id}`, { cookie: annCookie }),
+      { assignmentId: submission.id },
+    );
+    expect(payload<{ disputeUntil: unknown; disputeClosed: string }>(page)).toMatchObject({
+      disputeUntil: null,
+      disputeClosed: expect.stringMatching(/Nobody could/),
+    });
+    // the work is not held up: it can still be revised
+    expect(await resubmitAssignment(submission.id, ann.id, { labels: ['negative'] })).toEqual({
+      ok: true,
+    });
+
+    // with a second reviewer on the project, or any manager, a dispute can be settled
+    await prisma.assignment.update({
+      where: { id: submission.id },
+      data: { reviewStatus: 'SENT_BACK' },
+    });
+    await addToProject(project.id, elsewhere);
+    expect(locationOf(await postMyWork(submission.id, annCookie, form))).toBe(
+      `/my-work/${submission.id}`,
+    );
+  });
+
+  it('lets the annotator withdraw: the work is where it was and can be revised to the end', async () => {
+    const s = await setup();
+    await sendBack(s);
+    await dispute(s);
+    const before = await stored(s);
+
+    // nobody else can withdraw it
+    const other = await createMember(s.org.id, 'ANNOTATOR');
+    const form = { intent: 'withdraw-dispute' };
+    expect(
+      statusOf(await postMyWork(s.submission.id, await cookieFor(other, s.org.id), form)),
+    ).toBe(404);
+    expect(await withdrawDispute(s.submission.id, s.second.id)).toEqual({
+      ok: false,
+      error: 'not_open',
+    });
+
+    expect(locationOf(await postMyWork(s.submission.id, s.cookies.ann, form))).toBe(
+      `/my-work/${s.submission.id}`,
+    );
+    const after = await stored(s);
+    expect(after.disputes[0]).toMatchObject({
+      status: 'WITHDRAWN',
+      resolvedById: null,
+      resolution: null,
+    });
+    expect(after.disputes[0].resolvedAt).not.toBeNull();
+    // the decision stands and the submission is exactly as the review left it
+    expect({ ...after, disputes: [] }).toEqual({ ...before, disputes: [] });
+
+    // it is over: nobody settles it any more, and the decision is not disputed twice
+    const late = await settle(s, after.disputes[0].id, s.cookies.second, {
+      intent: 'overturn',
+      resolution: 'Too late',
+    });
+    expect(statusOf(late)).toBe(409);
+    expect(statusOf(await postMyWork(s.submission.id, s.cookies.ann, form))).toBe(409);
+    expect(statusOf(await dispute(s))).toBe(409);
+
+    // revise, get approved, and the task completes
+    const revised = await postMyWork(s.submission.id, s.cookies.ann, {
+      answer: '{"labels":["negative"]}',
+    });
+    expect(locationOf(revised)).toBe('/my-work?filter=returned');
+    expect(statusOf(await review(s, { intent: 'approve' }))).toBe(302);
+    const task = await prisma.task.findUniqueOrThrow({ where: { id: s.task.id } });
+    expect(task).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['negative'] } });
+  });
+
+  it('leaves fixed work fixed when its dispute is withdrawn', async () => {
+    const s = await setup();
+    await fix(s);
+    await dispute(s);
+
+    expect(await withdrawDispute(s.submission.id, s.ann.id)).toEqual({ ok: true });
+
+    const after = await stored(s);
+    expect(after).toMatchObject({ reviewStatus: 'FIXED', reviews: [{ overturnedAt: null }] });
+    const task = await prisma.task.findUniqueOrThrow({ where: { id: s.task.id } });
+    expect(task).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['negative'] } });
+  });
+
+  it('takes one of a withdrawal and an overturn that arrive at the same moment', async () => {
+    const s = await setup();
+    await sendBack(s);
+    await dispute(s);
+    const { disputes } = await stored(s);
+
+    const [withdrawn, settled] = await Promise.all([
+      withdrawDispute(s.submission.id, s.ann.id),
+      resolveDispute(disputes[0].id, s.pm.id, { outcome: 'OVERTURNED', resolution: 'Right' }),
+    ]);
+
+    expect([withdrawn.ok, settled.ok].filter(Boolean)).toHaveLength(1);
+    const after = await stored(s);
+    if (withdrawn.ok) {
+      expect(after).toMatchObject({
+        reviewStatus: 'SENT_BACK',
+        disputes: [{ status: 'WITHDRAWN' }],
+        reviews: [{ overturnedAt: null }],
+      });
+    } else {
+      expect(after).toMatchObject({
+        reviewStatus: 'APPROVED',
+        disputes: [{ status: 'OVERTURNED' }],
+      });
+      expect(after.reviews[0].overturnedAt).not.toBeNull();
+    }
+  });
+
+  it('saves no revision while a dispute is open, and an overturn leaves no draft behind', async () => {
+    const s = await setup();
+    await sendBack(s);
+    const draft = { labels: ['negative'] };
+    expect(await saveRevisionDraft(s.submission.id, s.ann.id, draft)).toEqual({ ok: true });
+    await dispute(s);
+
+    // revising is refused while the dispute is open, and so is saving a revision
+    expect(await saveRevisionDraft(s.submission.id, s.ann.id, { labels: ['positive'] })).toEqual({
+      ok: false,
+      error: 'disputed',
+    });
+    const request = makeRequest(`/my-work/${s.submission.id}/draft`, {
+      cookie: s.cookies.ann,
+      form: { draft: '{"labels":["positive"]}' },
+    });
+    request.headers.set('Origin', 'http://localhost');
+    const refused = (await run(draftAction, request, {
+      assignmentId: s.submission.id,
+    })) as Response;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: 'disputed' });
+    // what was saved before the dispute waits for its outcome
+    expect((await stored(s)).draft).toEqual(draft);
+
+    const { disputes } = await stored(s);
+    await resolveDispute(disputes[0].id, s.pm.id, { outcome: 'OVERTURNED', resolution: 'Right' });
+    expect(await stored(s)).toMatchObject({ reviewStatus: 'APPROVED', draft: null });
   });
 });

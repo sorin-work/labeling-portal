@@ -14,6 +14,14 @@
   and after, and the activity tab says what changed
 - Pairwise consensus averages only the dimensions of the current rubric
 
+### Importing and labeling
+
+- Drafts: the work page saves the answer in progress and the working time to
+  the server a moment after each change and when the tab is hidden or closed,
+  and a reload continues from there. Revising sent-back work keeps a draft the
+  same way; the qualification test keeps its answers in the browser tab. What
+  is kept in the tab belongs to one user and is removed on sign-out
+
 ### Review and quality
 
 - Review sampling: a project can review a share of its submissions instead of
@@ -33,7 +41,24 @@
   except the reviewer who decided, upholds or overturns it with a note. An
   overturned decision no longer counts in the consensus, the export, the
   quality numbers or the reviewer's stats, and the work counts as approved.
-  Sent-back work cannot be revised while its dispute is open
+  Sent-back work cannot be revised while its dispute is open. The annotator
+  can withdraw an open dispute, and a dispute that nobody but the deciding
+  reviewer could settle is refused with a message that says why
+- Disputes are on for existing projects from the moment this is deployed: the
+  window defaults to 14 days, so every send-back and correction of the last
+  14 days can be disputed at once. Set "Dispute window" to 0 in a project's
+  settings to keep disputes off there
+
+### Operations
+
+- A `backup` service behind a compose profile dumps the database once a day
+  into `./backups` and keeps the newest seven dumps; `backup once` takes a
+  dump right away and `backup restore <file>` loads one into a new database
+  that takes the place of the old one in a single transaction, only when the
+  load worked
+- CI puts the demo data into the test database, dumps it, restores the dump
+  into a scratch database and compares the row counts, and runs the daily
+  loop and the pruning against made-up clocks
 
 ### Fixes
 
@@ -46,6 +71,10 @@
 - A work form posted twice around the time limit could turn the stored
   submission into an expired claim. Skipping and releasing are guarded the
   same way
+- The work page starts fresh for every task: the previous task's answer and
+  working time no longer carry over after "Submit and next"
+- Box projects: the drawing layer no longer goes missing after a reload, when
+  the image came from the browser cache before the page was ready
 
 ## 1.0.0 - 2026-11-08
 

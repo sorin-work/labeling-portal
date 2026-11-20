@@ -104,10 +104,12 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
  * statement so every number comes from the same snapshot. It reads every
  * column that holds answers: `Assignment.answer`, `Review.correctedAnswer`,
  * `Task.goldAnswer`, `Task.consensus`, `Dispute.answer` (the answer as it
- * stood when it was disputed), `GoldRevision.previousAnswer` (the expected
- * answers a gold task had before, which its history still shows; the current
- * one is `Task.goldAnswer`, so each is counted once) and
- * `QualificationAttempt.answers` (a map from task id to answer). Attempt answers are kept as they were posted,
+ * stood when it was disputed, counted only once the submission has been
+ * revised and says something else), `GoldRevision.previousAnswer` (the
+ * expected answers a gold task had before, which its history still shows;
+ * the current one is `Task.goldAnswer`, and no answer is counted twice) and
+ * `QualificationAttempt.answers` (a map from task id to answer). Attempt
+ * answers are kept as they were posted,
  * so nothing here trusts the shape of a value before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
@@ -125,7 +127,7 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       UNION ALL
       SELECT d.answer
       FROM "Dispute" d JOIN "Assignment" a ON a.id = d."assignmentId"
-      WHERE a."projectId" = ${projectId}
+      WHERE a."projectId" = ${projectId} AND d.answer IS DISTINCT FROM a.answer
       UNION ALL
       SELECT g."previousAnswer"
       FROM "GoldRevision" g JOIN "Task" t ON t.id = g."taskId"

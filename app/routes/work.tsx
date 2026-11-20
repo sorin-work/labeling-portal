@@ -3,14 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
+import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
+import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -59,6 +62,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(`/projects/${assignment.projectId}`);
   }
   const { project, task } = assignment;
+  const schema = projectSchema(project);
+  // unfinished work from before a reload; the page starts from it
+  const draft = fitDraft(schema, task.data, assignment.draft);
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
@@ -70,16 +76,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project.instructionsUpdatedAt > lastSubmission.submittedAt,
   );
   return {
+    userId: user.id,
     instructionsChanged,
     assignment: {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
       canExtend: assignment.extendedAt === null,
+      draft: draft.answer,
+      draftNote: droppedNote(schema, draft.dropped),
+      draftSeconds: assignment.draftSeconds,
     },
     project: { id: project.id, name: project.name },
     instructionsHtml: renderMarkdown(project.instructions),
-    schema: projectSchema(project),
+    schema,
     // The task's own id is not sent: a gold task that was added later has a
     // younger id than its neighbours. The page keys on the assignment instead.
     task: {
@@ -166,9 +176,18 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect(`/work/${next.assignment.id}`);
 }
 
-export default function Work({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * "Submit and next" moves from one assignment to the next without leaving this
+ * route, so React would keep the page's state. The key makes the answer, the
+ * skip form, the working time and the autosave start fresh for every task.
+ */
+export default function Work(props: Route.ComponentProps) {
+  return <WorkPage key={props.loaderData.assignment.id} {...props} />;
+}
+
+function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
@@ -183,7 +202,24 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
   }, [skipping]);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
-  const activeSeconds = useActiveTime();
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(assignment.draftSeconds);
+  const draftState = useDraftSave({
+    url: `/work/${assignment.id}/draft`,
+    user: loaderData.userId,
+    answer,
+    seconds: activeSeconds,
+    restored: assignment.draft !== null,
+    // Submit, skip and release end the claim; a save after them would be
+    // refused. Asking for more time and the layout's sign-out do not.
+    handingIn:
+      navigation.formAction === `/work/${assignment.id}` &&
+      navigation.formData?.get('intent') !== 'extend',
+    onRecover: (unsaved) => {
+      const fitted = fitDraft(schema, task.data, unsaved.draft).answer;
+      if (fitted) setAnswer(fitted);
+      raiseActiveSeconds(unsaved.seconds);
+    },
+  });
   const submitRef = useRef<HTMLButtonElement>(null);
 
   // Ctrl/Cmd+Enter submits, even from the rationale box
@@ -223,10 +259,12 @@ export default function Work({ loaderData, actionData }: Route.ComponentProps) {
             >
               Working time {formatDuration(activeSeconds)}
             </span>
+            <DraftNote state={draftState} />
             <Countdown expiresAt={assignment.expiresAt} />
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {assignment.draftNote && <Alert tone="info">{assignment.draftNote}</Alert>}
         <TimeWarning
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}

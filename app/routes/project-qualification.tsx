@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
 import type { Answer } from '~/domain/answers';
+import { packTestAnswers, restoreTestAnswers, testAnswersKey } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { forbidden } from '~/lib/http';
@@ -31,6 +32,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     status.qualified || status.attemptsLeft === 0 ? [] : await qualificationTasks(project.id);
   const result = new URL(request.url).searchParams.get('result');
   return {
+    userId: current.user.id,
     project: { id: project.id, name: project.name },
     schema: projectSchema(project),
     status,
@@ -65,6 +67,43 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
   const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const navigation = useNavigation();
+
+  // The test has no row to keep a draft on, so the answers so far stay in this
+  // browser tab, under the user and the attempt they belong to. They come back
+  // after hydration, like the choices `useRemembered` keeps. Handing the test
+  // in removes them, and so does signing out.
+  const { userId } = loaderData;
+  const storageKey = testAnswersKey(userId, project.id);
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(storageKey);
+      const owner = { user: userId, attempt: status.attempts };
+      const restored = restoreTestAnswers(schema, tasks, owner, stored);
+      if (Object.keys(restored).length > 0) setAnswers(restored);
+    } catch {
+      // storage can be disabled; the test still works without it
+    }
+  }, [storageKey, userId, schema, tasks, status.attempts]);
+
+  // `actionData` is here so that a test that came back with an error is kept again
+  useEffect(() => {
+    if (Object.keys(answers).length === 0) return;
+    try {
+      const owner = { user: userId, attempt: status.attempts };
+      window.sessionStorage.setItem(storageKey, packTestAnswers(owner, answers));
+    } catch {
+      // ignore
+    }
+  }, [storageKey, userId, status.attempts, answers, actionData]);
+
+  const forget = () => {
+    try {
+      window.sessionStorage.removeItem(storageKey);
+    } catch {
+      // ignore
+    }
+  };
+
   const answered = tasks.filter((t) => answers[t.id]).length;
 
   return (
@@ -111,7 +150,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
                 />
               </Card>
             ))}
-            <Form method="post" className="flex items-center gap-3">
+            <Form method="post" className="flex items-center gap-3" onSubmit={forget}>
               <input type="hidden" name="answers" value={JSON.stringify(answers)} />
               <Button
                 type="submit"

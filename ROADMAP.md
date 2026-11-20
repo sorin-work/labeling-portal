@@ -34,13 +34,13 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 
 | #   | Item                                         | Group   | Area          | Size | Depends on |
 | --- | -------------------------------------------- | ------- | ------------- | ---- | ---------- |
-| 1   | Drafts that survive a reload                 | Next    | labeling      | S    | -          |
+| 1   | Drafts that survive a reload                 | Shipped | labeling      | S    | -          |
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
-| 7   | Scheduled backups                            | Next    | ops           | S    | -          |
+| 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
@@ -54,60 +54,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
-
-### 1. Drafts that survive a reload
-
-On the work page the answer lives only in React state (the `answer` state in
-`routes/work.tsx` starts as `null`). A reload, a closed tab or a browser crash
-throws away twenty drawn boxes or a half-written rationale. The working time
-goes with it: `useActiveTime` starts again from zero, which on an hourly
-project is lost pay.
-
-The same state is also kept when it should go. `Work` is not remounted when
-"Submit and next" moves from one `/work/:assignmentId` to the next (only
-`LabelingInterface` has a `key`), so the next task opens with the previous
-task's answer still in `answer` and the submit button enabled, and the seconds
-counter runs on across tasks.
-
-- First, reset per assignment: render the body of the page under
-  `key={assignment.id}`, so `answer`, the skip form and `useActiveTime` start
-  fresh for every task. This fixes the carry-over that exists today, and the
-  rest of the item depends on it: without it the first autosave on a new task
-  would store the previous task's answer and seconds as the new draft.
-- Data: `draft Json?` and `draftSeconds Int @default(0)` on `Assignment`.
-- A new `intent=draft` branch in the `work.tsx` action, next to `extend`,
-  `release` and `skip`. It calls a new `saveDraft` in `models/queue.server.ts`
-  that uses the same `ownActive` check as the others and stores the seconds
-  through `clampActiveSeconds`. It answers with JSON and does not redirect.
-- The loader returns the draft. With the key in place the component starts
-  `answer` from it, and `useActiveTime` takes `draftSeconds` as a starting
-  value, so after a reload the counter continues instead of restarting.
-- The page saves through `useFetcher` a few seconds after the last change and
-  when the tab is hidden, and shows "Draft saved" next to the working time.
-- Tricky: a draft is not a valid answer. A pairwise draft starts with
-  `preference: null` (the `EMPTY` constant in
-  `components/labeling/pairwise.tsx`), so drafts are stored without
-  `validateAnswer` and only checked for size (say 200 KB). Submitting still
-  validates.
-- Tricky: `submitAssignment`, `skipAssignment` and `releaseAssignment` should
-  clear the draft, so finished rows do not carry it around.
-- Tricky: the same task open in two tabs. The last save wins, which is fine,
-  because only the submit counts.
-- Related: revising sent-back work (`routes/my-work-revise.tsx`) and the
-  qualification test (`routes/project-qualification.tsx`, several questions in
-  one form) lose their state the same way. The revise page can use the same
-  column, with its own guard because that assignment is `SUBMITTED`, not
-  `ACTIVE`. The test has no row to hang a draft on; `sessionStorage`, as in
-  `useRemembered`, is enough there.
-- Undecided: a draft on the server or only in `localStorage`. I lean towards
-  the server: it follows the annotator to another device, it keeps the working
-  time honest, and nothing is left behind on a shared computer.
-- Tests: next to the work route tests in `tests/integration/queue.test.ts`:
-  save and load again, seconds are clamped, cleared on submit, the next
-  assignment's loader returns no draft, not found for someone else's
-  assignment, refused once the claim is no longer active. The reset between
-  tasks is component behaviour; a test for it has to wait for the DOM test
-  setup of item 8.
 
 ### 3. Hotkeys for every action
 
@@ -281,35 +227,6 @@ ordinary JSON array is rejected line by line ("Not valid JSON").
 - Tests: `tests/unit/export.test.ts` and `tests/unit/import.test.ts` for the
   writers and readers, `tests/integration/export.test.ts` for the downloads.
   `docs/import-export.md` gets the new formats.
-
-### 7. Scheduled backups
-
-Everything lives in the `db-data` volume of `docker-compose.yml` and there is
-no backup. The label export is no substitute: it leaves out reviews, gold
-answers, pay data, accounts and project settings.
-
-- A `backup` service behind a compose profile, using the same
-  `postgres:17-alpine` image as `db`, that runs `pg_dump --format=custom` once
-  a day into a mounted folder and keeps the last N dumps. The script goes in
-  `docker/backup.sh` next to `entrypoint.sh`. `docker compose run --rm backup`
-  should take one dump right away.
-- A "Backup and restore" section in the README with the restore command. An
-  older dump restored under a newer app is fine: `docker/entrypoint.sh` runs
-  `prisma migrate deploy` on start.
-- A restore that is never tested is not a backup. Add a step to
-  `.github/workflows/ci.yml` after the tests: put the demo data into the
-  database (`npm run db:seed`; the tests truncate every table as they go, so
-  little is left in it), dump it with the script, restore the dump into a
-  scratch database and compare the row count of every table.
-- Tricky: the runner's own `pg_dump` can be older than the server and then
-  refuses to dump it. Run the tools from the same image, either with
-  `docker exec` in the service container (`job.services.postgres.id`) or with
-  `docker run --network host postgres:17-alpine`.
-- Tricky: a dump holds password hashes and personal data. Create the files
-  readable by their owner only, say so in the README, and add the folder to
-  `.gitignore` and `.dockerignore`.
-- Undecided: cron inside a container is clumsy. A shell loop with `sleep` is
-  probably enough for one dump a day.
 
 ### 8. Accessibility pass
 
@@ -865,11 +782,10 @@ price: people accept what is already filled in.
   carry the suggestion.
 - The work loader (`routes/work.tsx`) sends the suggestion and the interface
   starts from it. A draft from item 1 wins when both exist.
-- That only works when the page starts fresh for each assignment. Today `Work`
-  is not remounted between tasks and `answer` carries over from the previous
-  one, so the next task's suggestion would never be shown. Item 1 fixes this
-  by rendering the page body under `key={assignment.id}`; if this item lands
-  first it has to do the same.
+- That only works because the page starts fresh for each assignment: since
+  item 1 the page body is rendered under `key={assignment.id}`, so `answer`
+  does not carry over from the previous task and can start from the
+  suggestion.
 - Never for gold or qualification tasks. A gold task with a suggestion either
   gives the answer away or tests whether people fix it, and neither is what
   gold accuracy means today.
@@ -899,6 +815,30 @@ price: people accept what is already filled in.
   tasks, and what a submission records.
 
 ## Shipped
+
+### 1. Drafts that survive a reload
+
+The work page saves the answer in progress and the working time to the
+assignment (`draft`, `draftSeconds`) shortly after each change, when the tab
+is hidden or closed and when the page is left, and a reload starts from there.
+The page body is keyed by assignment id, so nothing carries over to the next
+task. Revising sent-back work keeps a draft in the same column, and the
+qualification test keeps its answers in `sessionStorage`. Different from the
+design: the save is a plain `fetch` to two resource routes
+(`POST /work/:assignmentId/draft`, `POST /my-work/:assignmentId/draft`)
+instead of an `intent=draft` branch called through `useFetcher`, because a
+fetcher whose request fails puts the error page in place of the task. The two
+routes check the origin of the request themselves. A save without a changed
+answer carries working time only, so a tab that was only looked at cannot
+overwrite the draft. A stored draft is fitted to the task schema when it is
+read back, and the page says what was left out. A claim that runs out of time
+drops its draft too. Because a reload overtakes the closing page's save, that
+page also leaves its unsaved work in `sessionStorage`, filed under the user
+and removed on sign-out. The details are in
+[docs/architecture.md](docs/architecture.md). Still open: a crash can lose the
+last seconds before it; a claim that ran out does not hand its draft to the
+next claim of the same task; time spent revising is not counted (item 5); the
+reset between tasks has no test until the DOM test setup of item 8.
 
 ### 2. Safe schema edits once work exists
 
@@ -936,6 +876,27 @@ the form appears, and deciding on a submission another reviewer holds is
 refused. Still open: pulling an accepted, unsampled submission into review
 later as a spot check, and releasing or taking over a hold before it lapses.
 
+### 7. Scheduled backups
+
+A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
+`docker/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
+`./backups` once a day, keeping the newest seven. It is a shell loop with
+`sleep`, not cron. The age of a dump and the order of pruning come from the
+time in the file name, never from modification times, and after every attempt
+the loop pauses before the next. Different from the design: a dump right away
+is `docker compose run --rm backup once`, because without an argument the
+service is the daily loop, and that makes a dump at the start only when the
+newest one is older than a day. A restore is part of the script
+(`backup restore <file>`), loading the dump into a new database and swapping
+it with the old one in one transaction, so that a database with the name
+exists at every moment. Dumps dated in the future are never pruned and do not
+count towards the seven. CI runs `docker/check-backup.sh` after
+the tests, with the demo data in: the loop and the pruning against made-up
+clocks, then a real dump, a restore into a scratch database and the row
+counts. Still open: the dumps are not encrypted and stay on the same disk
+unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
+apart from the service's log.
+
 ### 9. Disputes on review decisions
 
 An annotator can dispute a send-back or a correction from
@@ -948,7 +909,11 @@ task is refreshed, and every reader named in the design skips the overturned
 review. An overturned send-back is dated at the overturn; an overturned fix
 keeps its date. Sent-back work cannot be revised while its dispute is open.
 Different from the design: the window is a project setting instead of a fixed
-14 days, and the dispute stores a copy of the answer it was about. Still
-open: gold scores and low QA scores on approved work cannot be disputed, and
-nobody is told about a new dispute or its outcome except by the tab count and
-the "My work" page.
+14 days, the dispute stores a copy of the answer it was about, the annotator
+can withdraw an open dispute, and a dispute is not opened when nobody but the
+deciding reviewer could settle it. Still open: the payouts report selects by
+`submittedAt`, so an overturned send-back shows in the period it was
+submitted in until item 5 makes the report go by the day work became payable
+(the date is stamped for it). Gold scores and low QA scores on approved work
+cannot be disputed, and nobody is told about a new dispute or its outcome
+except by the tab count and the "My work" page.

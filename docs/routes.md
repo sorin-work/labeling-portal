@@ -2,7 +2,8 @@
 
 All pages are server-rendered React Router routes. Pages that change data post
 a form back to the same URL (the route's `action`); there is no separate JSON
-API. The table lists who can open each page.
+API. The one exception is the draft autosave of the labeling pages, described
+at the end. The table lists who can open each page.
 
 | Path                                | What                                     | Who                                         |
 | ----------------------------------- | ---------------------------------------- | ------------------------------------------- |
@@ -50,3 +51,32 @@ These are resource routes that return files or JSON instead of pages.
 
 Projects from another organisation answer 404, not 403, so their ids cannot
 be probed.
+
+## Draft autosave
+
+The work page and the revise page save the answer in progress with `fetch`
+while someone is working. These two routes only take a POST and answer with
+JSON. Only the annotator the assignment belongs to can use them.
+
+| Path                                | Saves                                         | Allowed while                         |
+| ----------------------------------- | --------------------------------------------- | ------------------------------------- |
+| `POST /work/:assignmentId/draft`    | The draft and the working time of a claim     | the claim is active and not timed out |
+| `POST /my-work/:assignmentId/draft` | The changes in progress to a sent-back answer | the submission is sent back           |
+
+Form fields: `draft`, a JSON object of at most 200 KB, and for a claim
+`activeSeconds`. A claim can be saved without `draft`: the stored draft then
+stays as it is and only the working time is updated. The draft is not checked
+against the task schema, because an unfinished answer is not a valid one yet.
+
+| Status | Body                                           | When                                     |
+| ------ | ---------------------------------------------- | ---------------------------------------- |
+| 200    | `{"ok":true}` (a claim adds `draftSeconds`)    | saved                                    |
+| 400    | `{"ok":false,"error":"malformed"}`             | `draft` is not a JSON object             |
+| 413    | `{"ok":false,"error":"too_large"}`             | `draft` is over 200 KB                   |
+| 404    | `{"ok":false,"error":"not_found"}`             | no such assignment, or not yours         |
+| 409    | `{"ok":false,"error":"not_active"}`, `expired` | submitted, skipped, released or too late |
+| 403    | `{"ok":false,"error":"cross_origin"}`          | the request came from another site       |
+
+Without a session the answer is the usual redirect to the sign-in page. The
+`Origin` header (or `Referer` without it) has to be this app's own origin, the
+same rule React Router applies to page actions.

@@ -49,10 +49,14 @@ export async function cookieFor(user: { id: string }, orgId: string): Promise<st
 }
 
 type FormValue = string | File;
-type RequestInit = { cookie?: string; form?: Record<string, FormValue | FormValue[]> };
+type RequestInit = {
+  cookie?: string;
+  form?: Record<string, FormValue | FormValue[]>;
+  headers?: Record<string, string>;
+};
 
 export function makeRequest(path: string, init: RequestInit = {}): Request {
-  const headers = new Headers();
+  const headers = new Headers(init.headers);
   if (init.cookie) headers.set('Cookie', init.cookie);
   const url = `http://localhost${path}`;
   if (!init.form) return new Request(url, { headers });

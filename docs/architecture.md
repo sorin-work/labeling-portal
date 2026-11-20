@@ -26,7 +26,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Project`              | Instructions, task schema, overlap, time limit, review share, pay    |
 | `ProjectMember`        | Who may work on or review a project; `qualifiedAt` after the test    |
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
-| `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
+| `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
@@ -119,10 +119,21 @@ be disputed.
   sent back or fixed, once per decision (`Dispute.reviewId` is unique), and
   only within `Project.disputeWindowDays` of the review (14 by default, 0
   turns disputes off). The dispute keeps a copy of the answer as it stood.
+- **Somebody must be there to settle it.** Opening is refused, with a message
+  that says so, when nobody but the deciding reviewer and the annotator can
+  review in the project (`countResolvers`, by the rule of `requireProject`).
+  A dispute that nobody may settle would hold the work for good: unpaid, not
+  revisable, its task never complete.
 - **Revise or dispute, never both.** Opening a dispute and `resubmitAssignment`
   both start by locking the submission row, so the second one waits and then
   sees what the first did: a revision is refused while a dispute is open, and
-  a dispute is refused once the work is back in review.
+  a dispute is refused once the work is back in review. A draft of a revision
+  is not saved while a dispute is open either (`saveRevisionDraft`); one that
+  was saved before waits for the outcome.
+- **Withdrawing** (`withdrawDispute`): the annotator can take their own open
+  dispute back. The decision stands and the work is exactly where it was,
+  sent back and revisable or fixed. The dispute is kept as `WITHDRAWN`, so
+  that decision cannot be disputed a second time.
 - **Settling** (`resolveDispute`): anyone who can review in the project,
   except the reviewer who made the decision and the annotator who did the
   work, with a note. The rules are checked in the model, not only on the page.
@@ -135,10 +146,15 @@ be disputed.
   - the submission becomes `APPROVED` and `refreshTaskStatus` runs, so the
     consensus is rebuilt from the annotator's own answer (`finalAnswer` skips
     overturned corrections) and the task may complete;
-  - an overturned send-back gets `reviewedAt` set to the time of the overturn:
-    the work becomes payable now and never in a period that was already paid.
-    An overturned fix was accepted and payable since the review, so its
-    `reviewedAt` stays;
+  - an overturned send-back gets `reviewedAt` set to the time of the overturn,
+    which is the day the work became payable. An overturned fix was accepted
+    and payable since the review, so its `reviewedAt` stays. That is as far
+    as it goes today: the payouts report still selects by `submittedAt`, so
+    overturned work shows in the period it was submitted in. It will show in
+    the period of the overturn, and never in one that was already paid, once
+    the report goes by the day work became payable (roadmap item 5);
+  - a draft of a revision that was started before the dispute is dropped, so
+    approved work never carries one;
   - if the submission is not in the state the decision left it in, the
     transaction throws and nothing is changed.
 - **Who reads an overturned review.** `standingReviews` in
@@ -148,6 +164,57 @@ be disputed.
   in the export. "My work", the revise page and the annotator page show the
   outcome of the dispute in place of the review's feedback and score. The
   histories on the review page and the task page keep the row and mark it.
+
+## Drafts
+
+An answer in progress would otherwise live only in the browser tab. The work
+page therefore saves it to the assignment (`draft`, with the working time in
+`draftSeconds`) two seconds after the last change, at least every ten seconds
+while changes keep coming, when the tab is hidden or closed, and when the
+annotator leaves the page inside the app. Working time alone is saved every
+thirty seconds. After a reload the page starts from the draft and the working
+time counts on from the saved value.
+
+- A draft is not a valid answer (a comparison without a preference yet), so it
+  is stored without `validateAnswer` and only checked for size. Submitting
+  validates as before. When a draft is read back, `fitDraft` in
+  `app/domain/drafts.ts` keeps what still fits the task schema and drops the
+  rest: unknown labels, spans outside the text, boxes outside the image or
+  under `minBoxSize`. A stored draft therefore cannot break the page or block
+  the submit after a schema change, and the page says how many parts were
+  left out.
+- The draft ends with the claim: submitting, skipping, releasing and running
+  out of time all clear it.
+- The same task in two tabs: the last save wins, and only the submit counts.
+  A tab that was only looked at sends no answer, so it cannot overwrite the
+  draft of the tab that was worked in. The saved working time never goes down
+  (`GREATEST` in the one statement that writes it).
+- Saving pauses only while the page's own submit, skip or release is on its
+  way. If that hand-in fails, saving goes on. Leaving through a link saves on
+  the way out, and the sign-out button saves before its own request is sent,
+  while the session is still there.
+- Revising sent-back work keeps its draft in the same column. That assignment
+  is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+- The qualification test has no row to keep a draft on. Its answers stay in
+  `sessionStorage`, tagged with the attempt they belong to.
+- A reload is faster than the save the closing page sends, so the new page
+  would read the draft from before it. The closing page therefore also leaves
+  what the server has not confirmed in `sessionStorage`, and the next page
+  takes it from there. What can still be lost is the last couple of seconds
+  before a crash (up to ten while typing without a pause).
+- Everything in `sessionStorage` is filed under the user's id and names the
+  user inside, and a copy that belongs to someone else is not read. Signing
+  out removes all of it, and handing in the qualification test removes that
+  test's answers. Nothing waits for the next person on a shared computer.
+- The save is a plain `fetch` to a small resource route (see
+  [routes](routes.md)), not a fetcher. A fetcher whose request fails puts the
+  error page in place of the task, and the unsaved answer would go with it.
+  React Router checks the origin of page actions but not of resource routes,
+  so these two routes do it themselves (`requireSameOrigin`).
+- The work page and the revise page are rendered under a key (the assignment
+  id). "Submit and next" and the browser's back button stay on the same
+  route, and without the key React would keep the previous task's answer and
+  seconds and save them as the next task's draft.
 
 ## Quality
 
@@ -167,11 +234,53 @@ be disputed.
 - Sign-in attempts are rate limited per email (ten failures per fifteen
   minutes, in memory).
 
+## Backups
+
+`docker/backup.sh` runs in the `backup` service of `docker-compose.yml`, in
+the same `postgres:17-alpine` image as the database so that `pg_dump` matches
+the server. It is a shell loop, not cron. How to use it is in the README
+under "Backup and restore"; these are the rules the script keeps, because
+breaking one of them loses backups:
+
+- The time in a dump's file name is the only time that counts, for its age
+  and for the order of pruning. Modification times are never read.
+- The age of the newest dump is read from the names once, at the start.
+  After that the loop only remembers when it last made one.
+- A dump dated in the future, or with a date that does not exist, is left
+  out: it does not say how old the newest dump is, it is never pruned and it
+  does not count towards `BACKUP_KEEP`. Sorted by name such dumps would pass
+  for the newest ones and push the real dumps out. Every start and every dump
+  logs a warning that names them. If every dump is dated in the future the
+  loop waits a full interval before its first dump.
+- After every attempt, whether it worked or not, the loop pauses before the
+  next one, and it waits in steps of a minute with a look at the clock after
+  each, so a suspended machine still gets its daily dump.
+- `pg_dump` writes to a hidden `.partial` file that is renamed when it is
+  complete. A failed or interrupted dump never counts as a backup, and
+  pruning never removes the dump that was just written.
+- A restore loads the dump into a new database. The swap is one
+  transaction: the database in use is renamed aside and the copy takes its
+  name. The old one is dropped only after that has committed. So a database
+  with the name exists at every moment, which matters because the app
+  creates a missing one, empty, when it starts (`prisma migrate deploy`), and
+  the loop would then dump that while the real data sat under another name.
+  A swap that is refused names the clients that are still connected.
+
+`docker/check-backup-loop.sh` checks the loop, the pruning and the restore
+with stand-ins for the database tools, a pretend set of databases and dump
+files with made-up dates. `docker/check-backup.sh` runs it and then works on
+a real server: it makes dumps, checks that a damaged dump and a restore
+while something is connected leave a database with other data alone, then
+replaces that database with the newest dump and compares the row counts,
+where only the application's tables count as data (Prisma's migrations table
+always has rows). CI runs it after the tests, once the demo data is in.
+
 ## Pay
 
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
-at the time since the claim.
+at the time since the claim. It is saved with the draft, so a reload does not
+start the count again.
 
 ## Changing the schema once work exists
 
@@ -188,9 +297,10 @@ shows what an edit would do while the manager types.
 "Stored answers" are the six places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
 answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
-a dispute was about (`Dispute.answer`) and qualification attempts
-(`QualificationAttempt.answers`). A correction that a dispute overturned
-still counts: the review row is kept and shown.
+a dispute was about (`Dispute.answer`, counted only once the submission has
+been revised and says something else, so no answer is counted twice) and
+qualification attempts (`QualificationAttempt.answers`). A correction that a
+dispute overturned still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |
@@ -240,7 +350,8 @@ points at every place that needs a new branch once the kind is added to the
 schema union:
 
 1. `app/domain/task-schema.ts`: the zod schema, `requiredFields`, a template.
-2. `app/domain/answers.ts`: the answer type and its validator.
+2. `app/domain/answers.ts`: the answer type and its validator, and
+   `app/domain/drafts.ts`: how an unfinished answer is read back.
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.

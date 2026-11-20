@@ -14,6 +14,9 @@ export type ClaimResult =
 
 const MAX_CLAIM_ATTEMPTS = 5;
 
+/** A claim that ends (submitted, skipped, released, expired) drops its draft. */
+const NO_DRAFT = { draft: Prisma.DbNull, draftSeconds: 0 };
+
 function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
@@ -74,7 +77,7 @@ async function nextCandidate(project: Project, userId: string, now: Date) {
 export async function releaseExpiredClaims(projectId?: string, now = new Date()): Promise<number> {
   const result = await prisma.assignment.updateMany({
     where: { status: 'ACTIVE', expiresAt: { lte: now }, ...(projectId ? { projectId } : {}) },
-    data: { status: 'EXPIRED' },
+    data: { status: 'EXPIRED', ...NO_DRAFT },
   });
   return result.count;
 }
@@ -205,7 +208,7 @@ export async function submitAssignment(
     // and that submission must not be turned into an expired claim.
     const expired = await prisma.assignment.updateMany({
       where: { id: assignmentId, status: 'ACTIVE' },
-      data: { status: 'EXPIRED' },
+      data: { status: 'EXPIRED', ...NO_DRAFT },
     });
     return { ok: false, error: expired.count > 0 ? 'expired' : 'not_active' };
   }
@@ -246,6 +249,7 @@ export async function submitAssignment(
         reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
         reviewSample: sampling.sample,
         activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+        ...NO_DRAFT,
       },
     });
     // work that no reviewer will see is accepted at once and can complete the
@@ -270,7 +274,7 @@ export async function skipAssignment(
   // not turn a submission that was just stored into a skip
   const skipped = await prisma.assignment.updateMany({
     where: { id: assignmentId, status: 'ACTIVE' },
-    data: { status: 'SKIPPED', skipReason: reason },
+    data: { status: 'SKIPPED', skipReason: reason, ...NO_DRAFT },
   });
   return skipped.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
@@ -290,7 +294,13 @@ export async function resubmitAssignment(
     if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
     const result = await tx.assignment.updateMany({
       where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-      data: { answer, reviewStatus: 'PENDING', submittedAt: now, reviewedAt: null },
+      data: {
+        answer,
+        reviewStatus: 'PENDING',
+        submittedAt: now,
+        reviewedAt: null,
+        draft: Prisma.DbNull,
+      },
     });
     if (result.count === 0) {
       const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
@@ -309,9 +319,66 @@ export async function releaseAssignment(
   if ('error' in found) return { ok: false, error: found.error! };
   const released = await prisma.assignment.updateMany({
     where: { id: assignmentId, status: 'ACTIVE' },
-    data: { status: 'RELEASED' },
+    data: { status: 'RELEASED', ...NO_DRAFT },
   });
   return released.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
+}
+
+/**
+ * Keeps unfinished work on a claim so that a reload does not lose it. The
+ * draft is stored as it is; only submitting validates. `draft` is left out
+ * when the answer did not change and the save only carries working time. That
+ * time never goes down, so an older tab cannot take seconds away again.
+ */
+export async function saveDraft(
+  assignmentId: string,
+  userId: string,
+  input: { draft?: Prisma.InputJsonValue; activeSeconds: number },
+  now = new Date(),
+): Promise<{ ok: true; draftSeconds: number } | { ok: false; error: AssignmentError }> {
+  const found = await ownActive(assignmentId, userId);
+  if ('error' in found) return { ok: false, error: found.error! };
+  if (found.assignment.expiresAt <= now) return { ok: false, error: 'expired' };
+  const seconds = clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now);
+  const draft =
+    input.draft === undefined
+      ? Prisma.empty
+      : Prisma.sql`, "draft" = ${JSON.stringify(input.draft)}::jsonb`;
+  // One statement: the claim can be submitted or released since the check
+  // above, and two tabs can save at the same moment without one of them
+  // lowering the time again.
+  const saved = await prisma.$queryRaw<Array<{ draftSeconds: number }>>`
+    UPDATE "Assignment"
+    SET "draftSeconds" = GREATEST("draftSeconds", ${seconds}::int)${draft}
+    WHERE id = ${assignmentId} AND "userId" = ${userId} AND status = 'ACTIVE'
+    RETURNING "draftSeconds"`;
+  if (saved.length === 0) return { ok: false, error: 'not_active' };
+  return { ok: true, draftSeconds: saved[0].draftSeconds };
+}
+
+/**
+ * The same for the revise page. That assignment is submitted, not active, so
+ * the guard is the one `resubmitAssignment` uses: the annotator's own
+ * submission, while it is sent back and not under dispute. Work that is
+ * disputed cannot be revised, so no revision of it is saved either.
+ */
+export async function saveRevisionDraft(
+  assignmentId: string,
+  userId: string,
+  draft: Prisma.InputJsonValue,
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const saved = await tx.assignment.updateMany({
+      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      data: { draft },
+    });
+    if (saved.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
+  });
 }
 
 /**

@@ -41,9 +41,9 @@ export function DisputePanel({
           <span className="text-slate-500">
             {dispute.status === 'OPEN'
               ? `You disputed this decision on ${formatDateTime(dispute.openedAt)}. Someone other than the reviewer will look at it.`
-              : `Settled${dispute.resolver ? ` by ${dispute.resolver}` : ''}${
-                  dispute.resolvedAt ? ` on ${formatDateTime(dispute.resolvedAt)}` : ''
-                }.`}
+              : `${dispute.status === 'WITHDRAWN' ? 'You withdrew it' : 'Settled'}${
+                  dispute.resolver ? ` by ${dispute.resolver}` : ''
+                }${dispute.resolvedAt ? ` on ${formatDateTime(dispute.resolvedAt)}` : ''}.`}
           </span>
         </div>
         <p className="whitespace-pre-wrap text-slate-600">
@@ -53,6 +53,17 @@ export function DisputePanel({
           <p className="whitespace-pre-wrap text-slate-600">
             <span className="font-medium">Outcome:</span> {dispute.resolution}
           </p>
+        )}
+        {dispute.status === 'OPEN' && (
+          <Form method="post" className="flex flex-wrap items-center gap-3">
+            <Button name="intent" value="withdraw-dispute" variant="ghost" disabled={busy}>
+              Withdraw the dispute
+            </Button>
+            <span className="text-xs text-slate-500">
+              The decision then stands and the work is where it was before. You cannot dispute this
+              decision again.
+            </span>
+          </Form>
         )}
       </div>
     );

@@ -25,6 +25,7 @@ const sentBack: DisputableInput = {
   },
   openerId: 'annotator',
   windowDays: 14,
+  resolvers: 1,
 };
 const withReview = (review: Partial<NonNullable<DisputableInput['review']>>): DisputableInput => ({
   ...sentBack,
@@ -76,12 +77,37 @@ describe('disputeRefusal', () => {
   });
 });
 
+describe('a dispute nobody could settle', () => {
+  it('is refused, after every other reason', () => {
+    const alone = { ...sentBack, resolvers: 0 };
+    expect(disputeRefusal(alone, daysLater(1))).toBe('no_resolver');
+    expect(disputeRefusal(alone, daysLater(15))).toBe('too_late');
+    expect(disputeRefusal({ ...alone, windowDays: 0 }, daysLater(1))).toBe('disabled');
+  });
+
+  it('is explained on the page instead of offered', () => {
+    const state = annotatorDisputeState(
+      {
+        reviewStatus: 'SENT_BACK',
+        annotatorId: 'annotator',
+        review: { ...sentBack.review!, dispute: null },
+        windowDays: 14,
+        resolvers: 0,
+      },
+      daysLater(1),
+    );
+    expect(state.disputeUntil).toBeNull();
+    expect(state.disputeClosed).toMatch(/Nobody could settle a dispute/);
+  });
+});
+
 describe('annotatorDisputeState', () => {
   const submission = {
     reviewStatus: 'SENT_BACK' as const,
     annotatorId: 'annotator',
     review: { ...sentBack.review!, dispute: null },
     windowDays: 14,
+    resolvers: 1,
   };
 
   it('offers a dispute until the deadline and says so once it has passed', () => {
@@ -159,6 +185,13 @@ describe('dispute forms', () => {
     });
     expect(parseResolution(form({ intent: 'uphold', resolution: '' })).ok).toBe(false);
     expect(parseResolution(form({ intent: 'reopen', resolution: 'x' })).ok).toBe(false);
+    // names every object has are not outcomes
+    for (const intent of ['constructor', 'toString', '__proto__', 'withdraw']) {
+      expect(parseResolution(form({ intent, resolution: 'x' }))).toEqual({
+        ok: false,
+        error: 'Choose uphold or overturn.',
+      });
+    }
   });
 });
 

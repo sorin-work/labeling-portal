@@ -8,5 +8,6 @@ coverage
 .env.*
 !.env.example
 *.log
+backups
 Dockerfile
 docker-compose*.yml

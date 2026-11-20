@@ -72,6 +72,7 @@ export const DISPUTE_BADGES: Record<
   OPEN: { label: 'Dispute open', tone: 'amber' },
   UPHELD: { label: 'Decision upheld', tone: 'slate' },
   OVERTURNED: { label: 'Decision overturned', tone: 'emerald' },
+  WITHDRAWN: { label: 'Dispute withdrawn', tone: 'slate' },
 };
 
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
