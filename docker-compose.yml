@@ -39,5 +39,27 @@ services:
       start_period: 30s
       retries: 5
 
+  # Optional, start it with: docker compose --profile backup up -d
+  # Dumps the database once a day into BACKUP_DIR and keeps the newest
+  # BACKUP_KEEP dumps. See "Backup and restore" in the README.
+  backup:
+    image: postgres:17-alpine
+    profiles: [backup]
+    restart: unless-stopped
+    entrypoint: ['sh', '/backup.sh']
+    environment:
+      PGHOST: db
+      PGUSER: labeling
+      PGPASSWORD: labeling
+      PGDATABASE: labeling
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./docker/backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+
 volumes:
   db-data:
