@@ -797,16 +797,21 @@ buttons are made from it. Pairwise score rows are real radio groups and typed
 digits walk them; entity spans are selected with a click, get another type
 with a key and are removed with Delete; `s` opens the skip form; on the review
 page `s` goes to the feedback box, `e` starts a fix and Escape cancels it.
-`use-hotkeys.ts` stops only for text entry, reads digits from the physical
-key, sends the keys to one interface on the test page and lets one press
+`use-hotkeys.ts` stops only for text entry, takes digits as typed and reads
+the physical key where a layout needs Shift for them, and lets one press
 trigger one action. Different from the design: a digit typed while no score
 row has focus goes to the first row without a score, so a rubric can be typed
-on a fresh page. Not built: "submit on pick". A slip cannot be taken back once
-the next task has loaded, so it waits for a way to reopen the last submission.
-Fixed on the way: entity and box tasks can be submitted with nothing marked,
-and the review page starts fresh for every submission. Still open: letters
-follow the typed character, so they need a Latin layout; the list of shortcuts
-does not take focus (item 8); removing a box or a span has no undo (item 13).
+on a fresh page. On a page with several interfaces (the test) the keys go to
+the card that holds the focus or was clicked last, which is marked, and to
+none before that, not to "the one used last". Approving by key takes two keys
+(`a` arms, Enter approves, anything else calls it off) and waits a moment
+after each decision, and Ctrl+Enter in the skip form skips. Not built: "submit
+on pick". A slip cannot be taken back once the next task has loaded, so it
+waits for a way to reopen the last submission. Fixed on the way: entity and
+box tasks can be submitted with nothing marked, and the review page starts
+fresh for every submission. Still open: letters follow the typed character,
+so they need a Latin layout; the list of shortcuts does not take focus (item
+8); a removed span can be put back once, a removed box not at all (item 13).
 
 ### 4. Review sampling and reviewer reservations
 

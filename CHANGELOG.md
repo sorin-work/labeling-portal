@@ -25,14 +25,19 @@
   to 9, 0 for the tenth, then letters, shown on the buttons), pairwise rubrics
   that can be typed (digits walk the score rows, the arrows choose inside a
   row), `s` for the skip form, and on the review page `s` for the feedback
-  box, `e` for "Fix it myself" and Esc to cancel a fix
+  box, `e` for "Fix it myself" and Esc to cancel a fix. Ctrl+Enter hands in
+  the task, or the skip while the skip form is open
+- Approving by key takes two keys, `a` and then Enter, and any other key
+  calls it off. Right after a decision the keys that decide wait a moment, so
+  a held or repeated key cannot approve the next submission unseen
 - Entity spans are selected with a click, get another type with a key and are
-  removed with Delete or the × next to them, as boxes are
+  removed with Delete or the × next to them. The last removal can be undone
 - `?` lists the shortcuts of the page and the project's labeling kind, on the
   work, review, revise and qualification pages
-- Shortcuts keep working while a radio button has focus, read the digit row
-  on any keyboard layout and the number pad, and on the qualification test go
-  to one question instead of all of them
+- Shortcuts keep working while a radio button has focus, and work on keyboard
+  layouts where the digits need Shift and on the number pad. On the
+  qualification test they act on one question, the one that was clicked or
+  holds the focus, and that question is marked
 
 ### Review and quality
 

@@ -229,30 +229,49 @@ A new shortcut is added there first; the unit tests fail when a key gets two
 meanings on one page.
 
 - **Modes.** A page key can be limited to a mode: `labeling` or `skipping` on
-  the work page, `viewing` or `fixing` on the review page. Each page names the
-  one mode in which the labeling interface gets its keys. That is why `a`
-  approves while a reviewer looks at a submission and picks response A while
-  they fix it, and why the label keys are off while the skip form is open.
+  the work page, `viewing`, `approving` or `fixing` on the review page. Each
+  page names the one mode in which the labeling interface gets its keys. That
+  is why `a` is for approving while a reviewer looks at a submission and picks
+  response A while they fix it, and why the label keys are off while the skip
+  form is open.
+- **Keys that commit** (a task, a skip, a review decision) are marked
+  `commits` and must name their mode; a unit test walks the table for that.
+  Ctrl or Cmd with Enter hands in what the mode is about: the task while
+  labeling, the skip while the skip form is open, never the task from the
+  skip form. A review decision takes two keys: `a` arms the approval (the
+  button and a line under it say so), Enter approves, and Escape or any other
+  key calls it off. After a decision the next submission appears on the same
+  page, and the keys that decide are ignored until it has been on screen for
+  a moment (`DECISION_PAUSE_MS`), so a key that is still held or pressed twice
+  cannot decide on work nobody has looked at.
 - **Label keys** skip the letters that mean something else somewhere (`a`,
   `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
   page, so a label always has the same key.
 - **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
-  browser and to screen readers; only Ctrl or Cmd with Enter submits. A key
-  that is held down does not repeat. Nothing acts while the cursor is in a
-  text box (except submit and closing the skip form) or while the list of
-  shortcuts is open. A focused radio button keeps its arrow keys and Space,
-  a button its Enter.
-- **Layouts.** Digits are read from the physical key (`event.code`), so the
-  digit row works where it needs Shift, and the number pad works with Num
-  Lock on. Letters and `?` are taken as typed.
+  browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
+  with Z, which the browser only uses inside text boxes. A key that is held
+  down does not repeat. What is typed into a text box is text, also `?` and
+  Escape while the list of shortcuts is open; only handing in and closing the
+  skip form work from there. While the list is open nothing else acts. A
+  focused radio button keeps its arrow keys and Space, a button its Enter.
+- **Layouts.** A digit is taken as typed. Only when the key did not type a
+  digit is the physical key read (`event.code`), which makes the digit row
+  work where it needs Shift. The number pad works with Num Lock on. Letters
+  and `?` are taken as typed.
 - **One press, one action, one interface.** The page, the list and every
   interface on the page listen on `window`. A press that one of them handled
-  is not offered to the others, and with several interfaces on a page (the
-  qualification test) the keys go to the one that was used last.
+  is not offered to the others. With several interfaces on a page (the
+  qualification test) the keys go to one card only: the one that holds the
+  focus or was clicked last, anywhere in it. That card is marked, and before
+  any card is, the keys do nothing. A key never changes an answer the person
+  is not working on.
 - **Nothing is thrown away by a slip.** No single letter or digit skips,
-  releases or deletes: `s` only opens the skip form, releasing has no key, and
-  removing a box or a span takes Delete or Backspace on something that was
-  selected first.
+  releases, deletes or decides: `s` only opens the skip form, releasing has
+  no key, approving takes two keys. Removing a box takes Delete or Backspace
+  on a box that was selected first. Removing a span takes Delete (Backspace
+  is left to text boxes), a span is let go when the cursor moves into a text
+  box, and the last removal can be put back with the "Undo" next to it or
+  Ctrl+Z.
 
 The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
 pass on what the key map decides. Pairwise score rows are real radio groups:
