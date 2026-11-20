@@ -13,6 +13,10 @@
 # The time in the name is the only time that counts, for the age of a dump
 # and for the order they are pruned in. Modification times are not looked
 # at: on a network share they come from another machine's clock.
+#
+# A dump whose name is dated in the future was made while the clock was
+# wrong. Such dumps are never removed here and do not use up BACKUP_KEEP, and
+# every run names them in a warning.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -61,14 +65,46 @@ dump_time() {
   date -u -d "$(echo "$1" | sed -E 's/^labeling-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
 }
 
-# Removes the oldest dumps until $keep are left. The dump that was just
-# written ($1) is never one of them: after the clock was set back it sorts
-# below older dumps, and it is still the one worth keeping.
+# The dumps dated at or before a clock that reads $1, newest first. These
+# are the ones that say how old the newest dump is, and the ones that are
+# pruned.
+present_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# The rest: dated after $1, or with a date that does not exist. Sorted by
+# name they would pass for the newest dumps for as long as their date lies
+# ahead, and pruning would delete a real dump for each of them.
+future_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -z "$made" ] || [ "$made" -gt "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# Nothing removes these by itself, so a person has to hear about them.
+warn_about_future_dumps() {
+  ahead=$(future_dumps "$1" | tr '\n' ' ')
+  [ -z "$ahead" ] || log "WARNING: dated in the future, so never removed here and not counted towards BACKUP_KEEP. Have a look at: $ahead"
+}
+
+# Removes the oldest dumps until $keep are left. Only dumps that are not
+# dated in the future count and can go. The dump that was just written ($1)
+# is never removed.
 prune() {
-  dumps | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
+  clock=$(date +%s)
+  present_dumps "$clock" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
     rm -f "$dir/$old"
     log "removed $old"
   done
+  warn_about_future_dumps "$clock"
 }
 
 # pg_dump writes to a hidden .partial file that is renamed when it is
@@ -98,16 +134,13 @@ dump() {
 }
 
 # When the newest dump was made, as seconds since 1970, for a clock that
-# reads $1. Dumps dated after that are skipped: the clock was set back since
-# they were made, so they say nothing about the age of the newest real one.
+# reads $1. Dumps dated after that are skipped: the clock was wrong when they
+# were made, so they say nothing about the age of the newest real one.
 # Prints nothing when no dump is left to go by.
 newest_dump_time() {
-  dumps | while read -r candidate; do
-    made=$(dump_time "$candidate")
-    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
-      echo "$made"
-      break
-    fi
+  present_dumps "$1" | while read -r candidate; do
+    dump_time "$candidate"
+    break
   done
 }
 
@@ -125,7 +158,9 @@ nap() {
 #     once, at the start. After that it is only ever set to the current time,
 #     so nothing on disk and no change of the clock can make a dump look
 #     overdue twice in a row.
-#   - A dump dated in the future counts as made now, never as overdue.
+#   - Dumps dated in the future are left out when the age of the newest dump
+#     is worked out. If nothing else is there, the loop waits a full interval
+#     before its first dump instead of dumping at once.
 #   - After every attempt, whether it worked or not, there is a pause before
 #     the next one.
 #   - The wait is slept in steps of at most a minute, with a look at the clock
@@ -140,9 +175,10 @@ run() {
   log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep"
 
   now=$(date +%s)
+  warn_about_future_dumps "$now"
   last=$(newest_dump_time "$now")
   if [ -z "$last" ] && [ -n "$(dumps | head -n 1)" ]; then
-    log "every dump in $dir is dated in the future, counting the newest as made now"
+    log "every dump in $dir is dated in the future, waiting a full interval before the first dump"
     last=$now
   fi
 
