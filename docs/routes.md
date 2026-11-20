@@ -25,6 +25,7 @@ API. The table lists who can open each page.
 | `/projects/:id/activity`            | What managers changed                    | admin, project manager                      |
 | `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                      |
 | `/my-work`                          | Your submissions, feedback, corrections  | annotators                                  |
+| `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators) |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
@@ -32,6 +33,9 @@ API. The table lists who can open each page.
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are
 in [architecture](architecture.md#changing-the-schema-once-work-exists).
+
+`/earnings` takes no person from the request. Whose earnings it shows comes
+from the session, so nobody can open someone else's.
 
 ## Downloads and probes
 
@@ -43,7 +47,7 @@ These are resource routes that return files or JSON instead of pages.
 | `GET /projects/:id/download?format=&scope=&batch=` | `jsonl`, `csv` or `coco` (box projects) export |
 | `GET /projects/:id/example?format=csv\|jsonl`      | Example import file for the project's schema   |
 | `GET /projects/:id/quality.csv`                    | Annotator quality table                        |
-| `GET /payouts/export?from=&to=`                    | Payout CSV (dates inclusive, UTC)              |
+| `GET /payouts/export?from=&to=`                    | Payout CSV, one row per person, project, rate  |
 
 Projects from another organisation answer 404, not 403, so their ids cannot
 be probed.

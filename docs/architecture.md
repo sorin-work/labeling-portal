@@ -169,7 +169,39 @@ always has rows). CI runs it after the tests, once the demo data is in.
 
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
-at the time since the claim.
+at the time since the claim. Time spent revising work that was sent back is
+added to it, capped at the time since the review.
+
+- **The rate is frozen at submission.** `submitAssignment` copies the
+  project's `rateCents` and `payMode` onto the assignment in the same write
+  that stores the answer. Payouts, the earnings page and the payout CSV read
+  that copy and never the project, so changing a project's rate changes
+  nothing that is already submitted. A revision after a send-back keeps the
+  rate of the first submission. A check constraint
+  (`Assignment_submitted_has_rate`) refuses a submitted row without the
+  copy, so code that writes submissions directly, such as a seed or a test,
+  has to set both columns.
+- **Work counts on the day it became payable** (`payableAt` in
+  `app/domain/payouts.ts`): `reviewedAt` for work a reviewer approved or
+  fixed, `submittedAt` for work that needed no review (review off, gold
+  tasks, and work the review sample did not draw). Work submitted in March
+  and approved in April belongs to April, so a period that was paid does not
+  change afterwards. Work that is waiting for review or was sent back has no
+  such date: the payouts page counts it as pending by its submission date,
+  and the earnings page lists all of it whatever the range.
+- **Money is whole cents everywhere.** Amounts are computed per block of
+  work, which is one person, project, pay mode and rate, by `amountCents`.
+  An hourly block is rounded once, to the nearest cent with half a cent
+  going up, in `divideRounded`, which is the only place anything is rounded
+  and works on integers. A project whose rate changed shows as two blocks,
+  on the pages and in the CSV, and because each block is rounded by itself a
+  total can differ by a cent from one computed another way.
+- **Who sees what.** `/payouts` is for managers and shows the organisation.
+  `/earnings` shows a person their own blocks, computed by the same code as
+  their line on `/payouts`. Gold tasks are paid like other tasks, the
+  qualification test is not. The portal does not record payments, and the
+  earnings page says so: it separates what is payable for the period from
+  what is waiting for review and what was sent back.
 
 ## Changing the schema once work exists
 

@@ -38,7 +38,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
-| 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
+| 5   | Earnings page and rates frozen at submission | Shipped | payouts       | M    | -          |
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
@@ -175,62 +175,6 @@ shows.
   walk through the pairwise groups, and for the "is this text entry" rule as a
   pure function. Key handling inside components cannot be tested until item 8
   adds a DOM test setup, so keep the logic outside the components.
-
-### 5. Earnings page and rates frozen at submission
-
-Annotators see hours and counts on the dashboard (`myStats`) but never money:
-`/payouts` is for admins and project managers. And the report prices all past
-work with each project's current `rateCents` and `payMode` at the moment
-someone opens it (`payoutReport` in `models/payouts.server.ts`), so changing a
-rate in the settings silently reprices every earlier month.
-
-- Data: `rateCents Int?` and `payMode PayMode?` on `Assignment`, written by
-  `submitAssignment` from the project. The migration fills existing submitted
-  rows from their project's current values. `payoutReport` reads the copy.
-- `computePayouts` in `domain/payouts.ts` keeps one `rateCents` per project.
-  With a rate change inside the range that is wrong, so group by project, pay
-  mode and rate: such a project shows as two lines, also in the CSV
-  (`routes/payouts-export.ts`).
-- New page `/earnings` (`routes/earnings.tsx`, a link in
-  `routes/app-layout.tsx` for roles that can annotate): a date range read with
-  `readRange` as on the payouts page, then for each project the accepted
-  tasks, active time, rate and amount, and separately what is still waiting
-  for review or was sent back and is not payable yet. `payoutReport` counts
-  that as `pending` for the whole organisation already. The loader uses
-  `requireUser` and filters on the user's own id; no new capability.
-- Tricky: hourly amounts are rounded once per block (`amountCents`). More
-  blocks means the total can differ by a cent from before. State the rule on
-  the page and test it.
-- The date that puts work into a period changes. Today the report goes by
-  `submittedAt`, so work approved in November still lands in October's total
-  after October was paid. From now on work counts on the day it became
-  payable: `reviewedAt` for work a reviewer approved or fixed, and
-  `submittedAt` for work accepted without a review (`NOT_REQUIRED`: projects
-  with review off, gold tasks, and work that the sampling of item 4 lets
-  through). Both reports use this date, `payoutReport` with its CSV and the
-  new page, and both say so on the page. A period that was paid then never
-  changes afterwards. When item 9 overturns a send-back, that work becomes
-  payable at the time of the overturn, for the same reason.
-- Work that is waiting for review or was sent back has no such date yet.
-  `payoutReport` keeps counting it as `pending` by `submittedAt` in the range;
-  the earnings page lists all of it, whatever the range.
-- Tricky: time spent revising sent-back work is not counted at all.
-  `routes/my-work-revise.tsx` posts no `activeSeconds` and
-  `resubmitAssignment` does not touch them. On an hourly project that is
-  unpaid time. Count it with `useActiveTime` and add it to the assignment,
-  capped at the time since the review.
-- Tricky: gold tasks are paid like other work (`NOT_REQUIRED` is one of the
-  `ACCEPTED_STATUSES`) and the qualification test is not. The page should say
-  so, or people will count differently.
-- Not in this item: marking a period as paid, bonuses and deductions, pay for
-  reviewers (a `Review` records no time), currencies other than USD
-  (`formatCents`, the `rate_usd` and `amount_usd` columns).
-- Tests: `tests/unit/payouts.test.ts` for the grouping by rate;
-  `tests/integration/payouts.test.ts`: a rate change leaves earlier work
-  alone, an annotator sees only their own lines, revise time is counted, and
-  work submitted in one month and approved in the next counts in the second.
-  The existing cases use a project without review, so they go by `submittedAt`
-  as before.
 
 ### 6. More import and export formats
 
@@ -982,6 +926,23 @@ it up), a submission opened from the list is reserved with a button before
 the form appears, and deciding on a submission another reviewer holds is
 refused. Still open: pulling an accepted, unsampled submission into review
 later as a spot check, and releasing or taking over a hold before it lapses.
+
+### 5. Earnings page and rates frozen at submission
+
+`submitAssignment` copies the project's `rateCents` and `payMode` onto the
+assignment in the write that stores the answer, and `payoutReport`, its CSV
+and the new `/earnings` page read the copy. `computePayouts` groups by
+project, pay mode and rate, and work counts on the day it became payable
+(`payableAt`). `/earnings` shows a person their own blocks for a range and,
+whatever the range, what is waiting for review or was sent back. Revising
+time is added to the active time. Different from the design: a check
+constraint refuses a submitted row without its rate, the migration also
+fills in missing review dates from the latest review, and hourly rounding
+moved into one integer function. The page says that nothing is marked as
+paid, because the portal does not record payments. Still open: the rates of
+work from before the migration are the project's rate of that day, which is
+an approximation, and marking a period as paid, bonuses, reviewer pay and
+other currencies remain out.
 
 ### 7. Scheduled backups
 

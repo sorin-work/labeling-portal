@@ -31,6 +31,22 @@
   not lost to the next reviewer
 - Quality page and its CSV: share of each annotator's work that was reviewed
 
+### Pay and export
+
+- Earnings page: everyone sees their own pay for a date range, split into
+  what is payable, what is waiting for review and what was sent back, with
+  the rules it is counted by
+- The rate and pay mode are frozen on a submission when it is made. Changing
+  a project's rate no longer reprices earlier work, and a project whose rate
+  changed shows one line per rate on the payouts page and in its CSV.
+  Submissions from before this change were given their project's rate of the
+  day of the upgrade
+- Work now counts in the period it became payable: the day a reviewer
+  approved or fixed it, or the day it was submitted when no review was
+  needed. Before, it counted on the day it was submitted
+- Time spent revising sent-back work is added to the active time, which is
+  paid on hourly projects
+
 ### Operations
 
 - A `backup` service behind a compose profile dumps the database once a day

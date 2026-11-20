@@ -32,7 +32,10 @@ or fix the work.
 - **Gold tasks** scored automatically and a **qualification test** before an
   annotator may work on a project
 - **Time tracking** of active time per task and a **payouts** report (per task
-  or hourly) with CSV download
+  or hourly) with CSV download. Each submission keeps the rate its project
+  had when it was made, and work counts in the period it became payable
+- **Earnings** page where everyone sees their own money: what is payable for
+  a period and what is still waiting for review or was sent back
 - **Export** of finished labels as JSONL, CSV or COCO (box projects)
 - Activity log, needs-attention list for managers, demo data
 
