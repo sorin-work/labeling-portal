@@ -231,9 +231,12 @@ export async function updateProject(
   now = new Date(),
 ): Promise<UpdateProjectResult> {
   return prisma.$transaction(async (tx) => {
-    // one save at a time per project, so the check and the write below see
-    // the same saved schema
-    await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE`;
+    // One save at a time per project, so the check and the write below see
+    // the same saved schema. This is the lock an UPDATE of the row takes
+    // anyway. FOR UPDATE would also keep back everything that inserts a row
+    // pointing at the project (claims, imports, activity entries) for as long
+    // as the usage count runs.
+    await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${projectId} FOR NO KEY UPDATE`;
     const before = await tx.project.findUniqueOrThrow({
       where: { id: projectId },
       select: { instructions: true, schema: true },

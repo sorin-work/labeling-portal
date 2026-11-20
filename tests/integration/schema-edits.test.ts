@@ -367,6 +367,21 @@ describe('schema edits once work exists', () => {
     expect(await stored()).toEqual(multi);
   });
 
+  it('does not make claims, imports or activity entries wait for a save', async () => {
+    const { project, save, stored } = await setup(sentiment);
+    const next = { ...sentiment, labels: [...sentiment.labels, 'spam'] };
+
+    await prisma.$transaction(async (tx) => {
+      // what an insert that points at the project holds on its row until it
+      // commits; a save that asked for FOR UPDATE would wait for it, and it
+      // would wait for the save
+      await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${project.id} FOR KEY SHARE`;
+      expect(payload<Saved>(await save(next)).saved).toBe(true);
+    });
+
+    expect(await stored()).toEqual(next);
+  });
+
   it('is not blocked by what a hand-made test attempt adds to its answers', async () => {
     const multi = { ...sentiment, multiple: true };
     const { ann, project, save, stored } = await setup(multi);
