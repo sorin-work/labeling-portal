@@ -1,6 +1,15 @@
 import { Prisma, type Assignment, type PayMode, type Project } from '@prisma/client';
 
-import { clampActiveSeconds, creditTime, revisionCap, revisionSeconds } from '~/domain/active-time';
+import {
+  clampActiveSeconds,
+  creditHorizon,
+  creditTime,
+  mergeIntervals,
+  revisionCap,
+  revisionSeconds,
+  type Credit,
+  type Interval,
+} from '~/domain/active-time';
 import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
@@ -348,36 +357,52 @@ async function ownActive(assignmentId: string, userId: string) {
 export { clampActiveSeconds };
 
 /**
- * Up to when a person's working time has been credited, read with a lock on
- * their membership that lasts until the transaction ends. Every credit goes
- * through here, so two submissions of one person are credited one after the
- * other and the second sees what the first took. Null when the person has no
- * membership in the organisation: then there is nothing to hold the moment,
- * and nothing is credited.
+ * A person's working clock in an organisation: the stretches of their time
+ * already credited, read after a lock on their membership that lasts until
+ * the transaction ends. Every credit goes through here, so two submissions of
+ * one person are credited one after the other and the second sees what the
+ * first took. The stretches are kept by organisation and user, so removing
+ * and adding someone again keeps them. Null when the person has no
+ * membership: then nothing is credited.
  */
-type WorkClock = { id: string; creditedUntil: Date | null } | null;
-
 async function lockWorkClock(
   tx: Prisma.TransactionClient,
   orgId: string,
   userId: string,
+  now: Date,
 ): Promise<WorkClock> {
-  const rows = await tx.$queryRaw<Array<NonNullable<WorkClock>>>`
-    SELECT id, "creditedUntil" FROM "Membership"
-    WHERE "orgId" = ${orgId} AND "userId" = ${userId} FOR UPDATE`;
-  return rows[0] ?? null;
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "Membership"
+    WHERE "orgId" = ${orgId} AND "userId" = ${userId} FOR NO KEY UPDATE`;
+  if (rows.length === 0) return null;
+  const credited = await tx.creditedInterval.findMany({
+    where: { orgId, userId, end: { gt: creditHorizon(now) } },
+    select: { start: true, end: true },
+  });
+  return { orgId, userId, credited };
 }
 
-/** Moves the clock to where a credit ended. A credit of nothing leaves it where it was. */
-async function advanceWorkClock(
+type WorkClock = { orgId: string; userId: string; credited: Interval[] } | null;
+
+/**
+ * Stores what a credit took. The person's stretches are written back merged,
+ * and those that end before the horizon, which no credit can reach any more,
+ * are removed, so the table holds a few rows per person.
+ */
+async function recordCredit(
   tx: Prisma.TransactionClient,
   clock: WorkClock,
-  credit: { seconds: number; creditedUntil: Date | null },
+  credit: Credit,
+  now: Date,
 ) {
-  if (!clock || credit.seconds === 0) return;
-  await tx.membership.update({
-    where: { id: clock.id },
-    data: { creditedUntil: credit.creditedUntil },
+  if (!clock || credit.pieces.length === 0) return;
+  const { orgId, userId } = clock;
+  const merged = mergeIntervals([...clock.credited, ...credit.pieces]);
+  await tx.creditedInterval.deleteMany({ where: { orgId, userId } });
+  await tx.creditedInterval.createMany({
+    data: merged
+      .filter((interval) => interval.end > creditHorizon(now))
+      .map((interval) => ({ orgId, userId, ...interval })),
   });
 }
 
@@ -455,14 +480,14 @@ export async function submitAssignment(
   const reviewStatus = sampling.review ? 'PENDING' : 'NOT_REQUIRED';
   const assignment = await prisma.$transaction(async (tx) => {
     // The person's clock first, in every transaction that credits time: the
-    // working time of this claim counts from where their time was last
-    // credited, so the same minutes are not paid on two pieces of work.
-    const clock = await lockWorkClock(tx, task.project.orgId, userId);
+    // claim is credited only the minutes of its window that no other work of
+    // theirs has been credited, so the same minutes are not paid twice.
+    const clock = await lockWorkClock(tx, task.project.orgId, userId, now);
     const credit = creditTime({
       reported: clock ? input.activeSeconds : 0,
       start: found.assignment.claimedAt,
       now,
-      creditedUntil: clock?.creditedUntil ?? null,
+      credited: clock?.credited ?? [],
     });
     // scored here, under a lock on the expected answer, so a manager's edit of
     // it cannot fall between reading it and storing the score
@@ -494,7 +519,7 @@ export async function submitAssignment(
         ...NO_DRAFT,
       },
     });
-    if (submitted) await advanceWorkClock(tx, clock, credit);
+    if (submitted) await recordCredit(tx, clock, credit, now);
     // work that no reviewer will see is accepted at once and can complete the
     // task, in the same transaction as the write that accepts it
     if (submitted && !sampling.review && !task.isGold) {
@@ -565,7 +590,7 @@ export async function resubmitAssignment(
       reviewStatus: 'SENT_BACK',
     };
     const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
-    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId) : null;
+    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId, now) : null;
     // the page counts on from the time saved with the draft, so the form has
     // at least that much; the larger one counts if it does not
     const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
@@ -575,10 +600,10 @@ export async function resubmitAssignment(
             reported: Math.max(reported, current.draftSeconds),
             start: revisingSince(current, now),
             now,
-            creditedUntil: clock.creditedUntil,
+            credited: clock.credited,
             cap: revisionCap(limitSeconds(current), current.activeSeconds),
           })
-        : { seconds: 0, creditedUntil: null };
+        : { seconds: 0, pieces: [] };
     const result = await tx.assignment.updateMany({
       // still sent back: a form posted twice adds its time only once
       where: sentBack,
@@ -592,7 +617,7 @@ export async function resubmitAssignment(
         ...NO_DRAFT,
       },
     });
-    if (result.count > 0) await advanceWorkClock(tx, clock, credit);
+    if (result.count > 0) await recordCredit(tx, clock, credit, now);
     if (result.count === 0) {
       const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
       return { ok: false, error: exists ? 'not_active' : 'not_found' };
