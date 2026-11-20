@@ -157,6 +157,7 @@ export default function ProjectDispute({ loaderData, actionData }: Route.Compone
             value={dispute.answer}
             onChange={() => {}}
             readOnly
+            viewKey={`${dispute.id}:answer`}
           />
         </Card>
         <Card>
@@ -170,6 +171,7 @@ export default function ProjectDispute({ loaderData, actionData }: Route.Compone
               value={review.corrected}
               onChange={() => {}}
               readOnly
+              viewKey={`${dispute.id}:corrected`}
             />
           ) : (
             <p className="text-sm text-slate-500">
