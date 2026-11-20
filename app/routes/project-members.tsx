@@ -82,38 +82,63 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (intent === 'add') {
     const membership = await prisma.membership.findUnique({
       where: { orgId_userId: { orgId: project.orgId, userId } },
+      include: { user: { select: { name: true } } },
     });
     if (!membership) throw badRequest('That person is not in this organisation');
-    await logActivity({
-      projectId: project.id,
-      actorId: current.user.id,
-      action: 'member.added',
-      detail: { userId },
-    });
-    await prisma.projectMember.upsert({
-      where: { projectId_userId: { projectId: project.id, userId } },
-      create: { projectId: project.id, userId },
-      update: {},
+    await prisma.$transaction(async (tx) => {
+      // logged only when the person was not on the project yet
+      const added = await tx.projectMember.createMany({
+        data: [{ projectId: project.id, userId }],
+        skipDuplicates: true,
+      });
+      if (added.count === 0) return;
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId: current.user.id,
+        action: 'member.added',
+        detail: { userId, userName: membership.user.name },
+      });
     });
     return { ok: true };
   }
   if (intent === 'reset-qualification') {
-    await prisma.$transaction([
-      prisma.qualificationAttempt.deleteMany({ where: { projectId: project.id, userId } }),
-      prisma.projectMember.updateMany({
+    await prisma.$transaction(async (tx) => {
+      const member = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId: project.id, userId } },
+        include: { user: { select: { name: true } } },
+      });
+      if (!member) return;
+      const removed = await tx.qualificationAttempt.deleteMany({
         where: { projectId: project.id, userId },
-        data: { qualifiedAt: null },
-      }),
-    ]);
+      });
+      await tx.projectMember.update({ where: { id: member.id }, data: { qualifiedAt: null } });
+      if (removed.count === 0 && member.qualifiedAt === null) return;
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId: current.user.id,
+        action: 'qualification.reset',
+        detail: { userId, userName: member.user.name, attempts: removed.count },
+      });
+    });
     return { ok: true };
   }
   if (intent === 'remove') {
-    await prisma.projectMember.deleteMany({ where: { projectId: project.id, userId } });
-    await logActivity({
-      projectId: project.id,
-      actorId: current.user.id,
-      action: 'member.removed',
-      detail: { userId },
+    await prisma.$transaction(async (tx) => {
+      const member = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId: project.id, userId } },
+        include: { user: { select: { name: true } } },
+      });
+      if (!member) return;
+      await tx.projectMember.delete({ where: { id: member.id } });
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId: current.user.id,
+        action: 'member.removed',
+        detail: { userId, userName: member.user.name },
+      });
     });
     return { ok: true };
   }

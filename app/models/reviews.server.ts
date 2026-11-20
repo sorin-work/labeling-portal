@@ -11,6 +11,7 @@ import { payableSince } from '~/domain/payouts';
 import { holdCutoff } from '~/domain/review-hold';
 import { prisma, utc } from '~/lib/db.server';
 
+import { logActivity } from './activity.server';
 import { refreshTaskStatus } from './tasks.server';
 
 const STATUS_AFTER: Record<ReviewDecision, ReviewStatus> = {
@@ -204,6 +205,39 @@ export type RecordedReview =
   { ok: true; review: Review; assignment: Assignment } | { ok: false; error: ReviewRefusal };
 
 /**
+ * The audit entry of a review decision: whose work, which task, the decision
+ * and the QA score. The review row holds the rest; the feedback and a
+ * corrected answer are not copied here.
+ */
+async function logDecision(
+  tx: Prisma.TransactionClient,
+  assignment: { id: string; projectId: string; taskId: string; userId: string },
+  reviewerId: string,
+  input: ReviewInput,
+  now: Date,
+) {
+  const [task, annotator] = await Promise.all([
+    tx.task.findUniqueOrThrow({ where: { id: assignment.taskId }, select: { position: true } }),
+    tx.user.findUniqueOrThrow({ where: { id: assignment.userId }, select: { name: true } }),
+  ]);
+  await logActivity(tx, {
+    projectId: assignment.projectId,
+    actorId: reviewerId,
+    action: 'review.decided',
+    detail: {
+      assignmentId: assignment.id,
+      taskId: assignment.taskId,
+      position: task.position,
+      userId: assignment.userId,
+      userName: annotator.name,
+      decision: input.decision,
+      qaScore: input.qaScore,
+    },
+    createdAt: now,
+  });
+}
+
+/**
  * Stores a review decision and updates the submission's review status. The
  * submission is taken with one conditional write: it must still be pending
  * and not held by another reviewer. Of two reviewers who decide at the same
@@ -245,6 +279,7 @@ export async function recordReview(
       },
     });
     await refreshTaskStatus(assignment.taskId, tx, now);
+    await logDecision(tx, assignment, reviewerId, input, now);
     return { ok: true, review, assignment };
   });
 }

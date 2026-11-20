@@ -17,7 +17,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, REVIEW_BADGES, TASK_STATUS_BADGES, titleCase } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
-import { badRequest, forbidden, notFound } from '~/lib/http';
+import { badRequest, notFound } from '~/lib/http';
 import { can } from '~/lib/permissions';
 import {
   adjudicateTask,
@@ -35,7 +35,7 @@ import {
   setGoldRetired,
   type GoldRefusal,
 } from '~/models/gold.server';
-import { projectSchema, requireProject } from '~/models/projects.server';
+import { projectSchema, requireProject, requireTaskViewer } from '~/models/projects.server';
 
 import type { Route } from './+types/task-detail';
 
@@ -45,9 +45,8 @@ export function meta() {
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
-  const project = await requireProject(current, params.projectId);
+  const project = await requireTaskViewer(current, params.projectId);
   const role = current.membership.role;
-  if (!can(role, 'manageProjects') && !can(role, 'review')) throw forbidden();
 
   const task = await prisma.task.findFirst({
     where: { id: params.taskId, projectId: project.id },

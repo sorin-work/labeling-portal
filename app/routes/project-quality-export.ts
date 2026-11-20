@@ -1,5 +1,7 @@
 import { toCsv } from '~/domain/csv';
 import { requireUser } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
+import { logActivity } from '~/models/activity.server';
 import { requireProject } from '~/models/projects.server';
 import { projectQuality } from '~/models/quality.server';
 
@@ -10,6 +12,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'viewQuality');
   const { annotators } = await projectQuality(project);
+  await logActivity(prisma, {
+    orgId: project.orgId,
+    projectId: project.id,
+    actorId: current.user.id,
+    action: 'export.quality',
+    detail: { projectName: project.name },
+  });
   const csv = toCsv(
     [
       'annotator',

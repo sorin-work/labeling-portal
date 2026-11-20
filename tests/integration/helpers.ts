@@ -15,7 +15,13 @@ export async function resetDb() {
     WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
   if (rows.length === 0) return;
   const tables = rows.map((r) => `"public"."${r.tablename}"`).join(', ');
-  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`);
+  // The audit trail refuses TRUNCATE. The tests own their database, so they
+  // switch that guard off for the reset and on again in the same transaction.
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe(`ALTER TABLE "Activity" DISABLE TRIGGER "Activity_no_truncate"`),
+    prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`),
+    prisma.$executeRawUnsafe(`ALTER TABLE "Activity" ENABLE TRIGGER "Activity_no_truncate"`),
+  ]);
 }
 
 let counter = 0;
@@ -55,13 +61,23 @@ type RequestInit = {
   cookie?: string;
   form?: Record<string, FormValue | FormValue[]>;
   headers?: Record<string, string>;
+  /** a raw body, sent as it is (an API upload); POST unless `method` says otherwise */
+  body?: string | Uint8Array;
+  method?: string;
 };
 
 export function makeRequest(path: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
   if (init.cookie) headers.set('Cookie', init.cookie);
   const url = `http://localhost${path}`;
-  if (!init.form) return new Request(url, { headers });
+  if (init.body !== undefined) {
+    return new Request(url, {
+      method: init.method ?? 'POST',
+      headers,
+      body: init.body as BodyInit,
+    });
+  }
+  if (!init.form) return new Request(url, { headers, method: init.method ?? 'GET' });
   const body = new FormData();
   for (const [key, value] of Object.entries(init.form)) {
     for (const v of Array.isArray(value) ? value : [value]) body.append(key, v);

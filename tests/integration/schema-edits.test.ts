@@ -46,6 +46,8 @@ async function setup(schema: object, status: 'DRAFT' | 'ACTIVE' = 'ACTIVE') {
           instructions: '',
           overlap: '1',
           timeLimitMinutes: '30',
+          // as the project has it, so a save changes only what a test sends
+          goldFeedback: project.goldFeedback ? 'on' : '',
           schema: JSON.stringify(next),
           ...extra,
         },
@@ -293,8 +295,8 @@ describe('schema edits once work exists', () => {
       expect.objectContaining({
         actor: 'Pat',
         text:
-          'changed the task schema: removed the label “neutral”, added the label “spam”, ' +
-          'turned on “multiple”',
+          'changed the task schema (removed the label “neutral”, added the label “spam”, ' +
+          'turned on “multiple”)',
       }),
     ]);
   });
@@ -307,12 +309,22 @@ describe('schema edits once work exists', () => {
     const result = await save(sentiment, { name: 'New name', rate: '0.25' });
 
     expect(payload<Saved>(result).saved).toBe(true);
+    // the fields that changed, and no schema
     const entry = await prisma.activity.findFirstOrThrow({ where: { projectId: project.id } });
-    expect(entry.detail).toBeNull();
+    expect(entry.detail).toEqual({
+      changes: { name: ['Sentiment', 'New name'], rateCents: [0, 25] },
+    });
     expect(await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({
       name: 'New name',
       rateCents: 25,
     });
+  });
+
+  it('writes no entry for a save that changes nothing', async () => {
+    const { project, save } = await setup(sentiment);
+    const result = await save(sentiment);
+    expect(payload<Saved>(result).saved).toBe(true);
+    expect(await prisma.activity.count({ where: { projectId: project.id } })).toBe(0);
   });
 
   it('refuses a field rename or another kind once tasks exist, even without answers', async () => {

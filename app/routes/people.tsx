@@ -43,7 +43,7 @@ export async function action({ request }: Route.ActionArgs) {
     if (!parsed.success) {
       return data<ActionData>({ errors: fieldErrors(parsed.error.issues) }, { status: 400 });
     }
-    const result = await addPerson(membership.orgId, parsed.data);
+    const result = await addPerson(membership.orgId, user.id, parsed.data);
     if (!result.ok) return data<ActionData>({ errors: { email: result.error } }, { status: 400 });
     return data<ActionData>({ message: `${parsed.data.name} was added.` });
   }
@@ -56,7 +56,12 @@ export async function action({ request }: Route.ActionArgs) {
     return data<ActionData>({ message: 'Role updated.' });
   }
   if (intent === 'password') {
-    const result = await setPassword(membership.orgId, userId, String(form.get('password') ?? ''));
+    const result = await setPassword(
+      membership.orgId,
+      user.id,
+      userId,
+      String(form.get('password') ?? ''),
+    );
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
     return data<ActionData>({ message: 'Password updated. Share it with them privately.' });
   }

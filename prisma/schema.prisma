@@ -108,6 +108,8 @@ model Organization {
   memberships Membership[]
   projects    Project[]
   credited    CreditedInterval[]
+  activity    Activity[]
+  apiTokens   ApiToken[]
 }
 
 model User {
@@ -128,6 +130,7 @@ model User {
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
   credited              CreditedInterval[]
+  apiTokens             ApiToken[]
 }
 
 model Membership {
@@ -228,19 +231,46 @@ model ProjectMember {
 }
 
 model Batch {
-  id        String       @id @default(cuid())
-  projectId String
-  name      String
-  format    ImportFormat
+  id             String       @id @default(cuid())
+  projectId      String
+  name           String
+  format         ImportFormat
   /// batches with a higher number are handed out first
-  priority  Int          @default(0)
+  priority       Int          @default(0)
   /// set while nothing from this batch is handed out
-  pausedAt  DateTime?
-  createdAt DateTime     @default(now())
-  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  tasks     Task[]
+  pausedAt       DateTime?
+  /// the Idempotency-Key of the API upload that made it; a repeat gets this batch
+  idempotencyKey String?
+  /// the SHA-256 of that upload's body; the same key with another body is refused
+  idempotencyHash String?
+  createdAt      DateTime     @default(now())
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks          Task[]
 
+  @@unique([projectId, idempotencyKey])
   @@index([projectId])
+}
+
+/// A token for the JSON API under /api/v1. Only the SHA-256 of the token is
+/// kept; the token itself is shown once, when it is made. It acts as its
+/// user with the role their membership has at the time of each request.
+model ApiToken {
+  id         String       @id @default(cuid())
+  userId     String
+  orgId      String
+  name       String
+  tokenHash  String       @unique
+  /// the first characters, to tell tokens apart in the list
+  prefix     String
+  readOnly   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([userId, orgId])
 }
 
 model Task {
@@ -421,15 +451,26 @@ model QualificationAttempt {
 }
 
 /// Things managers did to a project: settings, imports, status changes, members.
+/// The audit trail: what managers, reviewers and admins changed, and the
+/// sign-ins and downloads of the organisation. Rows are only ever added; the
+/// database refuses to change or remove one (see the migration), except that
+/// the actor and project links are cleared when those are deleted.
 model Activity {
-  id        String   @id @default(cuid())
-  projectId String
-  actorId   String
+  id        String       @id @default(cuid())
+  orgId     String
+  /// empty for what is not about one project (people, sign-ins, pay report)
+  projectId String?
+  /// empty once the account is deleted; `actorName` keeps who it was
+  actorId   String?
+  actorName String
   action    String
   detail    Json?
-  createdAt DateTime @default(now())
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  actor     User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project   Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actor     User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
+  @@index([orgId, createdAt])
   @@index([projectId, createdAt])
+  @@index([actorId])
 }

@@ -4,6 +4,7 @@ import { validateAnswer, type Answer } from '~/domain/answers';
 import { ACCEPTED_STATUSES, finalAnswer } from '~/domain/outcome';
 import { prisma } from '~/lib/db.server';
 
+import { logActivity } from './activity.server';
 import { projectSchema } from './projects.server';
 import { acceptedAnswers } from './tasks.server';
 
@@ -114,14 +115,13 @@ export async function adjudicateTask(
       },
     });
     if (settled.count === 0) return { ok: false, error: 'not_waiting' };
-    await tx.activity.create({
-      data: {
-        projectId: project.id,
-        actorId,
-        action: 'task.adjudicated',
-        detail: { taskId, position: task.position, how: choice.kind },
-        createdAt: now,
-      },
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: 'task.adjudicated',
+      detail: { taskId, position: task.position, how: choice.kind },
+      createdAt: now,
     });
     return { ok: true };
   });
@@ -153,14 +153,13 @@ export async function sendToAdjudication(
       },
     });
     if (moved.count === 0) return { ok: false, error: 'not_waiting' };
-    await tx.activity.create({
-      data: {
-        projectId: project.id,
-        actorId,
-        action: 'task.escalated',
-        detail: { taskId, position: task.position },
-        createdAt: now,
-      },
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: 'task.escalated',
+      detail: { taskId, position: task.position },
+      createdAt: now,
     });
     return { ok: true };
   });

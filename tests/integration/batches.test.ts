@@ -364,12 +364,12 @@ describe('batch import', () => {
   });
 
   it('refuses a batch whose rows were checked against a schema that has changed since', async () => {
-    const { project } = await setup();
+    const { project, pm } = await setup();
     const rows = [
       { line: 2, externalId: 'a', data: { text: 'x' }, gold: { labels: ['negative'] } },
     ];
     const read = projectSchema(project);
-    const input = { name: 'b', format: 'CSV' as const, rows, schema: read };
+    const input = { name: 'b', format: 'CSV' as const, rows, schema: read, actorId: pm.id };
 
     // a settings save that drops the label is about to commit
     let commit = () => {};
