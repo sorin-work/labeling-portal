@@ -21,14 +21,14 @@ at the end. The table lists who can open each page.
 | `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                         |
 | `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)    |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
-| `/projects/:id/batches[/new\|/:id]` | Import and browse tasks                  | admin, project manager                      |
+| `/projects/:id/batches[/new\|/:id]` | Import and browse tasks, make gold tasks | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
 | `/projects/:id/members`             | Add people, reset qualification          | admin, project manager                      |
 | `/projects/:id/export`              | Download labels                          | admin, project manager                      |
 | `/projects/:id/activity`            | What managers changed                    | admin, project manager                      |
 | `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                      |
 | `/my-work`                          | Your submissions, feedback, corrections  | annotators                                  |
-| `/my-work/:assignmentId`            | Revise sent-back work or dispute it      | the annotator who did the work              |
+| `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work              |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
@@ -36,6 +36,11 @@ at the end. The table lists who can open each page.
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are
 in [architecture](architecture.md#changing-the-schema-once-work-exists).
+
+The task page also takes what a manager does to a gold task as POSTs: change
+the expected answer, rescore, retire or bring back, and use a completed task
+as gold. Only admins and project managers may send them. Reviewers see on that
+page that a task is gold and how each answer scored, not the expected answer.
 
 ## Downloads and probes
 

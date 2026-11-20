@@ -61,6 +61,64 @@ scored from 0 to 1:
 The qualification test uses the same scores; the attempt passes when the
 average, in percent, reaches the project's pass mark.
 
+## Managing gold tasks
+
+Gold answers are sometimes wrong, and a wrong one marks good annotators down.
+On the page of a gold task a manager (admin or project manager) can:
+
+- **Change the expected answer**, with a reason. The answer is checked like an
+  imported gold answer against the project's schema as it is now. The old
+  answer, who changed it, when and why stay in the task's history. Scores
+  that were already given are not touched by the edit.
+- **Rescore.** Once the expected answer differs from what some stored answers
+  were scored against, the page says how many scores would change, whose gold
+  accuracy moves and who would become flagged or stop being flagged. Nothing
+  happens until the manager presses "Rescore". It recomputes from the stored
+  answers in one transaction, so doing it twice gives the same scores as doing
+  it once, and nobody is asked to label anything again.
+- **Retire** the task, with a reason: it is no longer handed out and its
+  scores count for nobody. They are kept, so "Bring back" restores them. The
+  page says beforehand whose accuracy moves.
+- **Use a completed task as gold**, from its page or for several ticked tasks
+  on the batch page. The task is copied with its consensus as the expected
+  answer (if that is still a valid answer for today's schema). The original
+  and its labels stay as they are and stay in the export; gold tasks never
+  are. The copy lands at the position of a random open task, in the batch of
+  its original, and is never handed to the people who labeled the original.
+
+What follows the scores, and what does not:
+
+- Gold accuracy, the ⚑ flag, the "needs attention" list and the rule that
+  everything from a flagged annotator is reviewed all read the current
+  scores, so they follow a rescore or a retirement at once.
+- **Pay does not.** A rescore or a retirement only changes gold scores. Gold
+  work that was accepted stays accepted and paid, whatever the new score.
+- **Qualification does not.** A qualification question's expected answer can
+  be changed the same way, but past attempts are not regraded: score, outcome
+  and "qualified" are stored results. New attempts are graded against the
+  new answer. To let someone try again, reset their qualification on the
+  Members tab.
+
+The quality page lists the gold tasks with the lowest average score (at least
+two answers). A gold task that most people miss is usually the one that is
+wrong.
+
+### What annotators see
+
+While working, nothing tells an annotator that a task is gold: the work page
+gets the same fields for every task, without the task's own id or anything
+about gold, a copied gold task sits in an ordinary batch at an ordinary
+position, and people who would recognise it from the original never get it.
+The server does slightly different work for a gold submission than for a
+regular one (no review sample, no task to complete), which is not hidden.
+
+After submitting, an annotator sees their score next to the submission on "My
+work" and can compare their answer with the expected one, unless the project
+turns "gold feedback" off in its settings. With it off they get neither, and
+that project's gold tasks also stay out of the gold accuracy on their own
+dashboard, which would otherwise move right after a gold task. Retired gold
+tasks are never shown as gold.
+
 ## Agreement
 
 For classification and pairwise projects the answers are categories, so the
