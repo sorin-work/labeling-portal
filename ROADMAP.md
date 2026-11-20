@@ -817,12 +817,17 @@ text field.
   name `TextClassificationSchema`.
 - The steps are in "Adding a labeling kind" in `docs/architecture.md`. That
   list says TypeScript points at every place. It does for the `switch`
-  statements. It does not for these, which the list leaves out and should
-  gain:
+  statements that have no `default`. It does not for these, which the list
+  leaves out and should gain:
+  - `categoricalValue` in `domain/agreement.ts`. Its `switch` ends in
+    `default: return null`, so a new kind compiles and silently gets no kappa.
+    Add the kind there by hand, with a case in
+    `tests/unit/agreement.test.ts`;
+  - `categorical` in `models/quality.server.ts`, which names two kinds instead
+    of asking `categoricalValue`. Left alone, the quality page loads no
+    answers for an image project and shows it the F1 tile;
   - `taskPreview` in `domain/preview.ts` and the same three-way choice in
     `routes/batch-detail.tsx` (which field to show and search);
-  - `categorical` in `models/quality.server.ts`, which names two kinds instead
-    of asking `categoricalValue`;
   - the image check in `parseImport` (`schema.kind === 'bbox'`);
   - `KIND_NAMES` in `lib/format.ts`, a second copy of `KIND_LABELS` in
     `domain/task-schema.ts`, keyed by the Prisma enum;
@@ -844,9 +849,11 @@ text field.
 - Undecided: a new kind, or an optional `imageField` on `text_classification`.
   I lean towards the new kind: `kind` picks the interface everywhere, and the
   Prisma enum (`TaskKind`, with a migration) keeps lists and filters simple.
-- Tests: the unit test files for schema, answers, consensus, gold, export and
-  template each get the new kind; one integration test that imports, labels,
-  completes and exports an image project.
+- Tests: the unit test files for schema, answers, consensus, gold, agreement,
+  export and template each get the new kind; one integration test that
+  imports, labels, completes and exports an image project, and one in
+  `tests/integration/quality.test.ts` that the quality page reports kappa for
+  it.
 
 ### 15. Audit trail
 
