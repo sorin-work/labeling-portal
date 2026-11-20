@@ -94,6 +94,33 @@ describe('suggestions from the import file', () => {
   });
 });
 
+describe('gold and file predictions', () => {
+  beforeEach(resetDb);
+
+  it('refuses a _prediction on a gold row', async () => {
+    const { importFile } = await world();
+    const result = await importFile('text,_gold,_prediction\nGreat,positive,positive\n');
+    expect(JSON.stringify(payload(result))).toContain('A gold row takes no _prediction');
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('says on the quality page when only file predictions leave gold tasks standing out', async () => {
+    const { project, pmCookie, importFile } = await world();
+    await importFile('text,_gold,_prediction\nGreat,,positive\nBad,negative,\n');
+    const quality = (cookie: string) =>
+      run(qualityLoader, makeRequest(`/projects/${project.id}/quality`, { cookie }), {
+        projectId: project.id,
+      });
+    expect(
+      payload<{ suggestions: { goldStandsOut: boolean } }>(await quality(pmCookie)).suggestions,
+    ).toMatchObject({ goldStandsOut: true });
+    await prisma.project.update({ where: { id: project.id }, data: { prelabel: rule } });
+    expect(
+      payload<{ suggestions: { goldStandsOut: boolean } }>(await quality(pmCookie)).suggestions,
+    ).toMatchObject({ goldStandsOut: false });
+  });
+});
+
 describe('the rule', () => {
   beforeEach(resetDb);
 
@@ -131,6 +158,51 @@ describe('the rule', () => {
     expect((await tasks())[0]).toMatchObject({ suggestion: null, suggestionSource: null });
   });
 
+  it('stops at its time limit, and Continue on the batch page goes on without starting over', async () => {
+    const { project, pmCookie, importFile } = await world({ prelabel: rule });
+    await importFile(`text\n${Array.from({ length: 6 }, (_, i) => `Great ${i}`).join('\n')}\n`);
+    await prelabelsSettled();
+    await prisma.task.updateMany({ data: { suggestion: undefined, suggestionSource: null } });
+    const batch = await prisma.batch.findFirstOrThrow();
+    let t = 0;
+    await runPrelabel(batch.id, { timeLimitMs: 3000, clock: () => (t += 1000) });
+    const done = await prisma.task.findMany({ where: { suggestionSource: 'keywords' } });
+    expect(done).toHaveLength(2);
+    const marked = new Map(done.map((d) => [d.id, d.suggestion]));
+
+    await run(
+      batchAction,
+      makeRequest(`/projects/${project.id}/batches/${batch.id}`, {
+        cookie: pmCookie,
+        form: { intent: 'prelabel-continue' },
+      }),
+      { projectId: project.id, batchId: batch.id },
+    );
+    await prelabelsSettled();
+    expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
+      prelabelState: 'DONE',
+      // only the four still to do were run; the first two were not started over
+      prelabelNote: 'Suggested an answer for 4 of 4 tasks.',
+    });
+    for (const [id, suggestion] of marked) {
+      expect((await prisma.task.findUniqueOrThrow({ where: { id } })).suggestion).toEqual(
+        suggestion,
+      );
+    }
+    expect(await prisma.activity.count({ where: { action: 'batch.prelabel' } })).toBe(0);
+  });
+
+  it('leaves a task that someone has been handed, also without a suggestion yet', async () => {
+    const { project, importFile, ann } = await world({ prelabel: rule });
+    await importFile('text\nGreat\nGreat again\n');
+    await prelabelsSettled();
+    await prisma.task.updateMany({ data: { suggestion: undefined, suggestionSource: null } });
+    // someone claimed the first task before the rule got to it
+    await claimNextTask(project, ann.id);
+    await runPrelabel((await prisma.batch.findFirstOrThrow()).id);
+    expect((await tasks()).map((t) => t.suggestionSource)).toEqual([null, 'keywords']);
+  });
+
   it('stops at its time limit, and a second run goes on from there', async () => {
     const { importFile } = await world({ prelabel: rule });
     await importFile(`text\n${Array.from({ length: 5 }, (_, i) => `Great ${i}`).join('\n')}\n`);
@@ -144,7 +216,7 @@ describe('the rule', () => {
     expect(first).toMatchObject({ state: 'TIMED_OUT', tried: 2 });
     expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
       prelabelState: 'TIMED_OUT',
-      prelabelNote: 'Stopped after 2 tasks, at the time limit. Run it again to go on.',
+      prelabelNote: 'Stopped after 2 tasks, at the time limit. Continue to go on from there.',
     });
     const second = await runPrelabel(batch.id);
     expect(second).toEqual({ state: 'DONE', suggested: 3, tried: 3 });
@@ -192,7 +264,7 @@ describe('the rule', () => {
       batchAction,
       makeRequest(`/projects/${project.id}/batches/${batch.id}`, {
         cookie: pmCookie,
-        form: { intent: 'prelabel' },
+        form: { intent: 'prelabel-restart' },
       }),
       { projectId: project.id, batchId: batch.id },
     );
@@ -213,19 +285,14 @@ describe('a suggestion on the work page and in a submission', () => {
     const claim = await claimNextTask(w.project, w.ann.id);
     const id = claim.ok ? claim.assignment.id : '';
     const cookie = await cookieFor(w.ann, w.org.id);
-    const submit = (answer: object, fromSuggestion: boolean) =>
-      run(
-        workAction,
-        makeRequest(`/work/${id}`, {
-          cookie,
-          form: {
-            intent: 'submit',
-            answer: JSON.stringify(answer),
-            fromSuggestion: fromSuggestion ? '1' : '',
-          },
-        }),
-        { assignmentId: id },
-      );
+    const post = (form: Record<string, string>) =>
+      run(workAction, makeRequest(`/work/${id}`, { cookie, form }), { assignmentId: id });
+    // taking the suggestion is posted when it happens; the submit form carries
+    // no flag of its own (a `fromSuggestion` field there is ignored)
+    const submit = async (answer: object, took: boolean) => {
+      if (took) await post({ intent: 'take-suggestion' });
+      return post({ intent: 'submit', answer: JSON.stringify(answer), fromSuggestion: '1' });
+    };
     return { ...w, id, cookie, submit };
   }
 
@@ -235,7 +302,11 @@ describe('a suggestion on the work page and in a submission', () => {
       suggestion: { answer: object; text: string } | null;
       assignment: { draft: unknown };
     }>(await run(workLoader, makeRequest(`/work/${id}`, { cookie }), { assignmentId: id }));
-    expect(page.suggestion).toEqual({ answer: { labels: ['positive'] }, text: 'positive' });
+    expect(page.suggestion).toEqual({
+      answer: { labels: ['positive'] },
+      text: 'positive',
+      taken: false,
+    });
     expect(page.assignment.draft).toBeNull();
   });
 

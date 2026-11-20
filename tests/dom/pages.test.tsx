@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, redirect } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -83,13 +83,18 @@ describe('work page', () => {
 
   it('shows a suggestion as a suggestion, and hands in nothing until it is taken', async () => {
     const user = userEvent.setup();
-    const { container } = renderPage({
+    const posted: string[] = [];
+    renderPage({
       path: '/work/:assignmentId',
       url: '/work/a1',
       Component: Work,
       loaderData: {
         ...workData('text_classification'),
-        suggestion: { answer: { labels: ['negative'] }, text: 'negative' },
+        suggestion: { answer: { labels: ['negative'] }, text: 'negative', taken: false },
+      },
+      action: async ({ request }: { request: Request }) => {
+        posted.push(String((await request.formData()).get('intent')));
+        return { error: null };
       },
     });
     const submit = await screen.findByRole('button', { name: 'Submit and next' });
@@ -102,8 +107,9 @@ describe('work page', () => {
     await user.click(screen.getByRole('button', { name: 'Start from the suggestion' }));
     expect(screen.getByRole('radio', { name: /negative/ })).toHaveProperty('checked', true);
     expect(submit).toHaveProperty('disabled', false);
-    const hidden = container.querySelector<HTMLInputElement>('input[name=fromSuggestion]');
-    expect(hidden?.value).toBe('1');
+    // the server is told, and keeps it; the submit form carries no flag
+    await waitFor(() => expect(posted).toEqual(['take-suggestion']));
+    expect(document.querySelector('input[name=fromSuggestion]')).toBeNull();
     expect(screen.getByText(/You started from the suggestion/)).toBeTruthy();
   });
 

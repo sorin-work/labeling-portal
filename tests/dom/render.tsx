@@ -39,7 +39,7 @@ export function renderPage({
   Component: unknown;
   /** the loader's data, or a function of the route's params that returns it */
   loaderData: unknown;
-  action?: () => unknown;
+  action?: (args: { request: Request }) => unknown;
   /** further pages next to it, to navigate to */
   more?: Array<{ path: string; Component: () => ReactNode }>;
   /** inside the project layout (its heading and tabs), as `/projects/:projectId/...` pages are */

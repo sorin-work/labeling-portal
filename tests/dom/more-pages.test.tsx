@@ -298,6 +298,7 @@ const quality: Data<typeof qualityLoader> = {
     tasks: 4,
     annotators: [{ userId: 'u1', name: 'Ann', withSuggestion: 4, unchanged: 3, avgSeconds: 40 }],
     againstGold: [{ source: 'keywords', tasks: 2, score: 0.5 }],
+    goldStandsOut: true,
   },
   lowestGold: [
     {
