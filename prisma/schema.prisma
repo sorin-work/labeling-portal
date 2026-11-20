@@ -77,6 +77,12 @@ enum DisputeStatus {
   WITHDRAWN
 }
 
+/// How the queue orders the tasks of a batch.
+enum QueueOrder {
+  IMPORT
+  SHUFFLED
+}
+
 enum PayMode {
   PER_TASK
   HOURLY
@@ -148,6 +154,10 @@ model Project {
   disputeWindowDays        Int                    @default(14)
   /// annotators see their score and the expected answer of a gold task once they have submitted it
   goldFeedback             Boolean                @default(true)
+  /// import order, or an order of its own for every annotator
+  queueOrder               QueueOrder             @default(IMPORT)
+  /// about one gold task in every N; empty leaves gold where its position puts it
+  goldEvery                Int?
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -184,6 +194,10 @@ model Batch {
   projectId String
   name      String
   format    ImportFormat
+  /// batches with a higher number are handed out first
+  priority  Int          @default(0)
+  /// set while nothing from this batch is handed out
+  pausedAt  DateTime?
   createdAt DateTime     @default(now())
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks     Task[]
@@ -223,6 +237,7 @@ model Task {
   @@index([projectId, status, position])
   @@index([batchId, position])
   @@index([batchId, status])
+  @@index([batchId, status, position, isGold])
   @@index([goldSourceId])
 }
 
