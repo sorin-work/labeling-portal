@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Projects and setup
+
+- Schema edits are checked against stored work. The settings form refuses
+  another kind or field name once tasks exist, removing or renaming a label,
+  entity type or box label that answers use, turning off `multiple` or
+  `allowTie` while answers depend on them, and a new rubric dimension that
+  scored answers lack. It shows what an edit would do while typing, and the
+  error points to "Duplicate project" for a redesign
+- A saved schema edit is recorded in the activity log with the schema before
+  and after, and the activity tab says what changed
+- Pairwise consensus averages only the dimensions of the current rubric
+
 ## 1.0.0 - 2026-11-08
 
 First stable release.

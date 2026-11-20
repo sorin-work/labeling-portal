@@ -8,7 +8,9 @@ or fix the work.
 - **Organisations and roles**: admin, project manager, reviewer and annotator,
   with every project scoped to its organisation
 - **Projects**: Markdown instructions with live preview, a JSON task schema,
-  annotators per task (overlap), time limit, review on/off, pay rate
+  annotators per task (overlap), time limit, review on/off, pay rate. The
+  schema can still be edited once work exists: edits that would break stored
+  answers are refused, and the form says why before the save
 - **Four labeling interfaces**: text classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
