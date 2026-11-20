@@ -93,6 +93,12 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
       data: { isGold: true, goldAnswer: { labels: [truth(task.position)] } },
     });
   }
+  // the gold is spaced out over everyone's work and the order is shuffled,
+  // so the demo shows the queue settings in use
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { queueOrder: 'SHUFFLED', goldEvery: 6 },
+  });
 
   const [ben, chen] = ids.annotators.slice(1);
   const accuracy = new Map([
