@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Review and quality
+
+- Review sampling: a project can review a share of its submissions instead of
+  all of them. The draw happens once at submission and is stored; each
+  annotator's first ten submissions and all work of annotators flagged for low
+  gold accuracy are always reviewed; work that is not drawn is accepted at
+  once and can complete its task
+- Reviewer reservations: "Start reviewing" reserves the oldest free submission
+  for one reviewer for 15 minutes, the queue shows who holds what, and a
+  decision on a submission someone else holds is refused. Two reviewers asking
+  or deciding at the same moment can no longer end up on the same submission
+- Quality page and its CSV: share of each annotator's work that was reviewed
+
 ## 1.0.0 - 2026-11-08
 
 First stable release.
