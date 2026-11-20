@@ -9,8 +9,10 @@ import { KIND_LABELS, type SchemaKind, type TaskSchema } from './task-schema';
  * fails when a key ends up with two meanings on one page.
  *
  * Key names: digits are '0' to '9', letters are lower case, other keys use
- * their `KeyboardEvent.key` name ('Delete', 'Escape', '?'). 'Mod+Enter' and
- * 'Mod+z' are Enter and Z with Ctrl or Cmd. '*' stands for any other key.
+ * their `KeyboardEvent.key` name ('Delete', 'Escape', '?', 'ArrowLeft').
+ * 'Mod+' is Ctrl or Cmd, and only 'Mod+Enter', 'Mod+z' and 'Mod+Shift+z'
+ * exist. 'Shift+' is only written for the arrow keys and Tab; elsewhere Shift
+ * is part of typing the character. '*' stands for any other key.
  */
 
 export type Page = 'work' | 'review';
@@ -36,17 +38,26 @@ export type KeyBinding = {
   commits?: boolean;
   /** interface keys: also works in a read-only view */
   readOnly?: boolean;
+  /** keeps acting while the key is held down (moving a box, zooming) */
+  repeat?: boolean;
+  /**
+   * Listed in the cheat sheet but not handled through the key map: the browser
+   * does it (Tab), or it only means something while the pointer is down.
+   */
+  passive?: boolean;
 };
+
+const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
 
 // ---------- label keys ----------
 
 /**
  * Letters that mean something else somewhere and are therefore never a label
- * key: a, e and s are page keys, f and n are kept for the box interface (fit
- * to view, new box). Skipping them everywhere keeps a label on the same key on
- * every page.
+ * key: a, e and s are page keys; f, n and r belong to the box interface (fit
+ * to view, new box, resize). Skipping them everywhere keeps a label on the
+ * same key on every page.
  */
-const NOT_LABEL_LETTERS = 'aefns';
+const NOT_LABEL_LETTERS = 'aefnrs';
 
 /** 1 to 9, 0 for the tenth label, then the free letters. */
 export const LABEL_KEYS: readonly string[] = [...'1234567890abcdefghijklmnopqrstuvwxyz'].filter(
@@ -191,11 +202,53 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
       keys: LABEL_KEYS,
       label: 'Choose the box label, or relabel the selected box',
     },
+    { action: 'new', keys: ['n'], label: 'Put a new box in the middle of the view' },
+    {
+      action: 'select',
+      keys: ['Tab', 'Shift+Tab'],
+      label: 'Go to the next or the previous box',
+      passive: true,
+    },
+    {
+      action: 'nudge',
+      keys: ARROWS,
+      label: 'Move the box that has focus by one pixel',
+      repeat: true,
+    },
+    {
+      action: 'nudgeFar',
+      keys: ARROWS.map((key) => `Shift+${key}`),
+      label: 'Move it by ten pixels',
+      repeat: true,
+    },
+    {
+      action: 'resizeMode',
+      keys: ['r'],
+      label: 'Make the arrows resize the box instead of moving it, and back',
+    },
     {
       action: 'remove',
       keys: ['Delete', 'Backspace'],
       label: 'Remove the selected box',
       destructive: true,
+    },
+    { action: 'undo', keys: ['Mod+z'], label: 'Undo' },
+    { action: 'redo', keys: ['Mod+Shift+z'], label: 'Redo' },
+    { action: 'zoomIn', keys: ['+', '='], label: 'Zoom in', readOnly: true, repeat: true },
+    { action: 'zoomOut', keys: ['-'], label: 'Zoom out', readOnly: true, repeat: true },
+    { action: 'fit', keys: ['f'], label: 'Fit the whole image', readOnly: true },
+    {
+      action: 'pan',
+      keys: ['Space'],
+      label: 'Hold and drag to move a zoomed view',
+      readOnly: true,
+      passive: true,
+    },
+    {
+      action: 'cancelDrag',
+      keys: ['Escape'],
+      label: 'While dragging: put the box back',
+      passive: true,
     },
   ],
 };
@@ -224,6 +277,11 @@ export function interfaceKeys(schema: TaskSchema): KeyBinding[] {
     .map((b) => (b.action === 'label' ? { ...b, keys: labelKeys(labelCount(schema)) } : b));
 }
 
+/** True when a read-only interface of this kind still has keys (to look around, not to edit). */
+export function hasReadOnlyKeys(schema: TaskSchema): boolean {
+  return INTERFACE_KEYS[schema.kind].some((b) => b.readOnly && !b.passive);
+}
+
 // ---------- from a key press to an action ----------
 
 export type KeyPress = {
@@ -233,37 +291,45 @@ export type KeyPress = {
   metaKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
-  repeat?: boolean;
   isComposing?: boolean;
 };
 
 /** Pressed on their own they are not a key press for the map. */
 const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'Fn', 'OS'];
 
+/** Characters the key map uses as themselves. On some layouts they are Shift with a digit key. */
+const SYMBOL_KEYS = ['?', '+', '-', '='];
+
 /**
  * The name a key press has in the key map, or null when it is not for the
- * app: a key that is held down, a modifier on its own, text being composed,
- * or anything with Ctrl, Cmd or Alt, which belong to the browser and to
- * screen readers. The exceptions are Ctrl or Cmd with Enter and with Z,
- * which the browser only uses inside text boxes.
+ * app: a modifier on its own, text being composed, or anything with Ctrl, Cmd
+ * or Alt, which belong to the browser and to screen readers. The exceptions
+ * are Ctrl or Cmd with Enter (hand in) and with Z (undo, redo with Shift),
+ * which the browser only uses inside text boxes, and there the key map leaves
+ * them alone.
  *
  * A digit is taken as typed, so a layout with its digits in another order
  * gets the label it shows. Only when the key did not type a digit is the
  * physical key read: that makes the digit row work on layouts where it needs
- * Shift (AZERTY). The number pad types digits while Num Lock is on. "?" is
- * taken as typed, because some layouts have it on a digit key.
+ * Shift (AZERTY). The number pad types digits while Num Lock is on. A symbol
+ * the map uses wins when it is typed with Shift on a digit key ("?" on
+ * Shift+6, "+" on Shift+1). Without Shift the digit wins, which costs AZERTY
+ * its "-" on the 6 key; the number pad has another.
  */
 export function keyName(press: KeyPress): string | null {
-  if (press.repeat || press.isComposing || press.altKey) return null;
+  if (press.isComposing || press.altKey) return null;
   if (MODIFIER_KEYS.includes(press.key)) return null;
   if (press.ctrlKey || press.metaKey) {
     if (press.key === 'Enter') return 'Mod+Enter';
-    return press.key.toLowerCase() === 'z' && !press.shiftKey ? 'Mod+z' : null;
+    if (press.key.toLowerCase() === 'z') return press.shiftKey ? 'Mod+Shift+z' : 'Mod+z';
+    return null;
   }
   if (/^\d$/.test(press.key)) return press.key;
-  if (press.key === '?') return '?';
   const digit = /^Digit(\d)$/.exec(press.code);
-  if (digit) return digit[1];
+  if (digit) return press.shiftKey && SYMBOL_KEYS.includes(press.key) ? press.key : digit[1];
+  if (press.shiftKey && (ARROWS.includes(press.key) || press.key === 'Tab')) {
+    return `Shift+${press.key}`;
+  }
   return press.key.length === 1 ? press.key.toLowerCase() : press.key;
 }
 
@@ -295,8 +361,6 @@ export function isTextEntry(target: FocusTarget | null): boolean {
   return tag === 'INPUT' && !INPUTS_WITHOUT_TEXT.includes((target.type ?? 'text').toLowerCase());
 }
 
-const ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-
 /**
  * Keys that the focused control uses itself and that a shortcut must never
  * take away: the arrows and Space in a radio group, Space on a checkbox,
@@ -321,9 +385,13 @@ export type KeyContext = {
   dialog: boolean;
   /** the cursor is in a text field */
   typing: boolean;
+  /** the key is being held down and this is one of its repeats */
+  repeat?: boolean;
 };
 
 function isLive(binding: KeyBinding, context: KeyContext): boolean {
+  if (binding.passive) return false;
+  if (context.repeat && !binding.repeat) return false;
   // first of all: what is typed into a text box is text, also "?" and Escape
   // while the cheat sheet is open
   if (context.typing && !binding.typing) return false;
@@ -344,10 +412,17 @@ export function interfaceKeysOn(context: KeyContext): boolean {
 
 type InterfaceContext = KeyContext & { readOnly: boolean };
 
+/**
+ * An interface that can be edited has all its keys, or none while the page
+ * holds them back (the skip form is open). A read-only one has only the keys
+ * marked `readOnly`: looking around, never changing.
+ */
 function liveInterfaceKeys(schema: TaskSchema, context: InterfaceContext): KeyBinding[] {
   if (context.dialog || context.typing) return [];
-  const editing = !context.readOnly && interfaceKeysOn(context);
-  return interfaceKeys(schema).filter((b) => editing || b.readOnly);
+  if (!context.readOnly && !interfaceKeysOn(context)) return [];
+  return interfaceKeys(schema).filter(
+    (b) => !b.passive && (!context.repeat || b.repeat) && (!context.readOnly || b.readOnly),
+  );
 }
 
 /** The page action a key stands for right now, or null. */
@@ -435,12 +510,18 @@ export function nextScoreGroup(groups: readonly ScoreGroup[], current: ScoreGrou
 const KEY_WORDS: Record<string, string> = {
   'Mod+Enter': 'Ctrl + Enter',
   'Mod+z': 'Ctrl + Z',
+  'Mod+Shift+z': 'Ctrl + Shift + Z',
+  'Shift+Tab': 'Shift + Tab',
   Escape: 'Esc',
   [ANY_OTHER_KEY]: 'any other key',
 };
 
 /** Keys the way the cheat sheet and the hints print them. */
 export function showKeys(keys: readonly string[]): string {
+  if (keys.length === ARROWS.length && keys.every((key) => ARROWS.includes(key))) return 'Arrows';
+  if (keys.length === ARROWS.length && keys.every((key) => ARROWS.includes(key.slice(6)))) {
+    return 'Shift + arrows';
+  }
   const labels = keys.length > 0 && keys.every((key, i) => key === LABEL_KEYS[i]);
   if (labels && keys.length > 10) return '1 - 9, 0, then the letter on the label';
   if (labels && keys.length === 10) return '1 - 9, 0';
