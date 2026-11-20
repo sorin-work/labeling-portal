@@ -172,7 +172,16 @@ the period of its approval.
 - CI puts the demo data into the test database, dumps it, restores the dump
   into a scratch database and compares the row counts, and runs the daily
   loop and the pruning against made-up clocks
-
+- Faster on large projects, with the same results: a claim passes over
+  tasks that are full (waiting for review) on a counter of taken slots that a
+  database trigger keeps, instead of counting each task's assignments; the
+  quality page reads its rows in two statements instead of nested relations;
+  the check of what stored work uses from the schema takes apart each
+  different answer once. Measured on 200,000 tasks: the quality page from
+  about 25 s to 4 s, the schema check from 2 to 3 s to under 1 s, the
+  dashboard count and a claim past 80,000 full tasks about three times faster,
+  a shuffled claim about six times faster
+- An annotator's page on the quality tab has pages instead of the latest 50
 - Gold tasks can be managed after import. A manager can change the expected
   answer with a reason (the old answer, who, when and why are kept), see what
   a rescore would change and apply it, retire a gold task and bring it back,

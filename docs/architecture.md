@@ -120,6 +120,20 @@ After the pick, `claimNextTask` checks `eligibleFor` again on the locked row,
 because a slot count taken before the lock may miss a claim that was committed
 in between, and retries with a new pick if it fails.
 
+**The slot counter.** `Task.takenSlots` is the number of the task's
+assignments that are `ACTIVE` or `SUBMITTED`. A trigger on `Assignment`
+(`task_taken_slots`, in the migration `task_taken_slots`) keeps it, in the
+statement that inserts, updates or deletes the assignment, so no code path
+can forget it and it cannot drift. `eligibleFor` compares it with the overlap
+and the extra slots on the task's own row, so a task that is full (waiting for
+review, say) is passed over without a query per task. A claim past its time
+limit stays counted until it is marked expired, so `claimNextTask` and
+`countAvailable` first mark expired claims with the same `now`; after that the
+counter is exactly what the old per-task count gave. The trigger takes a lock
+on the task row when an assignment enters or leaves those two states (a new
+claim, a skip, a release, an expiry): such a write now waits for a claim that
+holds the same task row, for the moment that claim takes.
+
 ## Review sampling
 
 A project with review on has a "Share to review" from 0 to 100
