@@ -2,10 +2,13 @@ import type { Prisma } from '@prisma/client';
 import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
+import { DraftNote } from '~/components/draft-note';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useActiveTime } from '~/components/use-active-time';
+import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -38,14 +41,20 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect('/my-work');
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
+  const schema = projectSchema(assignment.project);
+  // changes that were under way before a reload
+  const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   return {
+    userId: user.id,
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
     projectName: assignment.project.name,
-    schema: projectSchema(assignment.project),
+    schema,
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
+    draft: draft.answer,
+    draftNote: droppedNote(schema, draft.dropped),
     feedback: assignment.reviews[0]?.feedback ?? '',
   };
 }
@@ -69,12 +78,33 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect('/my-work?filter=returned');
 }
 
-export default function Revise({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * Keyed by submission, like the work page: going back and forth in the
+ * browser history between two sent-back submissions stays on this route, and
+ * without the key the first one's answer would be saved as the other's draft.
+ */
+export default function Revise(props: Route.ComponentProps) {
+  return <RevisePage key={props.loaderData.id} {...props} />;
+}
+
+function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
-  const [value, setValue] = useState<Answer>(answer);
+  const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
   // revising is work too: on an hourly project this time is paid
-  const activeSeconds = useActiveTime();
+  const [activeSeconds] = useActiveTime();
+  // nothing is saved in compare mode: the answer there cannot change
+  const draftState = useDraftSave({
+    url: `/my-work/${loaderData.id}/draft`,
+    user: loaderData.userId,
+    answer: value,
+    restored: loaderData.draft !== null,
+    handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
+    onRecover: (unsaved) => {
+      const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
+      if (fitted) setValue(fitted);
+    },
+  });
 
   if (mode === 'compare') {
     return (
@@ -131,15 +161,17 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
         </div>
       )}
       {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {loaderData.draftNote && <Alert tone="info">{loaderData.draftNote}</Alert>}
       <Card>
         <LabelingInterface schema={schema} data={taskData} value={value} onChange={setValue} />
       </Card>
-      <Form method="post">
+      <Form method="post" className="flex items-center gap-3">
         <input type="hidden" name="answer" value={JSON.stringify(value)} />
         <input type="hidden" name="activeSeconds" value={activeSeconds} />
         <Button type="submit" disabled={navigation.state !== 'idle'}>
           Resubmit for review
         </Button>
+        <DraftNote state={draftState} />
       </Form>
     </div>
   );

@@ -34,7 +34,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 
 | #   | Item                                         | Group   | Area          | Size | Depends on |
 | --- | -------------------------------------------- | ------- | ------------- | ---- | ---------- |
-| 1   | Drafts that survive a reload                 | Next    | labeling      | S    | -          |
+| 1   | Drafts that survive a reload                 | Shipped | labeling      | S    | -          |
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
@@ -54,60 +54,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
-
-### 1. Drafts that survive a reload
-
-On the work page the answer lives only in React state (the `answer` state in
-`routes/work.tsx` starts as `null`). A reload, a closed tab or a browser crash
-throws away twenty drawn boxes or a half-written rationale. The working time
-goes with it: `useActiveTime` starts again from zero, which on an hourly
-project is lost pay.
-
-The same state is also kept when it should go. `Work` is not remounted when
-"Submit and next" moves from one `/work/:assignmentId` to the next (only
-`LabelingInterface` has a `key`), so the next task opens with the previous
-task's answer still in `answer` and the submit button enabled, and the seconds
-counter runs on across tasks.
-
-- First, reset per assignment: render the body of the page under
-  `key={assignment.id}`, so `answer`, the skip form and `useActiveTime` start
-  fresh for every task. This fixes the carry-over that exists today, and the
-  rest of the item depends on it: without it the first autosave on a new task
-  would store the previous task's answer and seconds as the new draft.
-- Data: `draft Json?` and `draftSeconds Int @default(0)` on `Assignment`.
-- A new `intent=draft` branch in the `work.tsx` action, next to `extend`,
-  `release` and `skip`. It calls a new `saveDraft` in `models/queue.server.ts`
-  that uses the same `ownActive` check as the others and stores the seconds
-  through `clampActiveSeconds`. It answers with JSON and does not redirect.
-- The loader returns the draft. With the key in place the component starts
-  `answer` from it, and `useActiveTime` takes `draftSeconds` as a starting
-  value, so after a reload the counter continues instead of restarting.
-- The page saves through `useFetcher` a few seconds after the last change and
-  when the tab is hidden, and shows "Draft saved" next to the working time.
-- Tricky: a draft is not a valid answer. A pairwise draft starts with
-  `preference: null` (the `EMPTY` constant in
-  `components/labeling/pairwise.tsx`), so drafts are stored without
-  `validateAnswer` and only checked for size (say 200 KB). Submitting still
-  validates.
-- Tricky: `submitAssignment`, `skipAssignment` and `releaseAssignment` should
-  clear the draft, so finished rows do not carry it around.
-- Tricky: the same task open in two tabs. The last save wins, which is fine,
-  because only the submit counts.
-- Related: revising sent-back work (`routes/my-work-revise.tsx`) and the
-  qualification test (`routes/project-qualification.tsx`, several questions in
-  one form) lose their state the same way. The revise page can use the same
-  column, with its own guard because that assignment is `SUBMITTED`, not
-  `ACTIVE`. The test has no row to hang a draft on; `sessionStorage`, as in
-  `useRemembered`, is enough there.
-- Undecided: a draft on the server or only in `localStorage`. I lean towards
-  the server: it follows the annotator to another device, it keeps the working
-  time honest, and nothing is left behind on a shared computer.
-- Tests: next to the work route tests in `tests/integration/queue.test.ts`:
-  save and load again, seconds are clamped, cleared on submit, the next
-  assignment's loader returns no draft, not found for someone else's
-  assignment, refused once the claim is no longer active. The reset between
-  tasks is component behaviour; a test for it has to wait for the DOM test
-  setup of item 8.
 
 ### 3. Hotkeys for every action
 
@@ -855,11 +801,10 @@ price: people accept what is already filled in.
   carry the suggestion.
 - The work loader (`routes/work.tsx`) sends the suggestion and the interface
   starts from it. A draft from item 1 wins when both exist.
-- That only works when the page starts fresh for each assignment. Today `Work`
-  is not remounted between tasks and `answer` carries over from the previous
-  one, so the next task's suggestion would never be shown. Item 1 fixes this
-  by rendering the page body under `key={assignment.id}`; if this item lands
-  first it has to do the same.
+- That only works because the page starts fresh for each assignment: since
+  item 1 the page body is rendered under `key={assignment.id}`, so `answer`
+  does not carry over from the previous task and can start from the
+  suggestion.
 - Never for gold or qualification tasks. A gold task with a suggestion either
   gives the answer away or tests whether people fix it, and neither is what
   gold accuracy means today.
@@ -889,6 +834,30 @@ price: people accept what is already filled in.
   tasks, and what a submission records.
 
 ## Shipped
+
+### 1. Drafts that survive a reload
+
+The work page saves the answer in progress and the working time to the
+assignment (`draft`, `draftSeconds`) shortly after each change, when the tab
+is hidden or closed and when the page is left, and a reload starts from there.
+The page body is keyed by assignment id, so nothing carries over to the next
+task. Revising sent-back work keeps a draft in the same column, and the
+qualification test keeps its answers in `sessionStorage`. Different from the
+design: the save is a plain `fetch` to two resource routes
+(`POST /work/:assignmentId/draft`, `POST /my-work/:assignmentId/draft`)
+instead of an `intent=draft` branch called through `useFetcher`, because a
+fetcher whose request fails puts the error page in place of the task. The two
+routes check the origin of the request themselves. A save without a changed
+answer carries working time only, so a tab that was only looked at cannot
+overwrite the draft. A stored draft is fitted to the task schema when it is
+read back, and the page says what was left out. A claim that runs out of time
+drops its draft too. Because a reload overtakes the closing page's save, that
+page also leaves its unsaved work in `sessionStorage`, filed under the user
+and removed on sign-out. The details are in
+[docs/architecture.md](docs/architecture.md). Still open: a crash can lose the
+last seconds before it; a claim that ran out does not hand its draft to the
+next claim of the same task; time spent revising is not counted (item 5); the
+reset between tasks has no test until the DOM test setup of item 8.
 
 ### 2. Safe schema edits once work exists
 

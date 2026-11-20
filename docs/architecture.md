@@ -26,7 +26,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Project`              | Instructions, task schema, overlap, time limit, review share, pay    |
 | `ProjectMember`        | Who may work on or review a project; `qualifiedAt` after the test    |
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
-| `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
+| `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
@@ -106,6 +106,57 @@ background job that clears it.
   long fix keeps its submission, and a tab that was left open lets it go. A
   renewal only touches a hold that is still the reviewer's own.
 
+## Drafts
+
+An answer in progress would otherwise live only in the browser tab. The work
+page therefore saves it to the assignment (`draft`, with the working time in
+`draftSeconds`) two seconds after the last change, at least every ten seconds
+while changes keep coming, when the tab is hidden or closed, and when the
+annotator leaves the page inside the app. Working time alone is saved every
+thirty seconds. After a reload the page starts from the draft and the working
+time counts on from the saved value.
+
+- A draft is not a valid answer (a comparison without a preference yet), so it
+  is stored without `validateAnswer` and only checked for size. Submitting
+  validates as before. When a draft is read back, `fitDraft` in
+  `app/domain/drafts.ts` keeps what still fits the task schema and drops the
+  rest: unknown labels, spans outside the text, boxes outside the image or
+  under `minBoxSize`. A stored draft therefore cannot break the page or block
+  the submit after a schema change, and the page says how many parts were
+  left out.
+- The draft ends with the claim: submitting, skipping, releasing and running
+  out of time all clear it.
+- The same task in two tabs: the last save wins, and only the submit counts.
+  A tab that was only looked at sends no answer, so it cannot overwrite the
+  draft of the tab that was worked in. The saved working time never goes down
+  (`GREATEST` in the one statement that writes it).
+- Saving pauses only while the page's own submit, skip or release is on its
+  way. If that hand-in fails, saving goes on. Leaving through a link saves on
+  the way out, and the sign-out button saves before its own request is sent,
+  while the session is still there.
+- Revising sent-back work keeps its draft in the same column. That assignment
+  is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+- The qualification test has no row to keep a draft on. Its answers stay in
+  `sessionStorage`, tagged with the attempt they belong to.
+- A reload is faster than the save the closing page sends, so the new page
+  would read the draft from before it. The closing page therefore also leaves
+  what the server has not confirmed in `sessionStorage`, and the next page
+  takes it from there. What can still be lost is the last couple of seconds
+  before a crash (up to ten while typing without a pause).
+- Everything in `sessionStorage` is filed under the user's id and names the
+  user inside, and a copy that belongs to someone else is not read. Signing
+  out removes all of it, and handing in the qualification test removes that
+  test's answers. Nothing waits for the next person on a shared computer.
+- The save is a plain `fetch` to a small resource route (see
+  [routes](routes.md)), not a fetcher. A fetcher whose request fails puts the
+  error page in place of the task, and the unsaved answer would go with it.
+  React Router checks the origin of page actions but not of resource routes,
+  so these two routes do it themselves (`requireSameOrigin`).
+- The work page and the revise page are rendered under a key (the assignment
+  id). "Submit and next" and the browser's back button stay on the same
+  route, and without the key React would keep the previous task's answer and
+  seconds and save them as the next task's draft.
+
 ## Quality
 
 - **Gold tasks** are mixed into the queue and scored against the known answer.
@@ -169,8 +220,9 @@ always has rows). CI runs it after the tests, once the demo data is in.
 
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
-at the time since the claim. Time spent revising work that was sent back is
-added to it, capped at the time since the review.
+at the time since the claim. It is saved with the draft, so a reload does not
+start the count again. Time spent revising work that was sent back is added
+to it, capped at the time since the review.
 
 - **The rate is frozen at submission.** `submitAssignment` copies the
   project's `rateCents` and `payMode` onto the assignment in the same write
@@ -283,7 +335,8 @@ points at every place that needs a new branch once the kind is added to the
 schema union:
 
 1. `app/domain/task-schema.ts`: the zod schema, `requiredFields`, a template.
-2. `app/domain/answers.ts`: the answer type and its validator.
+2. `app/domain/answers.ts`: the answer type and its validator, and
+   `app/domain/drafts.ts`: how an unfinished answer is read back.
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.

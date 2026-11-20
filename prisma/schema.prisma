@@ -214,6 +214,10 @@ model Assignment {
   skipReason    String?
   answer        Json?
   activeSeconds Int              @default(0)
+  /// unfinished answer saved from the work or revise page, not validated
+  draft         Json?
+  /// working time that came with the last draft save
+  draftSeconds  Int              @default(0)
   reviewStatus  ReviewStatus?
   reviewedAt    DateTime?
   /// decided once at submission when the project reviews a share; empty otherwise

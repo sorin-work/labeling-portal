@@ -20,6 +20,8 @@ or fix the work.
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
   abandoned claims, one extension per claim, skip with a reason, release
+- **Drafts**: the answer in progress and its working time are saved to the
+  server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections. "Start reviewing"
   reserves a submission for one reviewer, for 15 minutes and for as long as
@@ -262,6 +264,14 @@ More detail: [architecture](docs/architecture.md),
   fifteen minutes. Restarting the app clears the counter.
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
+- **"Draft not saved" next to the working time**: saving has stopped for this
+  task, and what is on the screen can no longer be handed in. Either the claim
+  ran out of time (submitting takes you back to the project and the task
+  returns to the queue), or the task was already submitted, skipped or released
+  in another tab (submitting answers "This task is no longer yours"), or you
+  were signed out (the next click leads to the sign-in page). "Draft not saved
+  yet" is different: one save did not reach the server and is tried again by
+  itself.
 - **A submission says another reviewer is on it**: "Start reviewing" reserves
   a submission for 15 minutes and keeps it reserved while that reviewer works
   on it. If they walked away, it frees up by itself 15 minutes later.
