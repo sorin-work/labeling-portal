@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { openDispute, resolveDispute, withdrawDispute } from '~/models/disputes.server';
-import { resubmitAssignment, saveRevisionDraft } from '~/models/queue.server';
+import {
+  claimNextTask,
+  resubmitAssignment,
+  saveRevisionDraft,
+  submitAssignment,
+} from '~/models/queue.server';
 import { recordReview } from '~/models/reviews.server';
 import { loader as earningsLoader } from '~/routes/earnings';
 import { action as reviseDraftAction } from '~/routes/my-work-draft';
@@ -908,5 +913,155 @@ describe('earnings', () => {
     const later = await earnings(ann, org.id, APRIL);
     expect(later.payable).toMatchObject({ tasks: 0, totalCents: 0 });
     expect(later.waiting.tasks + later.sentBack.tasks).toBe(2);
+  });
+});
+
+describe('one working clock per person', () => {
+  beforeEach(resetDb);
+
+  async function sentBackWork(count: number) {
+    const { org, project, ann } = await setup();
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { reviewRequired: true, timeLimitMinutes: 30 },
+    });
+    await createTasks(project.id, [{ text: 'd' }, { text: 'e' }]);
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const work = [];
+    for (let i = 0; i < count; i++) {
+      work.push(
+        await submitWork(
+          project,
+          ann.id,
+          { labels: ['positive'] },
+          {
+            now: new Date('2026-03-10T09:00:00Z'),
+          },
+        ),
+      );
+    }
+    for (const submission of work) {
+      await recordReview(
+        submission.id,
+        reviewer.id,
+        { decision: 'SEND_BACK', qaScore: 2, feedback: 'Again.' },
+        new Date('2026-03-10T09:30:00Z'),
+      );
+    }
+    const seconds = async (ids: string[]) => {
+      const rows = await prisma.assignment.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, activeSeconds: true },
+      });
+      return ids.map((id) => rows.find((row) => row.id === id)!.activeSeconds);
+    };
+    return { org, project, ann, work, seconds };
+  }
+
+  it('credits the same minutes once, however many sent-back submissions are handed in', async () => {
+    const { ann, work, seconds } = await sentBackWork(3);
+    const ids = work.map((submission) => submission.id);
+    const before = await seconds(ids);
+    for (const submission of work) {
+      expect(
+        await resubmitAssignment(
+          submission.id,
+          ann.id,
+          { answer: { labels: ['negative'] }, activeSeconds: 1200 },
+          new Date('2026-03-10T09:50:00Z'),
+        ),
+      ).toEqual({ ok: true });
+    }
+    const after = await seconds(ids);
+    const added = after.map((value, i) => value - before[i]);
+    // twenty minutes passed after the send-backs, and twenty minutes are credited
+    expect(added).toEqual([1200, 0, 0]);
+  });
+
+  it('does not credit a claim for minutes already credited to a revision made during it', async () => {
+    const { project, ann, work, seconds } = await sentBackWork(1);
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    // a new task claimed as the work comes back, with the revision done while it is held
+    const claim = await claimNextTask(fresh, ann.id, new Date('2026-03-10T09:30:00Z'));
+    if (!claim.ok) throw new Error(claim.reason);
+    expect(
+      await resubmitAssignment(
+        work[0].id,
+        ann.id,
+        { answer: { labels: ['negative'] }, activeSeconds: 900 },
+        new Date('2026-03-10T09:45:00Z'),
+      ),
+    ).toEqual({ ok: true });
+    const submitted = await submitAssignment(
+      claim.assignment.id,
+      ann.id,
+      { answer: { labels: ['positive'] }, activeSeconds: 1500, reviewRequired: true },
+      new Date('2026-03-10T09:55:00Z'),
+    );
+    expect(submitted.ok).toBe(true);
+    // 25 minutes passed since the claim: 15 went to the revision, 10 are left for the claim
+    expect(await seconds([work[0].id, claim.assignment.id])).toEqual([30 + 900, 600]);
+  });
+
+  it('keeps the moment on the membership, and moves it only by what was credited', async () => {
+    const { org, ann, work } = await sentBackWork(1);
+    const clock = () =>
+      prisma.membership.findUniqueOrThrow({
+        where: { orgId_userId: { orgId: org.id, userId: ann.id } },
+        select: { creditedUntil: true },
+      });
+    // the first submission: claimed at 09:00, credited 30 seconds
+    expect((await clock()).creditedUntil).toEqual(new Date('2026-03-10T09:00:30Z'));
+    await resubmitAssignment(
+      work[0].id,
+      ann.id,
+      { answer: { labels: ['negative'] }, activeSeconds: 0 },
+      new Date('2026-03-10T09:50:00Z'),
+    );
+    expect((await clock()).creditedUntil).toEqual(new Date('2026-03-10T09:00:30Z'));
+  });
+});
+
+describe('revising while a dispute is open', () => {
+  beforeEach(resetDb);
+
+  it('keeps the page read-only and not saving, and saves again once the dispute is withdrawn', async () => {
+    const { org, project, ann } = await setup();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const submission = await submitWork(project, ann.id, { labels: ['positive'] });
+    await recordReview(
+      submission.id,
+      reviewer.id,
+      { decision: 'SEND_BACK', qaScore: 2, feedback: 'Look again.' },
+      new Date(Date.now() - 10 * 60_000),
+    );
+    const cookie = await cookieFor(ann, org.id);
+    const path = `/my-work/${submission.id}`;
+    const params = { assignmentId: submission.id };
+    const page = async () =>
+      payload<{ editable: boolean; dispute: { status: string } | null }>(
+        await run(reviseLoader, makeRequest(path, { cookie }), params),
+      );
+    const saveTime = async () => {
+      const response = (await run(
+        reviseDraftAction,
+        makeRequest(`${path}/draft`, { cookie, form: { activeSeconds: '30' } }),
+        params,
+      )) as Response;
+      return response.status;
+    };
+
+    expect(await page()).toMatchObject({ editable: true, dispute: null });
+    const opened = await openDispute(submission.id, ann.id, 'It is positive.');
+    if (!opened.ok) throw new Error(opened.error);
+    // the page the annotator sees now does not save, and a save would be refused
+    expect(await page()).toMatchObject({ editable: false, dispute: { status: 'OPEN' } });
+    expect(await saveTime()).toBe(409);
+
+    expect(await withdrawDispute(submission.id, ann.id)).toEqual({ ok: true });
+    // the withdrawal reloads the page's data: it is editable and saves again
+    expect(await page()).toMatchObject({ editable: true, dispute: { status: 'WITHDRAWN' } });
+    expect(await saveTime()).toBe(200);
   });
 });
