@@ -15,7 +15,7 @@ import {
 } from '~/domain/gold';
 import { taskPreview } from '~/domain/preview';
 import { parseTaskSchema } from '~/domain/task-schema';
-import { prisma } from '~/lib/db.server';
+import { prisma, retryOnLockConflict } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
 import { projectSchema } from './projects.server';
@@ -420,99 +420,101 @@ export async function promoteToGold(
   const schema = projectSchema(project);
   const ids = [...new Set(taskIds)];
   if (ids.length === 0) return { created: [], skipped: [] };
-  return prisma.$transaction(async (tx) => {
-    // two managers promoting the same task wait for each other here, and so
-    // does bringing back a retired copy of one of them
-    await tx.$queryRaw`
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      // two managers promoting the same task wait for each other here, and so
+      // does bringing back a retired copy of one of them
+      await tx.$queryRaw`
       SELECT id FROM "Task"
       WHERE id IN (${Prisma.join(ids)}) AND "projectId" = ${project.id}
       ORDER BY id FOR NO KEY UPDATE`;
 
-    const batches = await openBatches(project.id, tx);
-    const batch = options.batchId ? batches.find((b) => b.id === options.batchId) : batches.at(0);
-    if (!batch) {
-      return {
-        created: [],
-        skipped: [],
-        refused: options.batchId
-          ? 'the chosen batch has no open tasks left to put a gold task among'
-          : 'no batch has open tasks to put a gold task among; import tasks first',
-      };
-    }
-    const sources = await tx.task.findMany({
-      where: { id: { in: ids }, projectId: project.id },
-      include: { goldCopies: { where: { goldRetiredAt: null }, select: { id: true } } },
-    });
-    const open = await tx.task.findMany({
-      where: { batchId: batch.id, ...openRegular },
-      orderBy: { position: 'asc' },
-      select: { position: true },
-    });
+      const batches = await openBatches(project.id, tx);
+      const batch = options.batchId ? batches.find((b) => b.id === options.batchId) : batches.at(0);
+      if (!batch) {
+        return {
+          created: [],
+          skipped: [],
+          refused: options.batchId
+            ? 'the chosen batch has no open tasks left to put a gold task among'
+            : 'no batch has open tasks to put a gold task among; import tasks first',
+        };
+      }
+      const sources = await tx.task.findMany({
+        where: { id: { in: ids }, projectId: project.id },
+        include: { goldCopies: { where: { goldRetiredAt: null }, select: { id: true } } },
+      });
+      const open = await tx.task.findMany({
+        where: { batchId: batch.id, ...openRegular },
+        orderBy: { position: 'asc' },
+        select: { position: true },
+      });
 
-    const outcome: PromoteOutcome = { created: [], skipped: [] };
-    for (const id of ids) {
-      const source = sources.find((s) => s.id === id);
-      const skip = (why: string) => outcome.skipped.push({ taskId: id, why });
-      if (!source) {
-        skip('not a task of this project');
-        continue;
+      const outcome: PromoteOutcome = { created: [], skipped: [] };
+      for (const id of ids) {
+        const source = sources.find((s) => s.id === id);
+        const skip = (why: string) => outcome.skipped.push({ taskId: id, why });
+        if (!source) {
+          skip('not a task of this project');
+          continue;
+        }
+        if (source.isGold || source.isQualification) {
+          skip('already a gold task or a qualification question');
+          continue;
+        }
+        if (source.status !== 'COMPLETE' || !source.consensus) {
+          skip('not complete, or without a consensus');
+          continue;
+        }
+        if (source.goldCopies.length > 0) {
+          skip('already used as gold');
+          continue;
+        }
+        const data = source.data as Record<string, unknown>;
+        const parsed = parseGold(schema, data, source.consensus);
+        if (!parsed.ok) {
+          skip(`its consensus is not a valid answer any more: ${parsed.error}`);
+          continue;
+        }
+        const answer = parsed.answer as Prisma.InputJsonValue;
+        const slot = open[Math.min(open.length - 1, Math.floor(random() * open.length))];
+        const copy = await tx.task.create({
+          data: {
+            projectId: project.id,
+            batchId: batch.id,
+            position: slot.position,
+            data: source.data as Prisma.InputJsonValue,
+            isGold: true,
+            goldAnswer: answer,
+            goldSourceId: source.id,
+            createdAt: now,
+          },
+        });
+        await tx.goldRevision.create({
+          data: {
+            taskId: copy.id,
+            change: 'CREATED',
+            answer,
+            reason: `Copied from the consensus of task #${source.position}`,
+            changedById: actorId,
+            createdAt: now,
+          },
+        });
+        outcome.created.push(copy.id);
       }
-      if (source.isGold || source.isQualification) {
-        skip('already a gold task or a qualification question');
-        continue;
-      }
-      if (source.status !== 'COMPLETE' || !source.consensus) {
-        skip('not complete, or without a consensus');
-        continue;
-      }
-      if (source.goldCopies.length > 0) {
-        skip('already used as gold');
-        continue;
-      }
-      const data = source.data as Record<string, unknown>;
-      const parsed = parseGold(schema, data, source.consensus);
-      if (!parsed.ok) {
-        skip(`its consensus is not a valid answer any more: ${parsed.error}`);
-        continue;
-      }
-      const answer = parsed.answer as Prisma.InputJsonValue;
-      const slot = open[Math.min(open.length - 1, Math.floor(random() * open.length))];
-      const copy = await tx.task.create({
-        data: {
+      if (outcome.created.length > 0) {
+        await logActivity(tx, {
+          orgId: project.orgId,
           projectId: project.id,
-          batchId: batch.id,
-          position: slot.position,
-          data: source.data as Prisma.InputJsonValue,
-          isGold: true,
-          goldAnswer: answer,
-          goldSourceId: source.id,
+          actorId,
+          action: 'gold.created',
+          detail: { tasks: outcome.created.length, batch: batch.name },
           createdAt: now,
-        },
-      });
-      await tx.goldRevision.create({
-        data: {
-          taskId: copy.id,
-          change: 'CREATED',
-          answer,
-          reason: `Copied from the consensus of task #${source.position}`,
-          changedById: actorId,
-          createdAt: now,
-        },
-      });
-      outcome.created.push(copy.id);
-    }
-    if (outcome.created.length > 0) {
-      await logActivity(tx, {
-        orgId: project.orgId,
-        projectId: project.id,
-        actorId,
-        action: 'gold.created',
-        detail: { tasks: outcome.created.length, batch: batch.name },
-        createdAt: now,
-      });
-    }
-    return outcome;
-  });
+        });
+      }
+      return outcome;
+    }),
+  );
 }
 
 /** Everything the task page shows a manager about a gold task or a qualification question. */

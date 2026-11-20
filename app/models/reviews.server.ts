@@ -9,7 +9,7 @@ import {
 
 import { payableSince } from '~/domain/payouts';
 import { holdCutoff } from '~/domain/review-hold';
-import { lockTaskOfAssignment, prisma, utc } from '~/lib/db.server';
+import { lockTaskOfAssignment, prisma, retryOnLockConflict, utc } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
 import { refreshTaskStatus } from './tasks.server';
@@ -156,25 +156,40 @@ export async function holdReview(
   reviewerId: string,
   now = new Date(),
 ): Promise<{ ok: true } | { ok: false; error: ReviewRefusal }> {
-  return prisma.$transaction(async (tx) => {
-    const [held] = await tx.assignment.updateManyAndReturn({
-      where: {
-        id: assignmentId,
-        status: 'SUBMITTED',
-        reviewStatus: 'PENDING',
-        userId: { not: reviewerId },
-        ...freeFor(reviewerId, now),
-      },
-      data: { reviewHeldById: reviewerId, reviewHeldAt: now },
-      select: { projectId: true },
-    });
-    if (!held) return { ok: false, error: await refusal(tx, assignmentId) };
-    await tx.assignment.updateMany({
-      where: { projectId: held.projectId, reviewHeldById: reviewerId, id: { not: assignmentId } },
-      data: { reviewHeldById: null, reviewHeldAt: null },
-    });
-    return { ok: true };
-  });
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      // Every row this touches, locked in one statement in id order: the one
+      // to reserve and the reviewer's other reservations in its project. Two
+      // reviewers taking over each other's lapsed reservations then queue
+      // instead of each holding one row and waiting for the other.
+      await tx.$queryRaw`
+      SELECT a.id FROM "Assignment" a
+      WHERE a.id = ${assignmentId}
+         OR (
+           a."reviewHeldById" = ${reviewerId}
+           AND a."projectId" = (SELECT t."projectId" FROM "Assignment" t WHERE t.id = ${assignmentId})
+         )
+      ORDER BY a.id
+      FOR UPDATE`;
+      const [held] = await tx.assignment.updateManyAndReturn({
+        where: {
+          id: assignmentId,
+          status: 'SUBMITTED',
+          reviewStatus: 'PENDING',
+          userId: { not: reviewerId },
+          ...freeFor(reviewerId, now),
+        },
+        data: { reviewHeldById: reviewerId, reviewHeldAt: now },
+        select: { projectId: true },
+      });
+      if (!held) return { ok: false, error: await refusal(tx, assignmentId) };
+      await tx.assignment.updateMany({
+        where: { projectId: held.projectId, reviewHeldById: reviewerId, id: { not: assignmentId } },
+        data: { reviewHeldById: null, reviewHeldAt: null },
+      });
+      return { ok: true };
+    }),
+  );
 }
 
 /**
