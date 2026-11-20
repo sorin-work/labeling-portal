@@ -364,9 +364,11 @@ disagreed on.
   for an extra annotator to adjudication from its page.
 - Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
   two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
-  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
-  Gold tasks stay outside the slot count, extra slots included.
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold tasks stay outside the slot count, extra slots
+  included.
 - Undecided: whether an adjudicated answer should feed back into the
   annotators' numbers (agreement with the adjudicator, per person). I lean
   towards not yet.
@@ -417,11 +419,12 @@ else. They are the ordering rules that item 17 has to keep.
   queue tests rely on position order.
 - Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
   has shipped two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
-  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
-  Gold spacing has to treat those copies like any other gold task, and a new
-  order must not single them out: today a copy takes the position of a random
-  open task.
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold spacing has to treat those copies like any other
+  gold task, and a new order must not single them out: today a copy sits in a
+  batch with open tasks, at the position of one of them.
 - Follow-ups, each small enough for a pull request of its own and not part of
   this one:
   - a daily limit per annotator, so one fast person cannot label most of a
@@ -877,11 +880,13 @@ after submitting unless the project turns gold feedback off, the quality page
 lists the gold tasks with the lowest scores, and batch progress counts gold
 apart. Different from the design: an edit does not rescore by itself. The
 page first says how many scores change, whose accuracy moves and who crosses
-the flag, and the manager applies it. The copy goes into the batch of its
-original, not into a batch named "Gold", because annotators see the batch
-name; it is not handed to people who labeled the original; and the work page
-no longer gets the task's id. Pay and past qualification attempts never
-follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
+the flag, and the manager applies exactly that plan. The copy does not go
+into a batch named "Gold" but among the open tasks of a batch that is being
+worked on, without the original's id, because annotators see the batch name;
+a task and its copies are one item that nobody is handed twice; and the work
+page gets no id of the task, only a reference cut from the claim's id. Gold
+feedback is on for new projects and off for the ones that existed before. Pay
+and past qualification attempts never follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
 the position of a random open task), a retired task that someone has claimed
 can still be submitted, and the server does different work for a gold
 submission than for a regular one, which a patient observer could measure.

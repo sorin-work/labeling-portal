@@ -24,7 +24,12 @@ export type GoldPanelData = {
     from: string | null;
     to: string | null;
   }>;
-  rescore: { submissions: number; changes: Array<{ userId: string }>; impact: GoldImpact } | null;
+  rescore: {
+    submissions: number;
+    changes: Array<{ userId: string }>;
+    impact: GoldImpact;
+    digest: string;
+  } | null;
   retireImpact: GoldImpact | null;
   names: Record<string, string>;
 };
@@ -190,6 +195,8 @@ export function GoldPanel({
               <Impact impact={gold.rescore.impact} names={gold.names} />
               <p className="text-xs text-slate-500">{NO_CLAWBACK}</p>
               <Form method="post">
+                {/* what was previewed: the rescore is refused if it would do something else */}
+                <input type="hidden" name="digest" value={gold.rescore.digest} />
                 <Button name="intent" value="gold-rescore" disabled={busy}>
                   Rescore {stale} answer{stale === 1 ? '' : 's'}
                 </Button>

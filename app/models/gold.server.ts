@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Prisma, type Project } from '@prisma/client';
 
 import type { Answer } from '~/domain/answers';
@@ -62,7 +64,7 @@ export async function scoreGoldSubmission(
 }
 
 export type GoldRefusal =
-  | { error: 'not_found' | 'not_gold' | 'unchanged' | 'already_done' }
+  | { error: 'not_found' | 'not_gold' | 'unchanged' | 'already_done' | 'another_live' }
   | { error: 'invalid'; message: string };
 
 type GoldResult = { ok: true } | ({ ok: false } & GoldRefusal);
@@ -139,6 +141,19 @@ export async function setGoldRetired(
 ): Promise<GoldResult> {
   return prisma.$transaction(async (tx) => {
     if (!(await lockTask(tx, project.id, taskId))) return { ok: false, error: 'not_found' };
+    if (!input.retired) {
+      // An original has at most one live copy, or someone could be handed the
+      // same item twice. Promoting a task locks the original too, so the
+      // check below and a new copy cannot pass each other.
+      const { goldSourceId } = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+      if (goldSourceId) {
+        await lockTask(tx, project.id, goldSourceId);
+        const live = await tx.task.count({
+          where: { goldSourceId, goldRetiredAt: null, id: { not: taskId } },
+        });
+        if (live > 0) return { ok: false, error: 'another_live' };
+      }
+    }
     const changed = await tx.task.updateManyAndReturn({
       where: {
         id: taskId,
@@ -196,7 +211,43 @@ export type RescorePlan = {
   changes: ScoreChange[];
   /** what that does to the annotators' gold accuracy and flags */
   impact: GoldImpact;
+  /**
+   * Stands for exactly this plan: the expected answer, every score change and
+   * every annotator's standing before and after. The page sends it back with
+   * "Rescore", and the rescore is refused when it would do something else.
+   */
+  digest: string;
 };
+
+function planDigest(gold: unknown, changes: ScoreChange[], impact: GoldImpact): string {
+  const byId = <T>(rows: T[], id: (row: T) => string) =>
+    [...rows].sort((a, b) => id(a).localeCompare(id(b)));
+  const canonical = JSON.stringify([
+    describeForDigest(gold),
+    byId(changes, (c) => c.assignmentId).map((c) => [c.assignmentId, c.from, c.to]),
+    byId(impact.moved, (m) => m.userId).map((m) => [
+      m.userId,
+      m.before.attempts,
+      m.before.accuracy,
+      m.before.flagged,
+      m.after.attempts,
+      m.after.accuracy,
+      m.after.flagged,
+    ]),
+  ]);
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
+}
+
+/** JSON with its keys in order, so the same answer always gives the same text. */
+function describeForDigest(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(describeForDigest);
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .map((key) => [key, describeForDigest((value as Record<string, unknown>)[key])]);
+  }
+  return value;
+}
 
 /**
  * Works out what rescoring a gold task changes, without changing anything:
@@ -228,13 +279,15 @@ async function planRescore(db: Db, project: Project, taskId: string): Promise<Re
           .filter((c) => c.from === null)
           .map((c) => ({ id: c.assignmentId, userId: c.userId, taskId, goldScore: c.to })),
       ];
+  const impact = goldImpact(
+    byAnnotator(before, (r) => r.goldScore),
+    byAnnotator(after, (r) => r.goldScore),
+  );
   return {
     submissions: submissions.filter((s) => s.answer !== null).length,
     changes,
-    impact: goldImpact(
-      byAnnotator(before, (r) => r.goldScore),
-      byAnnotator(after, (r) => r.goldScore),
-    ),
+    impact,
+    digest: planDigest(task.goldAnswer, changes, impact),
   };
 }
 
@@ -248,17 +301,28 @@ export function previewRescore(project: Project, taskId: string) {
  * is now, in one transaction, and returns what changed. It recomputes from
  * the stored answers, so running it again changes nothing. Only `goldScore`
  * is written: the work stays accepted and paid as it was.
+ *
+ * `previewed` is the digest of the plan the manager looked at. The plan is
+ * worked out again under the lock, and if it is not the same one (the
+ * expected answer was edited again, a submission arrived, another task was
+ * rescored) nothing is written and the new plan comes back to be shown.
  */
 export async function applyRescore(
   project: Project,
   taskId: string,
   actorId: string,
+  previewed: string,
   now = new Date(),
-): Promise<{ ok: true; plan: RescorePlan } | { ok: false; error: 'not_found' | 'not_gold' }> {
+): Promise<
+  | { ok: true; plan: RescorePlan }
+  | { ok: false; error: 'not_found' | 'not_gold' }
+  | { ok: false; error: 'stale'; plan: RescorePlan }
+> {
   return prisma.$transaction(async (tx) => {
     if (!(await lockTask(tx, project.id, taskId))) return { ok: false, error: 'not_found' };
     const plan = await planRescore(tx, project, taskId);
     if (!plan) return { ok: false, error: 'not_gold' };
+    if (plan.digest !== previewed) return { ok: false, error: 'stale', plan };
     for (const change of plan.changes) {
       await tx.assignment.update({
         where: { id: change.assignmentId },
@@ -311,7 +375,27 @@ export async function previewRetire(project: Project, taskId: string): Promise<G
   );
 }
 
-export type PromoteOutcome = { created: string[]; skipped: Array<{ taskId: string; why: string }> };
+export type PromoteOutcome = {
+  created: string[];
+  skipped: Array<{ taskId: string; why: string }>;
+  /** set when nothing could be made at all */
+  refused?: string;
+};
+
+const openRegular = { status: 'OPEN', isGold: false, isQualification: false } as const;
+
+/**
+ * The batches a new gold task can go into: those that still have open tasks,
+ * the most recently imported first. A gold task in a batch that is otherwise
+ * finished would be the only task an annotator still gets from it.
+ */
+export function openBatches(projectId: string, db: Db = prisma) {
+  return db.batch.findMany({
+    where: { projectId, tasks: { some: openRegular } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { id: true, name: true },
+  });
+}
 
 /**
  * Makes gold tasks out of completed tasks: for each one a copy with the same
@@ -319,38 +403,51 @@ export type PromoteOutcome = { created: string[]; skipped: Array<{ taskId: strin
  * because its labels are real data and gold tasks are left out of the export.
  *
  * The consensus goes through the same validation as an imported gold answer,
- * against the project's schema as it is now. The copy goes into the batch of
- * its original and gets the position of a randomly chosen open task, so
- * nothing about where or when it turns up sets it apart for an annotator.
+ * against the project's schema as it is now.
+ *
+ * A copy must look like any other task to the annotator who gets it. So it
+ * goes into a batch that still has open tasks (the one chosen, or the most
+ * recent), at the position of one of that batch's open tasks picked at
+ * random, and it does not take the original's external id. An original has
+ * at most one live copy.
  */
 export async function promoteToGold(
   project: Project,
   taskIds: string[],
   actorId: string,
-  random: () => number = Math.random,
-  now = new Date(),
+  options: { batchId?: string | null; random?: () => number; now?: Date } = {},
 ): Promise<PromoteOutcome> {
+  const { random = Math.random, now = new Date() } = options;
   const schema = projectSchema(project);
   const ids = [...new Set(taskIds)];
   if (ids.length === 0) return { created: [], skipped: [] };
   return prisma.$transaction(async (tx) => {
-    // two managers promoting the same task wait for each other here
+    // two managers promoting the same task wait for each other here, and so
+    // does bringing back a retired copy of one of them
     await tx.$queryRaw`
       SELECT id FROM "Task"
       WHERE id IN (${Prisma.join(ids)}) AND "projectId" = ${project.id}
       ORDER BY id FOR NO KEY UPDATE`;
+
+    const batches = await openBatches(project.id, tx);
+    const batch = options.batchId ? batches.find((b) => b.id === options.batchId) : batches.at(0);
+    if (!batch) {
+      return {
+        created: [],
+        skipped: [],
+        refused: options.batchId
+          ? 'the chosen batch has no open tasks left to put a gold task among'
+          : 'no batch has open tasks to put a gold task among; import tasks first',
+      };
+    }
     const sources = await tx.task.findMany({
       where: { id: { in: ids }, projectId: project.id },
       include: { goldCopies: { where: { goldRetiredAt: null }, select: { id: true } } },
     });
     const open = await tx.task.findMany({
-      where: { projectId: project.id, status: 'OPEN', isGold: false, isQualification: false },
+      where: { batchId: batch.id, ...openRegular },
       orderBy: { position: 'asc' },
       select: { position: true },
-    });
-    const last = await tx.task.aggregate({
-      where: { projectId: project.id },
-      _max: { position: true },
     });
 
     const outcome: PromoteOutcome = { created: [], skipped: [] };
@@ -380,15 +477,12 @@ export async function promoteToGold(
         continue;
       }
       const answer = parsed.answer as Prisma.InputJsonValue;
-      const position = open.length
-        ? open[Math.min(open.length - 1, Math.floor(random() * open.length))].position
-        : (last._max.position ?? 0) + 1;
+      const slot = open[Math.min(open.length - 1, Math.floor(random() * open.length))];
       const copy = await tx.task.create({
         data: {
           projectId: project.id,
-          batchId: source.batchId,
-          externalId: source.externalId,
-          position,
+          batchId: batch.id,
+          position: slot.position,
           data: source.data as Prisma.InputJsonValue,
           isGold: true,
           goldAnswer: answer,
@@ -414,7 +508,7 @@ export async function promoteToGold(
           projectId: project.id,
           actorId,
           action: 'gold.created',
-          detail: { tasks: outcome.created.length },
+          detail: { tasks: outcome.created.length, batch: batch.name },
           createdAt: now,
         },
       });

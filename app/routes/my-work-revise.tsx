@@ -11,6 +11,7 @@ import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { annotatorDisputeState, DISPUTE_REFUSALS, parseDisputeReason } from '~/domain/disputes';
 import { droppedNote, fitDraft } from '~/domain/drafts';
 import { describeGoldAnswer, formatGoldScore, goldFeedback } from '~/domain/gold';
+import { withoutImportId } from '~/domain/import';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -44,13 +45,13 @@ async function loadReturned(assignmentId: string, userId: string) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadReturned(params.assignmentId, user.id);
+  const schema = projectSchema(assignment.project);
   // their own gold submission, compared with the expected answer
-  const gold = goldFeedback(assignment);
+  const gold = goldFeedback(assignment, schema);
   if (!gold && assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
     throw redirect('/my-work');
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
-  const schema = projectSchema(assignment.project);
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   const decision = assignment.reviews.at(0) ?? null;
@@ -69,7 +70,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     id: assignment.id,
     projectName: assignment.project.name,
     schema,
-    data: assignment.task.data as Record<string, unknown>,
+    data: withoutImportId(assignment.task.data as Record<string, unknown>),
     answer: assignment.answer as Answer,
     draft: draft.answer,
     draftNote: droppedNote(schema, draft.dropped),

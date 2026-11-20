@@ -179,8 +179,12 @@ tasks. `app/models/gold.server.ts` holds everything a manager can do to them;
 - **Edit, then rescore.** `editGoldAnswer` validates with `parseGold`, the
   validator the import uses, and leaves `Assignment.goldScore` alone.
   `previewRescore` and `applyRescore` share one planner (`rescore` and
-  `goldImpact` in `app/domain/gold.ts`), so the page shows exactly what the
-  button will do. Applying is one transaction that only writes `goldScore`.
+  `goldImpact` in `app/domain/gold.ts`). A plan has a digest of the expected
+  answer, every score change and every annotator's standing before and
+  after. The page posts the digest of the plan it showed; `applyRescore`
+  plans again under the lock and writes nothing when the digest differs. So
+  the button does what the page showed, or nothing. Applying is one
+  transaction that only writes `goldScore`.
 - **One lock.** Everything that changes a gold task first locks its row
   (`FOR NO KEY UPDATE`). `submitAssignment` scores a gold submission inside
   its own transaction under a shared lock on the same row
@@ -190,15 +194,27 @@ tasks. `app/models/gold.server.ts` holds everything a manager can do to them;
 - **Retired** (`Task.goldRetiredAt`): `eligibleFor` leaves the task out, and
   every place that averages gold scores (quality page, flag, needs attention,
   the annotator's own stats) filters it out. The scores stay.
-- **Copies** (`promoteToGold`, `Task.goldSourceId`): a copy takes the batch,
-  the external id and the data of its original and the position of a random
-  open task (the random function is a parameter, as in `submitAssignment`).
-  `eligibleFor` treats work on the original as work on the copy, so nobody
-  sees the same item twice.
+- **Copies** (`promoteToGold`, `Task.goldSourceId`): a copy takes the data of
+  its original, but not its external id, and goes into a batch that still has
+  open tasks (chosen by the manager, the most recent by default), at the
+  position of one of that batch's open tasks (the random function is a
+  parameter, as in `submitAssignment`). Without an open batch nothing is
+  copied. An original has one live copy at most: promoting again is refused
+  while one is live, and so is bringing back a retired copy while another is
+  live; both lock the original, so they cannot pass each other.
+- **One item, one group.** `eligibleFor` takes a task, the task it was copied
+  from and that task's other copies as one group, and leaves out every task
+  of a group in which the annotator has an active claim, a submission or a
+  skip. Nobody is handed the same item twice, whichever of them came first.
 - **What reaches an annotator.** `goldFeedback` in `app/domain/gold.ts` is the
-  only gate: nothing before the submission, and afterwards the score and the
-  expected answer if the project's `goldFeedback` setting is on and the task
-  is not retired. The work loader sends no task id and nothing about gold.
+  only gate for results: nothing before the submission, and afterwards the
+  score and the expected answer if the project's `goldFeedback` setting is on,
+  the task is not retired and the stored score is the one the current
+  expected answer gives (between an edit and its rescore it is not, and
+  nothing is shown). The work loader sends nothing about gold and no id of
+  the task: no task id, no external id and no id column from the import row
+  (`withoutImportId`). It sends `assignmentRef`, a reference cut from the
+  assignment's id, which the task page and the batch search resolve.
 
 ## Drafts
 

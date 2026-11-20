@@ -41,6 +41,8 @@ The task page also takes what a manager does to a gold task as POSTs: change
 the expected answer, rescore, retire or bring back, and use a completed task
 as gold. Only admins and project managers may send them. Reviewers see on that
 page that a task is gold and how each answer scored, not the expected answer.
+The search on the batch page also finds a task by the reference an annotator
+quotes from the work page.
 
 ## Downloads and probes
 
