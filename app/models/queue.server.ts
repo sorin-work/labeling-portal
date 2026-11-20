@@ -363,22 +363,26 @@ export async function saveDraft(
 /**
  * The same for the revise page. That assignment is submitted, not active, so
  * the guard is the one `resubmitAssignment` uses: the annotator's own
- * submission, while it is sent back.
+ * submission, while it is sent back and not under dispute. Work that is
+ * disputed cannot be revised, so no revision of it is saved either.
  */
 export async function saveRevisionDraft(
   assignmentId: string,
   userId: string,
   draft: Prisma.InputJsonValue,
-): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
-  const saved = await prisma.assignment.updateMany({
-    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-    data: { draft },
+): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  return prisma.$transaction(async (tx) => {
+    if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const saved = await tx.assignment.updateMany({
+      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      data: { draft },
+    });
+    if (saved.count === 0) {
+      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
+      return { ok: false, error: exists ? 'not_active' : 'not_found' };
+    }
+    return { ok: true };
   });
-  if (saved.count === 0) {
-    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
-    return { ok: false, error: exists ? 'not_active' : 'not_found' };
-  }
-  return { ok: true };
 }
 
 /**

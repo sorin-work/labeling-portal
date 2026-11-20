@@ -197,7 +197,12 @@ export async function resolveDispute(
         status: 'SUBMITTED',
         reviewStatus: sentBack ? 'SENT_BACK' : 'FIXED',
       },
-      data: { reviewStatus: 'APPROVED', ...(sentBack ? { reviewedAt: now } : {}) },
+      data: {
+        reviewStatus: 'APPROVED',
+        // a revision that was started before the dispute is of no use any more
+        draft: Prisma.DbNull,
+        ...(sentBack ? { reviewedAt: now } : {}),
+      },
     });
     // nothing may change a submission while its dispute is open; if something
     // did, throwing rolls the whole overturn back and the dispute stays open
