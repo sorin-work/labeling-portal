@@ -3,6 +3,7 @@ import { data, redirect } from 'react-router';
 import { EMPTY_PROJECT, ProjectForm } from '~/components/project-form';
 import { PageHeader } from '~/components/ui';
 import { parseProjectForm } from '~/domain/project-form';
+import { readSamplePercent } from '~/domain/review-sampling';
 import { requireRole } from '~/lib/auth.server';
 import { createProject } from '~/models/projects.server';
 
@@ -38,6 +39,7 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function NewProject({ actionData }: Route.ComponentProps) {
   const values = actionData?.values;
+  const samplePercent = readSamplePercent(values?.reviewSamplePercent);
   const defaults = values
     ? {
         ...EMPTY_PROJECT,
@@ -45,6 +47,7 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         overlap: Number(values.overlap) || 1,
         timeLimitMinutes: Number(values.timeLimitMinutes) || 30,
         reviewRequired: values.reviewRequired === 'on',
+        reviewSamplePercent: Number.isFinite(samplePercent) ? samplePercent : 100,
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
         payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),

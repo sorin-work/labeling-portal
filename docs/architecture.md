@@ -23,7 +23,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | ---------------------- | -------------------------------------------------------------------- |
 | `Organization`         | A labeling vendor or team. Everything below belongs to one org.      |
 | `Membership`           | A user's role in an org: admin, project manager, reviewer, annotator |
-| `Project`              | Instructions, a JSON task schema, overlap, time limit, pay rate      |
+| `Project`              | Instructions, task schema, overlap, time limit, review share, pay    |
 | `ProjectMember`        | Who may work on or review a project; `qualifiedAt` after the test    |
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
 | `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
@@ -42,12 +42,69 @@ tests/integration/  loaders and actions against a real PostgreSQL
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. Gold tasks are scored
-   immediately; other work goes to review (or is accepted straight away when
-   the project does not require review).
+   immediately; other work goes to review, or is accepted straight away when
+   the project does not require review or reviews only a share and the draw
+   left this submission out (see "Review sampling" below).
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
-   Sent-back work can be revised and resubmitted by the annotator.
+   A submission is reserved for one reviewer while they look at it (see
+   "Reviewer reservations" below). Sent-back work can be revised and
+   resubmitted by the annotator, and always returns to review.
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
+   `refreshTaskStatus` runs in the transaction that accepted the submission
+   and locks the task row before it counts, so acceptances that arrive at the
+   same moment are counted one after the other and none is missed.
+
+## Review sampling
+
+A project with review on has a "Share to review" from 0 to 100
+(`Project.reviewSamplePercent`, 100 by default). Below 100 only part of the
+work goes to a reviewer:
+
+- `submitAssignment` asks `decideReview` in `app/domain/review-sampling.ts`
+  once per submission and stores the outcome in `Assignment.reviewSample`
+  (`NEW_ANNOTATOR`, `FLAGGED`, `DRAWN` or `NOT_DRAWN`) next to the
+  `reviewStatus` it leads to. Nothing draws again later: pages only read the
+  stored value, and the claim is written with a condition on its status, so a
+  form posted twice cannot replace the first outcome.
+- The random function is a parameter of `submitAssignment`, like `now`. The
+  app passes `Math.random`; tests pass a fixed one.
+- Until ten of an annotator's submissions in the project have gone to review,
+  all of them do. Everything from an annotator the quality page flags for low
+  gold accuracy is reviewed too. Only after those two rules does the draw
+  decide.
+- Work that is not drawn is `NOT_REQUIRED`: accepted at once, counted towards
+  the task's overlap and paid like approved work.
+- Changing the share affects work submitted afterwards. Work already waiting
+  for review stays in the queue.
+
+## Reviewer reservations
+
+Two reviewers must not do the same review. `Assignment.reviewHeldById` and
+`reviewHeldAt` say who is on a waiting submission and since when. A hold
+lasts 15 minutes from the moment it was taken or last renewed
+(`app/domain/review-hold.ts`) and then simply stops counting; there is no
+background job that clears it.
+
+- "Start reviewing" posts to `/projects/:id/review`. `reserveNextReview` in
+  `app/models/reviews.server.ts` runs one `UPDATE` whose subquery picks the
+  reviewer's current hold or else the oldest free submission with
+  `FOR UPDATE SKIP LOCKED`, so reviewers who ask at the same moment get
+  different rows. After a decision the next submission is reserved the same
+  way.
+- A submission opened from the list is read-only until the reviewer presses
+  "Review this submission" (`holdReview`). A reviewer keeps one reservation
+  per project, so the previous one is let go.
+- `recordReview` takes the submission with one conditional write: still
+  pending, and not held by someone else. Of two decisions sent at the same
+  moment one is stored and the other gets a 409. The same write clears the
+  hold.
+- While the reviewer works, the review page renews the hold every five
+  minutes with a POST (`intent=renew`, `renewReviewHold`), but only if the
+  tab is visible and was touched since the last check. Starting a fix renews
+  it at once, and so does a posted decision that does not validate. So a
+  long fix keeps its submission, and a tab that was left open lets it go. A
+  renewal only touches a hold that is still the reviewer's own.
 
 ## Quality
 
@@ -78,24 +135,35 @@ breaking one of them loses backups:
 - The time in a dump's file name is the only time that counts, for its age
   and for the order of pruning. Modification times are never read.
 - The age of the newest dump is read from the names once, at the start.
-  After that the loop only remembers when it last made one. A dump dated in
-  the future counts as made now.
+  After that the loop only remembers when it last made one.
+- A dump dated in the future, or with a date that does not exist, is left
+  out: it does not say how old the newest dump is, it is never pruned and it
+  does not count towards `BACKUP_KEEP`. Sorted by name such dumps would pass
+  for the newest ones and push the real dumps out. Every start and every dump
+  logs a warning that names them. If every dump is dated in the future the
+  loop waits a full interval before its first dump.
 - After every attempt, whether it worked or not, the loop pauses before the
   next one, and it waits in steps of a minute with a look at the clock after
   each, so a suspended machine still gets its daily dump.
 - `pg_dump` writes to a hidden `.partial` file that is renamed when it is
   complete. A failed or interrupted dump never counts as a backup, and
   pruning never removes the dump that was just written.
-- A restore loads the dump into a new database and swaps it in only when
-  that worked. The old database is dropped just before the rename, and if
-  the rename fails the script says where the data is and how to finish.
+- A restore loads the dump into a new database. The swap is one
+  transaction: the database in use is renamed aside and the copy takes its
+  name. The old one is dropped only after that has committed. So a database
+  with the name exists at every moment, which matters because the app
+  creates a missing one, empty, when it starts (`prisma migrate deploy`), and
+  the loop would then dump that while the real data sat under another name.
+  A swap that is refused names the clients that are still connected.
 
-`docker/check-backup-loop.sh` checks the loop, the pruning and the failed
-rename with stand-ins for the database tools and dump files with made-up
-dates. `docker/check-backup.sh` runs it and then makes real dumps, restores
-the newest into a scratch database and compares the row counts, where only
-the application's tables count as data (Prisma's migrations table always has
-rows). CI runs it after the tests, once the demo data is in.
+`docker/check-backup-loop.sh` checks the loop, the pruning and the restore
+with stand-ins for the database tools, a pretend set of databases and dump
+files with made-up dates. `docker/check-backup.sh` runs it and then works on
+a real server: it makes dumps, checks that a damaged dump and a restore
+while something is connected leave a database with other data alone, then
+replaces that database with the newest dump and compares the row counts,
+where only the application's tables count as data (Prisma's migrations table
+always has rows). CI runs it after the tests, once the demo data is in.
 
 ## Pay
 
@@ -202,4 +270,9 @@ schema union:
 - Every loader and action starts with `requireUser`/`requireRole` and, for
   project pages, `requireProject(current, id, capability)`, which also hides
   other organisations' projects.
-- Dates are stored in UTC and shown in UTC.
+- Dates are stored in UTC and shown in UTC. In raw SQL a date goes through
+  `utc()` from `app/lib/db.server.ts`: a bare `${date}` is converted to the
+  database session's time zone, which is wrong unless that is UTC.
+- A write that ends a claim or decides a submission states the status it
+  expects in its `where` and checks how many rows it changed. A form posted
+  twice, or two people acting at once, then cannot undo each other.

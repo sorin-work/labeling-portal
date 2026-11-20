@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scoreAgainstGold } from '~/domain/gold';
+import { isGoldFlagged, scoreAgainstGold } from '~/domain/gold';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
 
 describe('scoreAgainstGold', () => {
@@ -73,5 +73,14 @@ describe('scoreAgainstGold', () => {
     };
     expect(scoreAgainstGold(SCHEMA_TEMPLATES.bbox, gold, gold)).toBe(1);
     expect(scoreAgainstGold(SCHEMA_TEMPLATES.bbox, answer, gold)).toBe(0.5);
+  });
+});
+
+describe('isGoldFlagged', () => {
+  it('flags accuracy under the pass score after three gold tasks', () => {
+    expect(isGoldFlagged(0.5, 3)).toBe(true);
+    expect(isGoldFlagged(0.5, 2)).toBe(false);
+    expect(isGoldFlagged(0.8, 10)).toBe(false);
+    expect(isGoldFlagged(null, 0)).toBe(false);
   });
 });

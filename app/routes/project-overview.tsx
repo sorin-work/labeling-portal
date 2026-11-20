@@ -3,6 +3,7 @@ import { Form, Link } from 'react-router';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card, EmptyState } from '~/components/ui';
 import { renderMarkdown } from '~/domain/markdown';
+import { describeReviewPolicy } from '~/domain/review-sampling';
 import type { TaskSchema } from '~/domain/task-schema';
 
 function schemaChoices(schema: TaskSchema): { title: string; items: string[] } {
@@ -57,7 +58,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       description: project.description,
       overlap: project.overlap,
       timeLimitMinutes: project.timeLimitMinutes,
-      reviewRequired: project.reviewRequired,
+      review: describeReviewPolicy(project.reviewRequired, project.reviewSamplePercent),
     },
     instructionsHtml: renderMarkdown(project.instructions),
     choices: schemaChoices(projectSchema(project)),
@@ -173,9 +174,7 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">Review</dt>
-              <dd className="font-medium">
-                {project.reviewRequired ? 'Every submission' : 'Optional'}
-              </dd>
+              <dd className="font-medium">{project.review}</dd>
             </div>
           </dl>
           <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">

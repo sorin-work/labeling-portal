@@ -16,15 +16,43 @@
 - Pairwise consensus averages only the dimensions of the current rubric,
   over the answers that have a score for them
 
+### Review and quality
+
+- Review sampling: a project can review a share of its submissions instead of
+  all of them. The draw happens once at submission and is stored; each
+  annotator's first ten submissions and all work of annotators flagged for low
+  gold accuracy are always reviewed; work that is not drawn is accepted at
+  once and can complete its task
+- Reviewer reservations: "Start reviewing" reserves the oldest free submission
+  for one reviewer for 15 minutes, the queue shows who holds what, and a
+  decision on a submission someone else holds is refused. Two reviewers asking
+  or deciding at the same moment can no longer end up on the same submission.
+  The review page renews the hold while the reviewer works, so a long fix is
+  not lost to the next reviewer
+- Quality page and its CSV: share of each annotator's work that was reviewed
+
 ### Operations
 
 - A `backup` service behind a compose profile dumps the database once a day
   into `./backups` and keeps the newest seven dumps; `backup once` takes a
   dump right away and `backup restore <file>` loads one into a new database
-  that replaces the old one only when the load worked
+  that takes the place of the old one in a single transaction, only when the
+  load worked
 - CI puts the demo data into the test database, dumps it, restores the dump
   into a scratch database and compares the row counts, and runs the daily
   loop and the pruning against made-up clocks
+
+### Fixes
+
+- A task could stay open for good with its overlap met when its last
+  submissions were accepted at the same moment. The task is now locked while
+  its accepted submissions are counted
+- On a database whose time zone is not UTC, a task with a live claim could be
+  handed to a second annotator, and the daily chart put submissions on the
+  wrong day
+- A work form posted twice around the time limit could turn the stored
+  submission into an expired claim. Skipping and releasing are guarded the
+  same way
 
 ## 1.0.0 - 2026-11-08
 

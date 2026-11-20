@@ -14,8 +14,9 @@ API. The table lists who can open each page.
 | `/projects/:id/qualification`       | Qualification test                       | annotators on the project                   |
 | `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                          |
 | `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                |
-| `/projects/:id/review`              | Review queue                             | reviewers, managers                         |
-| `/review/:assignmentId`             | Approve, send back or fix a submission   | reviewers, managers (not on their own work) |
+| `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                         |
+| `/projects/:id/review` (POST)       | Reserve the next submission and open it  | reviewers, managers                         |
+| `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
 | `/projects/:id/batches[/new\|/:id]` | Import and browse tasks                  | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |

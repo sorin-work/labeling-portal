@@ -22,6 +22,7 @@ type Quality = {
   annotators: Array<{
     name: string;
     submitted: number;
+    reviewedShare: number | null;
     approvalRate: number | null;
     avgQaScore: number | null;
     tasksPerHour: number | null;
@@ -74,11 +75,17 @@ describe('quality stats', () => {
     expect(quality.annotators.map((a) => a.name)).toEqual(['Ann', 'Ben']);
     expect(quality.annotators[0]).toMatchObject({
       submitted: 4,
+      reviewedShare: 0.5,
       approvalRate: 0.5,
       avgQaScore: 3.5,
       tasksPerHour: 60,
     });
-    expect(quality.annotators[1].tasksPerHour).toBe(30);
+    // nobody has looked at Ben's work, so he has no approval rate to read
+    expect(quality.annotators[1]).toMatchObject({
+      tasksPerHour: 30,
+      reviewedShare: 0,
+      approvalRate: null,
+    });
     expect(quality.agreement.pairs).toHaveLength(1);
     expect(quality.agreement.pairs[0].shared).toBe(4);
     expect(quality.agreement.pairs[0].kappa).toBeCloseTo(0.636, 2);

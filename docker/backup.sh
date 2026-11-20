@@ -13,6 +13,10 @@
 # The time in the name is the only time that counts, for the age of a dump
 # and for the order they are pruned in. Modification times are not looked
 # at: on a network share they come from another machine's clock.
+#
+# A dump whose name is dated in the future was made while the clock was
+# wrong. Such dumps are never removed here and do not use up BACKUP_KEEP, and
+# every run names them in a warning.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -40,10 +44,16 @@ is_positive_integer() {
   esac
 }
 
+check_database() {
+  [ -n "${PGDATABASE:-}" ] || fail "PGDATABASE is not set"
+}
+
+# What making a dump needs. A restore only reads a dump, so it does not ask
+# for a folder it can write to.
 check_settings() {
   is_positive_integer "$keep" || fail "BACKUP_KEEP must be a whole number above zero, got '$keep'"
   is_positive_integer "$interval" || fail "BACKUP_INTERVAL_SECONDS must be a whole number above zero, got '$interval'"
-  [ -n "${PGDATABASE:-}" ] || fail "PGDATABASE is not set"
+  check_database
   if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
     fail "cannot write to $dir"
   fi
@@ -61,14 +71,46 @@ dump_time() {
   date -u -d "$(echo "$1" | sed -E 's/^labeling-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
 }
 
-# Removes the oldest dumps until $keep are left. The dump that was just
-# written ($1) is never one of them: after the clock was set back it sorts
-# below older dumps, and it is still the one worth keeping.
+# The dumps dated at or before a clock that reads $1, newest first. These
+# are the ones that say how old the newest dump is, and the ones that are
+# pruned.
+present_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# The rest: dated after $1, or with a date that does not exist. Sorted by
+# name they would pass for the newest dumps for as long as their date lies
+# ahead, and pruning would delete a real dump for each of them.
+future_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -z "$made" ] || [ "$made" -gt "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# Nothing removes these by itself, so a person has to hear about them.
+warn_about_future_dumps() {
+  ahead=$(future_dumps "$1" | tr '\n' ' ')
+  [ -z "$ahead" ] || log "WARNING: dated in the future, so never removed here and not counted towards BACKUP_KEEP. Have a look at: $ahead"
+}
+
+# Removes the oldest dumps until $keep are left. Only dumps that are not
+# dated in the future count and can go. The dump that was just written ($1)
+# is never removed.
 prune() {
-  dumps | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
+  clock=$(date +%s)
+  present_dumps "$clock" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
     rm -f "$dir/$old"
     log "removed $old"
   done
+  warn_about_future_dumps "$clock"
 }
 
 # pg_dump writes to a hidden .partial file that is renamed when it is
@@ -98,16 +140,13 @@ dump() {
 }
 
 # When the newest dump was made, as seconds since 1970, for a clock that
-# reads $1. Dumps dated after that are skipped: the clock was set back since
-# they were made, so they say nothing about the age of the newest real one.
+# reads $1. Dumps dated after that are skipped: the clock was wrong when they
+# were made, so they say nothing about the age of the newest real one.
 # Prints nothing when no dump is left to go by.
 newest_dump_time() {
-  dumps | while read -r candidate; do
-    made=$(dump_time "$candidate")
-    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
-      echo "$made"
-      break
-    fi
+  present_dumps "$1" | while read -r candidate; do
+    dump_time "$candidate"
+    break
   done
 }
 
@@ -125,7 +164,9 @@ nap() {
 #     once, at the start. After that it is only ever set to the current time,
 #     so nothing on disk and no change of the clock can make a dump look
 #     overdue twice in a row.
-#   - A dump dated in the future counts as made now, never as overdue.
+#   - Dumps dated in the future are left out when the age of the newest dump
+#     is worked out. If nothing else is there, the loop waits a full interval
+#     before its first dump instead of dumping at once.
 #   - After every attempt, whether it worked or not, there is a pause before
 #     the next one.
 #   - The wait is slept in steps of at most a minute, with a look at the clock
@@ -140,9 +181,10 @@ run() {
   log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep"
 
   now=$(date +%s)
+  warn_about_future_dumps "$now"
   last=$(newest_dump_time "$now")
   if [ -z "$last" ] && [ -n "$(dumps | head -n 1)" ]; then
-    log "every dump in $dir is dated in the future, counting the newest as made now"
+    log "every dump in $dir is dated in the future, waiting a full interval before the first dump"
     last=$now
   fi
 
@@ -175,10 +217,36 @@ drop() {
   PGOPTIONS='-c client_min_messages=warning' dropdb --if-exists "$1"
 }
 
-# Restores into a new database first and swaps it in only when that worked,
-# so a damaged dump cannot take the current data with it.
+database_exists() {
+  [ -n "$(psql -AtXq -d postgres -c "select 1 from pg_database where datname = '$1'" 2>/dev/null)" ]
+}
+
+# Who is connected to database $1, as "name (sessions)", for the message of a
+# restore that was refused.
+connected_to() {
+  psql -AtXq -d postgres -c "select coalesce(nullif(application_name, ''), 'a client without a name') || ' (' || count(*) || ')' from pg_stat_activity where datname = '$1' and pid <> pg_backend_pid() group by application_name order by application_name" 2>/dev/null |
+    tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
+}
+
+# Replaces the database with a dump, in three steps:
+#
+#   1. The dump is loaded into a new database, <name>_restoring. A damaged
+#      dump stops here and the current data was never touched.
+#   2. The swap, in one transaction: the current database is renamed to
+#      <name>_replaced and the restored copy takes its name. Either both
+#      renames happen or neither does, so there is no moment without a
+#      database under the name. That matters because the app creates a
+#      missing database when it starts (prisma migrate deploy): an empty one,
+#      which the daily loop would then dump while the real data sat under
+#      another name. PostgreSQL refuses the rename while anything is
+#      connected, which is what keeps a running app from being cut off.
+#   3. Only after the swap has committed is <name>_replaced dropped.
+#
+# Killed at any point, this leaves a complete database under the name: the
+# old one before the swap, the restored one after it. What stays behind is a
+# _restoring or _replaced database, and the next restore removes it.
 restore() {
-  check_settings
+  check_database
   file=${1:-}
   if [ -z "$file" ]; then
     echo "usage: restore <file>" >&2
@@ -190,31 +258,50 @@ restore() {
   [ -f "$file" ] || fail "no such dump: $1"
 
   incoming="${PGDATABASE}_restoring"
-  drop "$incoming"
-  createdb "$incoming"
+  replaced="${PGDATABASE}_replaced"
+
+  drop "$incoming" || fail "could not remove $incoming, which an earlier restore left behind. $PGDATABASE was left as it was."
+  createdb "$incoming" || fail "could not create $incoming. $PGDATABASE was left as it was."
   if ! pg_restore --exit-on-error --no-owner --dbname="$incoming" "$file"; then
-    drop "$incoming"
+    drop "$incoming" || true
     fail "could not restore $(basename "$file"), $PGDATABASE was left as it was"
   fi
-  if ! drop "$PGDATABASE"; then
-    drop "$incoming"
-    fail "could not replace $PGDATABASE, something is still connected to it. It was left as it was. Stop the app and try again."
+
+  swapped=0
+  if database_exists "$PGDATABASE"; then
+    # What a restore that was stopped right after its swap left behind: the
+    # data it had replaced. With $PGDATABASE there it is never the only copy.
+    if ! drop "$replaced"; then
+      drop "$incoming" || true
+      fail "could not remove $replaced, which an earlier restore left behind. $PGDATABASE was left as it was."
+    fi
+    psql -qX -v ON_ERROR_STOP=1 --single-transaction -d postgres \
+      -c "ALTER DATABASE \"$PGDATABASE\" RENAME TO \"$replaced\"" \
+      -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\"" || swapped=$?
+  else
+    # A new server: nothing to set aside, and one rename is one transaction.
+    psql -qX -v ON_ERROR_STOP=1 -d postgres \
+      -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\"" || swapped=$?
   fi
-  rename="ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
-  if ! psql -qX -v ON_ERROR_STOP=1 -d postgres -c "$rename"; then
-    # The old database is gone and the copy does not have its name yet.
-    log "$PGDATABASE was dropped, but the restored copy could not be given its name." >&2
-    log "Nothing is lost: the data from $(basename "$file") is in the database $incoming." >&2
-    # prisma migrate deploy creates a database that is missing, and then the
-    # name would be taken.
-    log "Leave the app stopped until this is done: on start it would create a new, empty $PGDATABASE." >&2
-    log "To finish the restore, run this against the same server:" >&2
-    log "  psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
-    log "With the compose stack that is:" >&2
-    log "  docker compose exec db psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+  if [ "$swapped" -ne 0 ]; then
+    # The transaction was rolled back, so nothing was renamed.
+    who=$(connected_to "$PGDATABASE")
+    drop "$incoming" || true
+    log "could not put the restored copy in the place of $PGDATABASE. $PGDATABASE was left as it was." >&2
+    if [ -n "$who" ]; then
+      log "Still connected to it: $who." >&2
+      log "Stop what is connected and run the restore again. With the compose stack that is:" >&2
+      log "  docker compose --profile backup stop app backup" >&2
+    else
+      log "Nothing is connected to it, so the reason is in the error above." >&2
+    fi
     exit 1
   fi
   log "restored $PGDATABASE from $(basename "$file")"
+
+  if ! drop "$replaced"; then
+    log "The data it replaced is still there as the database $replaced. Remove it with: dropdb $replaced" >&2
+  fi
 }
 
 case ${1:-run} in

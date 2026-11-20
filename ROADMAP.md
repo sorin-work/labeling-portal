@@ -37,7 +37,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 1   | Drafts that survive a reload                 | Next    | labeling      | S    | -          |
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
-| 4   | Review sampling and reviewer reservations    | Next    | review        | M    | -          |
+| 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
@@ -175,60 +175,6 @@ shows.
   walk through the pairwise groups, and for the "is this text entry" rule as a
   pure function. Key handling inside components cannot be tested until item 8
   adds a DOM test setup, so keep the logic outside the components.
-
-### 4. Review sampling and reviewer reservations
-
-Two gaps in the review queue. First, `reviewRequired` is all or nothing: every
-submission waits for a reviewer, or none does. With annotators I trust I want
-to review a share. Second, the queue hands the same submission to everyone:
-`nextPendingReview` returns the oldest pending row to each reviewer who
-presses "Start reviewing", and the slower one gets "Someone already reviewed
-this submission" (the 409 in `routes/review.tsx`) after doing the work.
-
-Sampling:
-
-- Data: `reviewSamplePercent Int @default(100)` on `Project`, used when
-  `reviewRequired` is on. It needs a field in `ProjectForm` and
-  `projectFormSchema`, and a line in `createProject`, `updateProject` and
-  `duplicateProject`.
-- `submitAssignment` in `models/queue.server.ts` chooses between `PENDING` and
-  `NOT_REQUIRED` from `input.reviewRequired && !task.isGold`. The draw goes
-  there. Pass the random function in, the way `now` is passed in, so tests can
-  fix it.
-- Work that is not sampled is accepted at once, so `refreshTaskStatus` has to
-  run for it. Today it only runs when the project has review switched off.
-  Items 1 and 5 add their own lines to `submitAssignment`; the three changes
-  do not depend on each other.
-- Tricky: new annotators. With a flat 10% somebody's first thirty submissions
-  may never be seen. Always review an annotator's first ten submissions in a
-  project, and everything from annotators the quality page flags (`flagged` in
-  `models/quality.server.ts`: gold accuracy under `GOLD_PASS_SCORE`).
-- Tricky: decide once. Work that was sent back and resubmitted always returns
-  to `PENDING` (`resubmitAssignment` does that already).
-- The quality page should show what share of each annotator's work was
-  reviewed, or the approval rate reads as if it covered everything.
-
-Reservations:
-
-- Data: `reviewHeldById` and `reviewHeldAt` on `Assignment`.
-  `nextPendingReview` takes the oldest pending submission that nobody else
-  holds (holds older than 15 minutes do not count) and marks it in the same
-  statement, with `FOR UPDATE SKIP LOCKED` in a `$queryRaw`. `claimNextTask`
-  locks task rows for the same reason.
-- "Start reviewing" is a link to `?next=1` handled in the loader of
-  `routes/project-review.tsx`. Reserving is a write, so it becomes a POST, like
-  the claim in `routes/project-work.tsx`.
-- The list (`listPendingReviews`) shows who holds a row. Opening a held
-  submission directly still works and says who is on it. The action keeps its
-  `reviewStatus !== 'PENDING'` check as the last line of defence.
-- `recordReview` clears the hold. Abandoned holds just age out; there is no
-  background job in this app.
-- Undecided: letting a manager pull an accepted, unsampled submission into
-  review later as a spot check. I lean towards leaving it for a follow-up.
-- Tests: `tests/integration/review.test.ts`: sampled and unsampled with a
-  fixed random function, the first-ten rule, the task completes when unsampled
-  work fills it, and two reviewers asking at the same moment get different
-  submissions (the queue tests do the same with `Promise.all`).
 
 ### 5. Earnings page and rates frozen at submission
 
@@ -1019,6 +965,24 @@ took its snapshot, or stored by a request that read the old schema before the
 save committed, is not caught. Closing that needs every place that stores an
 answer to hold the project row while it validates and writes.
 
+### 4. Review sampling and reviewer reservations
+
+A project has a "Share to review" (`reviewSamplePercent`, 0 to 100).
+`submitAssignment` decides once, with the random function passed in, and
+stores the outcome in `Assignment.reviewSample`; work that is not drawn is
+accepted at once and can complete its task. New and flagged annotators are
+always reviewed, and the quality page shows the reviewed share of each
+annotator's work. "Start reviewing" is a POST that reserves the oldest free
+submission in one statement with `FOR UPDATE SKIP LOCKED`, holds lapse after
+15 minutes unless the review page renews them, which it does while the
+reviewer works, and a decision is one conditional write. Different from the
+design: the outcome of the draw has its own column, the first-ten rule counts
+submissions that went to review (work done while review was off does not use
+it up), a submission opened from the list is reserved with a button before
+the form appears, and deciding on a submission another reviewer holds is
+refused. Still open: pulling an accepted, unsampled submission into review
+later as a spot check, and releasing or taking over a hold before it lapses.
+
 ### 7. Scheduled backups
 
 A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
@@ -1030,8 +994,10 @@ the loop pauses before the next. Different from the design: a dump right away
 is `docker compose run --rm backup once`, because without an argument the
 service is the daily loop, and that makes a dump at the start only when the
 newest one is older than a day. A restore is part of the script
-(`backup restore <file>`), loading the dump into a new database that replaces
-the old one only when the load worked. CI runs `docker/check-backup.sh` after
+(`backup restore <file>`), loading the dump into a new database and swapping
+it with the old one in one transaction, so that a database with the name
+exists at every moment. Dumps dated in the future are never pruned and do not
+count towards the seven. CI runs `docker/check-backup.sh` after
 the tests, with the demo data in: the loop and the pruning against made-up
 clocks, then a real dump, a restore into a scratch database and the row
 counts. Still open: the dumps are not encrypted and stay on the same disk

@@ -1,19 +1,27 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import type { Answer } from '~/domain/answers';
 import { consensus } from '~/domain/consensus';
 import { ACCEPTED_STATUSES, finalAnswer } from '~/domain/outcome';
 import { parseTaskSchema } from '~/domain/task-schema';
-import { prisma } from '~/lib/db.server';
-
-type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
  * A task is complete once `overlap` submissions have been accepted; the
  * accepted answers are then merged into a consensus. Called after anything
- * that changes a submission's review state.
+ * that changes a submission's review state, inside the transaction that made
+ * the change.
+ *
+ * The task row is locked before the accepted submissions are counted. Without
+ * that, two acceptances of one task at the same moment each count only their
+ * own, and the task stays open with its overlap met. With the lock the second
+ * one waits here and then counts both.
  */
-export async function refreshTaskStatus(taskId: string, db: Db = prisma, now = new Date()) {
+export async function refreshTaskStatus(
+  taskId: string,
+  db: Prisma.TransactionClient,
+  now = new Date(),
+) {
+  await db.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR NO KEY UPDATE`;
   const task = await db.task.findUniqueOrThrow({
     where: { id: taskId },
     include: { project: { select: { overlap: true, schema: true } } },
