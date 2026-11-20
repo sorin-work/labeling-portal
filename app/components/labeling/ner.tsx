@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { NerAnswer, Span } from '~/domain/answers';
-import { labelKeys } from '~/domain/hotkeys';
+import { interfaceShortcut, isTextEntry, labelKeys } from '~/domain/hotkeys';
 import {
   addSpan,
   relabelSpan,
@@ -15,7 +15,7 @@ import type { NerSchema } from '~/domain/task-schema';
 import { cx } from '../ui';
 
 import type { LabelingProps } from './index';
-import { useInterfaceHotkeys } from './use-hotkeys';
+import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
 const FALLBACK_COLORS = ['#f59e0b', '#6366f1', '#10b981', '#ef4444', '#0ea5e9', '#a855f7'];
@@ -56,12 +56,39 @@ export function NerSpans({
   const selected = spans.find((span) => same(span, picked)) ?? null;
   const keys = labelKeys(schema.entities.length);
 
-  const remove = (span: Pick<Span, 'start' | 'end'>) => {
-    onChange({ spans: removeSpan(spans, span) });
+  // The span that was removed last can be put back once, until anything else
+  // changes. (The box interface gets a full undo; this covers the slip.)
+  const [removed, setRemoved] = useState<{ span: Span; from: Span[] } | null>(null);
+  const undoable = removed !== null && removed.from === spans ? removed.span : null;
+
+  const remove = (target: Pick<Span, 'start' | 'end'>) => {
+    const span = spans.find((s) => same(s, target));
+    if (!span) return;
+    const next = removeSpan(spans, span);
+    setRemoved({ span, from: next });
+    onChange({ spans: next });
     if (same(span, picked)) setPicked(null);
   };
+  const putBack = () => {
+    if (!undoable) return false;
+    setRemoved(null);
+    onChange({ spans: addSpan(spans, undoable) });
+    setPicked(undoable);
+    return true;
+  };
+
+  // A picked span is let go when the cursor goes into a text box, so that a
+  // key meant for the text (a reviewer writing feedback) cannot hit the span.
+  useEffect(() => {
+    const onFocus = (event: FocusEvent) => {
+      if (isTextEntry(focusTarget(event.target))) setPicked(null);
+    };
+    document.addEventListener('focusin', onFocus);
+    return () => document.removeEventListener('focusin', onFocus);
+  }, []);
 
   const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action === 'undoRemove') return putBack();
     if (hit.action === 'remove') {
       if (!selected) return false;
       remove(selected);
@@ -156,6 +183,19 @@ export function NerSpans({
           ),
         )}
       </div>
+      {!readOnly && undoable && (
+        <p className="flex items-center gap-2 text-sm text-slate-600">
+          Removed {undoable.label} “{spanText(text, undoable)}”.
+          <button
+            type="button"
+            className="font-medium text-indigo-700 hover:underline"
+            title={`Shortcut: ${interfaceShortcut(schema, ['undoRemove'])}`}
+            onClick={putBack}
+          >
+            Undo
+          </button>
+        </p>
+      )}
       {spans.length === 0 ? (
         <p className="text-sm text-slate-500">
           {readOnly
