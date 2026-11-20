@@ -457,6 +457,11 @@ describe('drafts', () => {
       draft: { labels: ['positive'] },
       draftSeconds: first.draftSeconds,
     });
+
+    // two tabs saving at the same moment: the larger time still stands
+    await Promise.all(['30', '5', '60'].map((s) => save(id, cookie, { activeSeconds: s })));
+    const third = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(third.draftSeconds).toBe(first.draftSeconds);
   });
 
   it('refuses a draft that is too large or not a JSON object', async () => {

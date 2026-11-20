@@ -276,17 +276,21 @@ export async function saveDraft(
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
   if (found.assignment.expiresAt <= now) return { ok: false, error: 'expired' };
-  const draftSeconds = Math.max(
-    found.assignment.draftSeconds,
-    clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
-  );
-  // the claim can be submitted or released between the check and this write
-  const saved = await prisma.assignment.updateMany({
-    where: { id: assignmentId, userId, status: 'ACTIVE' },
-    data: { draftSeconds, ...(input.draft === undefined ? {} : { draft: input.draft }) },
-  });
-  if (saved.count === 0) return { ok: false, error: 'not_active' };
-  return { ok: true, draftSeconds };
+  const seconds = clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now);
+  const draft =
+    input.draft === undefined
+      ? Prisma.empty
+      : Prisma.sql`, "draft" = ${JSON.stringify(input.draft)}::jsonb`;
+  // One statement: the claim can be submitted or released since the check
+  // above, and two tabs can save at the same moment without one of them
+  // lowering the time again.
+  const saved = await prisma.$queryRaw<Array<{ draftSeconds: number }>>`
+    UPDATE "Assignment"
+    SET "draftSeconds" = GREATEST("draftSeconds", ${seconds}::int)${draft}
+    WHERE id = ${assignmentId} AND "userId" = ${userId} AND status = 'ACTIVE'
+    RETURNING "draftSeconds"`;
+  if (saved.length === 0) return { ok: false, error: 'not_active' };
+  return { ok: true, draftSeconds: saved[0].draftSeconds };
 }
 
 /**
