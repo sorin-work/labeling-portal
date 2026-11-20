@@ -6,5 +6,5 @@ import type { Route } from './+types/project-download';
 /** The label download of the export page. `labelExport` has the rules. */
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
-  return labelExport(current, params.projectId, new URL(request.url));
+  return labelExport(current, params.projectId, request);
 }

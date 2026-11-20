@@ -43,24 +43,20 @@ function stream(chunks: AsyncIterable<string | Uint8Array>): ReadableStream<Uint
 
 /**
  * The label export of one project, in any format of the table in
- * `domain/export.ts`. Only the project's own tasks are read: the project comes
- * from `requireProject`, which hides other organisations, and a `batch` from
- * another project matches nothing.
- */
-/**
- * The label export of one project, in any format of the table in
  * `domain/export.ts`, for the download route and the API alike, with one
  * check of who may have it. Only the project's own tasks are read: the
  * project comes from `requireProject`, which hides other organisations, and a
  * `batch` from another project matches nothing. Takes `format`, `scope`,
- * `batch` and `annotators` from the address.
+ * `batch` and `annotators` from the address. A HEAD request gets the headers
+ * only, reads no labels and is not recorded as a download.
  */
 export async function labelExport(
   current: CurrentUser,
   projectId: string,
-  url: URL,
+  request: Request,
   via: 'page' | 'api' = 'page',
 ): Promise<Response> {
+  const url = new URL(request.url);
   const project = await requireProject(current, projectId, 'exportLabels');
   const format = findExportFormat(url.searchParams.get('format') ?? 'jsonl');
   if (!format) throw badRequest('Unknown export format');
@@ -81,6 +77,14 @@ export async function labelExport(
     );
   }
 
+  const headers = {
+    'Content-Type': format.contentType,
+    'Content-Disposition': `attachment; filename="${slug(project.name)}-${scope}.${format.extension}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+  };
+  if (request.method.toUpperCase() === 'HEAD') return new Response(null, { headers });
+
   // who took the labels, and in which form; recorded before the first byte goes out
   await logActivity(prisma, {
     orgId: project.orgId,
@@ -98,12 +102,5 @@ export async function labelExport(
   });
   const context: ExportContext = { schema, projectName: project.name, now: new Date() };
   const tasks = exportTasks(project, { scope, batchId, annotators, needs: format.needs });
-  return new Response(stream(format.write(context, tasks)), {
-    headers: {
-      'Content-Type': format.contentType,
-      'Content-Disposition': `attachment; filename="${slug(project.name)}-${scope}.${format.extension}"`,
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'no-store',
-    },
-  });
+  return new Response(stream(format.write(context, tasks)), { headers });
 }

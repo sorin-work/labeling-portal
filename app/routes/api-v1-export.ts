@@ -6,5 +6,5 @@ import { labelExport } from '~/models/label-export.server';
  * the export page, with the same `format`, `scope`, `batch` and `annotators`.
  */
 export const loader = apiRoute('read', ({ current, params, request }) =>
-  labelExport(current, params.projectId ?? '', new URL(request.url), 'api'),
+  labelExport(current, params.projectId ?? '', request, 'api'),
 );
