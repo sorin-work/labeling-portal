@@ -172,6 +172,8 @@ model Project {
   instructionsUpdatedAt    DateTime?
   kind                     TaskKind
   schema                   Json
+  /// the rule that suggests answers at import (see domain/prelabel.ts); empty: none
+  prelabel                 Json?
   status                   ProjectStatus          @default(DRAFT)
   overlap                  Int                    @default(1)
   timeLimitMinutes         Int                    @default(30)
@@ -243,6 +245,10 @@ model Batch {
   idempotencyKey String?
   /// the SHA-256 of that upload's body; the same key with another body is refused
   idempotencyHash String?
+  /// the project's suggestion rule over this batch: empty, PENDING, DONE, TIMED_OUT or FAILED
+  prelabelState  String?
+  /// what the last run did, in one sentence for the batch page
+  prelabelNote   String?
   createdAt      DateTime     @default(now())
   project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks          Task[]
@@ -289,6 +295,11 @@ model Task {
   /// part of the qualification test, never handed out in the queue
   isQualification Boolean        @default(false)
   goldAnswer      Json?
+  /// a suggested answer, never an annotation: from the import file (`_prediction`)
+  /// or the project's rule; checked against the schema when it is stored
+  suggestion      Json?
+  /// where it came from: "file", or the name of the rule
+  suggestionSource String?
   /// set when a manager retired this gold task: not handed out any more, its scores do not count
   goldRetiredAt   DateTime?
   /// the completed task this gold task was copied from
@@ -369,6 +380,10 @@ model Assignment {
   draft          Json?
   /// working time that came with the last draft save
   draftSeconds   Int              @default(0)
+  /// the annotator started from the task's suggestion
+  fromSuggestion Boolean       @default(false)
+  /// with a suggestion: true when the submitted answer is the suggestion unchanged
+  suggestionUnchanged Boolean?
   reviewStatus   ReviewStatus?
   reviewedAt     DateTime?
   /// decided once at submission when the project reviews a share; empty otherwise
