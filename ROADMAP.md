@@ -36,14 +36,14 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | --- | -------------------------------------------- | ------- | ------------- | ---- | ---------- |
 | 1   | Drafts that survive a reload                 | Shipped | labeling      | S    | -          |
 | 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
-| 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
+| 3   | Hotkeys for every action                     | Shipped | labeling      | M    | -          |
 | 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Shipped | payouts       | M    | -          |
 | 6   | More import and export formats               | Shipped | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
-| 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
+| 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
 | 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Later   | labeling      | M    | -          |
@@ -55,73 +55,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 
 ## Next
 
-### 3. Hotkeys for every action
-
-Shortcuts exist but stop early. The number keys reach the first nine labels
-only (`Math.min(9, ...)` in `text-classification.tsx`, `ner.tsx` and
-`bounding-boxes.tsx` under `components/labeling/`, while a schema may have 30
-labels). The pairwise rubric can only be clicked, two clicks per dimension on
-every task. Skip has no key. The review page knows `1` to `5` and `a`. The
-list behind `?` (`KeyboardHelp`) is a hard-coded table that only the work page
-shows.
-
-- One key map as data, in a new `domain/hotkeys.ts`: for each page (work,
-  review) and labeling kind, which key does what, plus a function that hands
-  out the label keys. The handlers and `KeyboardHelp` both read it, so the
-  help cannot drift from the behaviour, and the review page can show its own
-  list. This item owns the module. Items 8 and 13 add their keys to it, and if
-  one of them is built first it creates the module in this shape with its own
-  keys.
-- Label keys: `1` to `9`, `0` for the tenth, then letters, shown on the
-  buttons the way the digits are today. Letters that the page or the interface
-  uses for something else are skipped: `s` on the work page, `a`, `s` and `e`
-  on the review page, `n` and `f` in the box interface (item 13).
-- Pairwise scores: every score row (one dimension, one side) is a radio group.
-  Inside a group the arrow keys choose, the same as in a native radio group,
-  and Tab moves to the next group. `1` to `5` set the score of the group that
-  has focus and move focus to the next one (A then B for each dimension), so a
-  rubric can be filled in by typing digits. The digits are free in this
-  interface. `a`, `b` and `t` stay. Item 8 asks for the same radio behaviour,
-  so the two items agree and can land in either order.
-- Entities: clicking a span removes it today (`onClick` on the `<mark>` calls
-  `removeSpan`), so a span with the wrong type has to be deleted and selected
-  again. Make a click select the span; a number then changes its type and
-  Delete removes it, as for boxes.
-- Work page: `s` opens the skip form (Escape already closes it). Review page:
-  `s` moves to the feedback box for sending back, `e` starts "Fix it myself",
-  Escape cancels the fix. Not `f`: that is zoom to fit in the box interface
-  (item 13), which the read-only view on the review page has too.
-- `isTyping` in `components/labeling/use-hotkeys.ts` stops the handler for
-  every `INPUT` element, radio buttons and checkboxes included. So shortcuts
-  go dead while a radio has focus (the skip form focuses one today), and they
-  would go dead inside any score group made of real radio inputs. The hook
-  must stop only for text entry: text inputs, textareas, selects and editable
-  content. The arrow keys and Space still belong to a focused radio or
-  checkbox. While the skip form is open the interface keys should stay off,
-  which the focused radio did by accident until now. Items 8 and 13 need this
-  change as well; whichever of the three lands first makes it.
-- Tricky: `useHotkeys` listens on `window` for every mounted interface. The
-  qualification test renders one interface per question
-  (`routes/project-qualification.tsx`), so pressing `1` there picks the first
-  label in every question at once. Keys should go to one interface: the one
-  that has focus or was used last.
-- Tricky: the handlers compare `event.key`, which depends on the keyboard
-  layout (on AZERTY the digit row needs Shift). `event.code` for the digits
-  fixes that and makes the number pad work.
-- Tricky: on the review page `a` approves, and in a pairwise fix `a` picks
-  response A. The page turns its own keys off while fixing; the shared table
-  should make that rule explicit instead of leaving it to two hooks.
-- Undecided: "submit on pick" for single-label projects (press `2` and the
-  next task loads). It is the fastest way to work and the easiest way to
-  submit a slip, and there is no way back to a submitted task. I lean towards
-  an option per annotator, off by default.
-- Tests: unit tests for the map (no key used twice on one page and kind, the
-  read-only interface keys counted on the review page, label keys for 30
-  labels skipping the reserved letters), for the order in which the digits
-  walk through the pairwise groups, and for the "is this text entry" rule as a
-  pure function. Key handling inside components cannot be tested until item 8
-  adds a DOM test setup, so keep the logic outside the components.
-
 ### 8. Accessibility pass
 
 The basics are there: a skip link, visible focus, labelled navigation and form
@@ -130,35 +63,31 @@ labeling pages with only a keyboard or with a screen reader, and nothing in CI
 checks any of it. Gaps I already know about:
 
 - Entity spans can only be made with a mouse. `NerSpans` reads
-  `window.getSelection()` on `mouseup`, and a span is removed by clicking it.
-  It needs a keyboard path: while the text has focus, a cursor that the arrow
-  keys move word by word, Shift with an arrow to extend, Enter to apply the
-  active type.
+  `window.getSelection()` on `mouseup`. Since item 3 a span can be selected,
+  retyped and removed from the list under the text with the keyboard, but not
+  made. It needs a keyboard path: while the text has focus, a cursor that the
+  arrow keys move word by word, Shift with an arrow to extend, Enter to apply
+  the active type.
 - Boxes can only be drawn with a pointer. Item 13 adds moving and resizing by
   keyboard and a key (`n`) that drops a new box in the middle of the view.
   That part lives there, and this item does not wait for it.
-- New keys go into the one key map in `domain/hotkeys.ts` that item 3
-  describes (pages and kinds, key to action, read by the handlers and by
-  `KeyboardHelp`). If that module does not exist yet, create it in that shape
-  with the keys of this item.
+- New keys go into the key map in `domain/hotkeys.ts` (item 3): pages and
+  kinds, key to action, read by the handlers and by `KeyboardHelp`. The arrow
+  keys and Space stay with a focused radio button or checkbox there
+  (`isNativeKey`), so a cursor in the entity text needs its own rule.
 - After "Submit and next" the next task loads without any announcement, and
   focus stays wherever it was. Move focus to the task, or announce it in a
   live region, in `routes/work.tsx`, and move focus to `<main id="main">` on
   navigation in `routes/app-layout.tsx`.
 - `aria-sort` sits on the sort button in the quality table
   (`routes/project-quality.tsx`). It belongs on the `<th>`.
-- The score buttons (`ScoreButtons` in `pairwise.tsx`) and the label buttons
-  in `text-classification.tsx` have `role="radio"`, but each one is a tab stop
-  and the arrow keys do nothing. Make every group behave like a native radio
-  group: one tab stop, and the arrow keys choose. Real radio inputs give that
-  for free. Item 3 describes the same behaviour for the pairwise scores and
-  puts the digits on top of it, so the two items agree whichever lands first.
-- `isTyping` in `components/labeling/use-hotkeys.ts` returns true for every
-  `INPUT` element, so a focused radio or checkbox silences all shortcuts. With
-  real radio inputs in the interfaces the number keys would go dead as soon as
-  a score has focus. The hook must stop only for text inputs, textareas,
-  selects and editable content. Items 3 and 13 need the same change; whichever
-  of the three lands first makes it.
+- The label buttons in `text-classification.tsx` have `role="radio"`, but
+  each one is a tab stop and the arrow keys do nothing. Make the group behave
+  like a native radio group: one tab stop, and the arrow keys choose. Real
+  radio inputs give that for free; the pairwise score rows have been real
+  radio groups since item 3. The preference buttons in `pairwise.tsx` and the
+  quality score on the review page are `aria-pressed` buttons and want the
+  same.
 - `id="rationale"` is fixed in `PairwiseRubric`, so a page with two interfaces
   (the comparison in `routes/my-work-revise.tsx`, the qualification test) has
   the id twice. `useId` fixes it.
@@ -181,64 +110,6 @@ checks any of it. Gaps I already know about:
   task for ever. I lean towards three, each still asked for by the annotator.
 
 ## Later
-
-### 10. Gold tasks: add, fix and rescore
-
-Gold tasks can only be created with a `_gold` column at import (`createBatch`
-sets `isGold` when the row has one). After that they are frozen:
-`routes/task-detail.tsx` has no action at all. A gold answer that turns out to
-be wrong keeps marking good annotators down, and can put them on the "needs
-attention" list, until the batch is deleted, which `deleteBatch` refuses once
-anyone has worked on it. Annotators only ever see one number, "Gold accuracy"
-on the dashboard, and never which tasks they got wrong.
-
-- Actions on the task page for managers (`manageProjects`):
-  - edit the gold answer in the normal interface. Pairwise gold is only a
-    preference (`parseGold` stores empty scores and rationale), so it needs
-    its own small form, not `validatePairwise`;
-  - retire a gold task: it is no longer handed out and its scores stop
-    counting (probably a `goldRetiredAt` on `Task`, checked in `eligibleFor`
-    and wherever `goldScore` is averaged);
-  - "Use as gold" on a completed task with a consensus. This makes a copy
-    (same `data`, `goldAnswer` from the consensus, in a batch named "Gold")
-    and leaves the original alone, because gold tasks are left out of the
-    export (`isGold: false` in `loadExportTasks`) and the original's labels
-    are real data.
-- Rescore after an edit: recompute `goldScore` for every submission of that
-  task with `scoreAgainstGold`, the call `submitAssignment` makes, in one
-  transaction, and log an activity entry with the old and new answer.
-  `describe()` in `routes/project-activity.tsx` needs the new action names.
-- For annotators: gold submissions show as "Accepted" in `routes/my-work.tsx`,
-  like any work that needed no review. Show the score there, and on
-  `/my-work/:assignmentId` reuse the comparison built for reviewer corrections
-  (the `compare` mode of `routes/my-work-revise.tsx`, which its loader only
-  allows for `SENT_BACK` and `FIXED` work today) with the expected answer on
-  the right. A project setting turns this off.
-- For managers: a small table on the quality page of the gold tasks with the
-  lowest average score. A gold task that most people miss is usually the one
-  that is wrong.
-- Retiring adds a condition to `eligibleFor` in `models/queue.server.ts`.
-  Items 11 (extra slots) and 12 (paused batches) change the same function. The
-  three changes are independent, but whoever lands later has to merge them.
-- Tricky: where a new gold task appears. `createBatch` appends after the last
-  position and the queue goes strictly by `position`, so a copy made today
-  would be served after everything else. `position` is not unique: give the
-  copy a random position among the project's open tasks. Item 12 makes gold
-  spacing a proper setting.
-- Tricky: `listBatches` counts gold tasks in a batch's total, but gold tasks
-  never complete, so a batch with gold never reads as done. Count them
-  separately, as `projectProgress` does.
-- Tricky: qualification questions carry a `goldAnswer` too. Editing one should
-  not regrade past attempts: `scorePercent`, `passed` and `qualifiedAt` are
-  stored results. Say so on the page.
-- Tricky: the gold answer must not reach the browser before the submission.
-  The work loader sends `task.data` only. Keep a test for it, like the one for
-  the qualification page.
-- Undecided: showing the expected answer lets annotators tell each other which
-  tasks are gold. Each person meets a gold task only once, so I lean towards
-  showing it by default.
-- Tests: `tests/integration/gold.test.ts`: edit and rescore, retire, copy from
-  a completed task, permissions, what the annotator's page shows.
 
 ### 11. Low-agreement tasks: extras and adjudication
 
@@ -314,8 +185,13 @@ disagreed on.
 - Tricky: an extra slot can stay empty for ever when every member has already
   answered the task. Managers should be able to send a task that is waiting
   for an extra annotator to adjudication from its page.
-- Items 10 and 12 add their own conditions to `eligibleFor`. The three changes
-  are independent, but whoever lands later has to merge them.
+- Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
+  two that must stay: a retired gold task is never eligible
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold tasks stay outside the slot count, extra slots
+  included.
 - Undecided: whether an adjudicated answer should feed back into the
   annotators' numbers (agreement with the adjudicator, per person). I lean
   towards not yet.
@@ -364,9 +240,14 @@ else. They are the ordering rules that item 17 has to keep.
   tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
 - Tricky: with default settings the behaviour must stay exactly as it is. The
   queue tests rely on position order.
-- Items 10 (retired gold tasks) and 11 (extra slots) each add a condition to
-  `eligibleFor` as well. The three changes are independent, but whoever lands
-  later has to merge them.
+- Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
+  has shipped two that must stay: a retired gold task is never eligible
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold spacing has to treat those copies like any other
+  gold task, and a new order must not single them out: today a copy sits in a
+  batch with open tasks, at the position of one of them.
 - Follow-ups, each small enough for a pull request of its own and not part of
   this one:
   - a daily limit per annotator, so one fast person cannot label most of a
@@ -411,16 +292,15 @@ there is no undo: Delete on the wrong box is final.
   to pan, `f` to fit. Not `0`: that is the tenth label (item 3). Read-only
   views (review before "Fix it myself", the task page, the comparison) get
   zoom too.
-- These keys go into the one key map in `domain/hotkeys.ts` that item 3
-  describes, so the help list shows them and the test for keys used twice
-  covers them. Label letters skip `n` and `f`. If the module does not exist
-  yet, create it in that shape with the keys of this item.
-- `useHotkeys` needs two changes. It passes only `event.key` and drops
-  anything pressed with Ctrl, Meta or Alt, so it has to hand over the event.
-  And `isTyping` stops it for every `INPUT` element, radios and checkboxes
-  included; it must stop only for text inputs, textareas, selects and editable
-  content. Items 3 and 8 need that second change too; whichever of the three
-  lands first makes it.
+- These keys go into the key map in `domain/hotkeys.ts` (item 3), so the help
+  list shows them and the test for keys used twice covers them. Label letters
+  already skip `n` and `f`. Keys that also work in a read-only view (zoom) are
+  marked `readOnly` there, which is what puts them into the review page's
+  check.
+- The key map knows plain keys and Ctrl or Cmd with Enter. `keyName` drops
+  everything else pressed with Ctrl, Cmd or Alt and ignores Shift, so nudging
+  by ten and resizing need modifier names in the map, and `Ctrl+Z` needs to
+  be let through outside text boxes.
 - Undo and redo (`Ctrl+Z`, `Ctrl+Shift+Z`): a small history reducer in
   `domain/` (past, present, future, capped) that `NerSpans` can use as well.
   A whole drag is one entry.
@@ -695,7 +575,7 @@ price: people accept what is already filled in.
   against the gold answers with `scoreAgainstGold`. That measure costs
   nothing.
 - Tricky: anchoring. The submit button is enabled as soon as there is an
-  answer (`disabled={busy || !answer}`), so a pre-filled task is one keypress.
+  answer (`disabled={busy || !toSubmit}`), so a pre-filled task is one keypress.
   Show a suggestion as a suggestion (dashed, labelled) and require an explicit
   accept or an edit before submitting.
 - Tricky: agreement is inflated. All annotators of a task see the same
@@ -759,6 +639,33 @@ took its snapshot, or stored by a request that read the old schema before the
 save committed, is not caught. Closing that needs every place that stores an
 answer to hold the project row while it validates and writes.
 
+### 3. Hotkeys for every action
+
+`domain/hotkeys.ts` holds the one key map: the keys of the work and review
+pages with the mode each is limited to, the keys of every labeling interface,
+and the label keys (`1` to `9`, `0`, then the letters without `a`, `e`, `f`,
+`n` and `s`, the same on every page). The handlers, the list behind `?` (now
+also on the review, revise and qualification pages) and the hints next to
+buttons are made from it. Pairwise score rows are real radio groups and typed
+digits walk them; entity spans are selected with a click, get another type
+with a key and are removed with Delete; `s` opens the skip form; on the review
+page `s` goes to the feedback box, `e` starts a fix and Escape cancels it.
+`use-hotkeys.ts` stops only for text entry, takes digits as typed and reads
+the physical key where a layout needs Shift for them, and lets one press
+trigger one action. Different from the design: a digit typed while no score
+row has focus goes to the first row without a score, so a rubric can be typed
+on a fresh page. On a page with several interfaces (the test) the keys go to
+the card that holds the focus or was clicked last, which is marked, and to
+none before that, not to "the one used last". Approving by key takes two keys
+(`a` arms, Enter approves, anything else calls it off) and waits a moment
+after each decision, and Ctrl+Enter in the skip form skips. Not built: "submit
+on pick". A slip cannot be taken back once the next task has loaded, so it
+waits for a way to reopen the last submission. Fixed on the way: entity and
+box tasks can be submitted with nothing marked, and the review page starts
+fresh for every submission. Still open: letters follow the typed character,
+so they need a Latin layout; the list of shortcuts does not take focus (item
+8); a removed span can be put back once, a removed box not at all (item 13).
+
 ### 4. Review sampling and reviewer reservations
 
 A project has a "Share to review" (`reviewSamplePercent`, 0 to 100).
@@ -791,8 +698,9 @@ column and not derived, and work accepted before the upgrade keeps its
 submission day, so no past report changes; check constraints refuse a
 submitted row without its rate and accepted work without its date; a revision
 is credited at most the project's time limit and a task three limits in all,
-because revising has no deadline; and hourly rounding moved into one integer
-function. The page says that nothing is marked as paid, because the portal
+because revising has no deadline, and a person's time is credited once
+across all their work through a clock on the membership; and hourly rounding
+moved into one integer function. The page says that nothing is marked as paid, because the portal
 does not record payments. Still open: the rates of work from before the
 migration are the project's rate of that day, which is an approximation, and
 marking a period as paid, bonuses, reviewer pay and other currencies remain
@@ -860,3 +768,24 @@ overturn and never in the one it was submitted in. Still open: gold scores
 and low QA scores on approved work cannot be disputed, and nobody is told
 about a new dispute or its outcome except by the tab count and the "My work"
 page.
+
+### 10. Gold tasks: add, fix and rescore
+
+On the task page a manager can change a gold answer, rescore, retire a gold
+task or bring it back, and copy a completed task into a gold task (also for
+several tasks from the batch page). Every change is kept in `GoldRevision`
+with who, when and why. Annotators see their score and the expected answer
+after submitting unless the project turns gold feedback off, the quality page
+lists the gold tasks with the lowest scores, and batch progress counts gold
+apart. Different from the design: an edit does not rescore by itself. The
+page first says how many scores change, whose accuracy moves and who crosses
+the flag, and the manager applies exactly that plan. The copy does not go
+into a batch named "Gold" but among the open tasks of a batch that is being
+worked on, without the original's id, because annotators see the batch name;
+a task and its copies are one item that nobody is handed twice; and the work
+page gets no id of the task, only a reference cut from the claim's id. Gold
+feedback is on for new projects and off for the ones that existed before. Pay
+and past qualification attempts never follow a rescore. Still open: gold spacing is left to item 12 (a copy takes
+the position of a random open task), a retired task that someone has claimed
+can still be submitted, and the server does different work for a gold
+submission than for a regular one, which a patient observer could measure.

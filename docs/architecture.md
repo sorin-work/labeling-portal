@@ -29,6 +29,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `Dispute`              | An annotator's objection to one review decision, and its outcome     |
+| `GoldRevision`         | A change to a gold task: who, when, why, the answer before and after |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -42,10 +43,12 @@ tests/integration/  loaders and actions against a real PostgreSQL
    the annotator can ask for more time once, which adds another full limit.
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
-3. On submit the answer is validated against the schema. Gold tasks are scored
-   immediately; other work goes to review, or is accepted straight away when
-   the project does not require review or reviews only a share and the draw
-   left this submission out (see "Review sampling" below).
+3. On submit the answer is validated against the schema. A text without
+   entities or an image without objects is an answer too and is submitted with
+   nothing marked. Gold tasks are scored immediately; other work goes to
+   review, or is accepted straight away when the project does not require
+   review or reviews only a share and the draw left this submission out (see
+   "Review sampling" below).
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
    A submission is reserved for one reviewer while they look at it (see
    "Reviewer reservations" below). Sent-back work can be revised and
@@ -166,6 +169,56 @@ be disputed.
   outcome of the dispute in place of the review's feedback and score. The
   histories on the review page and the task page keep the row and mark it.
 
+## Gold tasks
+
+Gold tasks come in with a `_gold` column at import or are made from completed
+tasks. `app/models/gold.server.ts` holds everything a manager can do to them;
+`docs/quality.md` says what each action means.
+
+- **History.** Every change writes a `GoldRevision` (created, edited, retired,
+  restored) with who, when, why and the expected answer before and after, in
+  the same transaction as the change, plus an entry for the activity tab that
+  describes the answers in words.
+- **Edit, then rescore.** `editGoldAnswer` validates with `parseGold`, the
+  validator the import uses, and leaves `Assignment.goldScore` alone.
+  `previewRescore` and `applyRescore` share one planner (`rescore` and
+  `goldImpact` in `app/domain/gold.ts`). A plan has a digest of the expected
+  answer, every score change and every annotator's standing before and
+  after. The page posts the digest of the plan it showed; `applyRescore`
+  plans again under the lock and writes nothing when the digest differs. So
+  the button does what the page showed, or nothing. Applying is one
+  transaction that only writes `goldScore`.
+- **One lock.** Everything that changes a gold task first locks its row
+  (`FOR NO KEY UPDATE`). `submitAssignment` scores a gold submission inside
+  its own transaction under a shared lock on the same row
+  (`scoreGoldSubmission`). So an edit either comes first and is used, or
+  waits and is picked up by the rescore: no submission is scored against an
+  answer that was replaced while it was being stored.
+- **Retired** (`Task.goldRetiredAt`): `eligibleFor` leaves the task out, and
+  every place that averages gold scores (quality page, flag, needs attention,
+  the annotator's own stats) filters it out. The scores stay.
+- **Copies** (`promoteToGold`, `Task.goldSourceId`): a copy takes the data of
+  its original, but not its external id, and goes into a batch that still has
+  open tasks (chosen by the manager, the most recent by default), at the
+  position of one of that batch's open tasks (the random function is a
+  parameter, as in `submitAssignment`). Without an open batch nothing is
+  copied. An original has one live copy at most: promoting again is refused
+  while one is live, and so is bringing back a retired copy while another is
+  live; both lock the original, so they cannot pass each other.
+- **One item, one group.** `eligibleFor` takes a task, the task it was copied
+  from and that task's other copies as one group, and leaves out every task
+  of a group in which the annotator has an active claim, a submission or a
+  skip. Nobody is handed the same item twice, whichever of them came first.
+- **What reaches an annotator.** `goldFeedback` in `app/domain/gold.ts` is the
+  only gate for results: nothing before the submission, and afterwards the
+  score and the expected answer if the project's `goldFeedback` setting is on,
+  the task is not retired and the stored score is the one the current
+  expected answer gives (between an edit and its rescore it is not, and
+  nothing is shown). The work loader sends nothing about gold and no id of
+  the task: no task id, no external id and no id column from the import row
+  (`withoutImportId`). It sends `assignmentRef`, a reference cut from the
+  assignment's id, which the task page and the batch search resolve.
+
 ## Drafts
 
 An answer in progress would otherwise live only in the browser tab. The work
@@ -196,6 +249,9 @@ time counts on from the saved value.
   while the session is still there.
 - Revising sent-back work keeps its draft in the same column. That assignment
   is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+  While the annotator disputes the decision the revise page is read-only, the
+  draft route refuses saves and the page sends none and counts no time. When
+  the dispute is withdrawn the page's data reloads and saving starts.
 - The qualification test has no row to keep a draft on. Its answers stay in
   `sessionStorage`, tagged with the attempt they belong to.
 - A reload is faster than the save the closing page sends, so the new page
@@ -216,6 +272,67 @@ time counts on from the saved value.
   id). "Submit and next" and the browser's back button stay on the same
   route, and without the key React would keep the previous task's answer and
   seconds and save them as the next task's draft.
+
+## Keyboard shortcuts
+
+Every shortcut is a row in one key map, `app/domain/hotkeys.ts`: the keys of
+the work page and the review page (`PAGES`), the keys of each labeling
+interface (`INTERFACE_KEYS`) and the label keys (`1` to `9`, `0` for the
+tenth, then letters). The key handlers, the list behind `?` and the hints
+next to buttons are all made from these tables, so they cannot drift apart.
+A new shortcut is added there first; the unit tests fail when a key gets two
+meanings on one page.
+
+- **Modes.** A page key can be limited to a mode: `labeling` or `skipping` on
+  the work page, `viewing`, `approving` or `fixing` on the review page. Each
+  page names the one mode in which the labeling interface gets its keys. That
+  is why `a` is for approving while a reviewer looks at a submission and picks
+  response A while they fix it, and why the label keys are off while the skip
+  form is open.
+- **Keys that commit** (a task, a skip, a review decision) are marked
+  `commits` and must name their mode; a unit test walks the table for that.
+  Ctrl or Cmd with Enter hands in what the mode is about: the task while
+  labeling, the skip while the skip form is open, never the task from the
+  skip form. A review decision takes two keys: `a` arms the approval (the
+  button and a line under it say so), Enter approves, and Escape or any other
+  key calls it off. After a decision the next submission appears on the same
+  page, and the keys that decide are ignored until it has been on screen for
+  a moment (`DECISION_PAUSE_MS`), so a key that is still held or pressed twice
+  cannot decide on work nobody has looked at.
+- **Label keys** skip the letters that mean something else somewhere (`a`,
+  `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
+  page, so a label always has the same key.
+- **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
+  browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
+  with Z, which the browser only uses inside text boxes. A key that is held
+  down does not repeat. What is typed into a text box is text, also `?` and
+  Escape while the list of shortcuts is open; only handing in and closing the
+  skip form work from there. While the list is open nothing else acts. A
+  focused radio button keeps its arrow keys and Space, a button its Enter.
+- **Layouts.** A digit is taken as typed. Only when the key did not type a
+  digit is the physical key read (`event.code`), which makes the digit row
+  work where it needs Shift. The number pad works with Num Lock on. Letters
+  and `?` are taken as typed.
+- **One press, one action, one interface.** The page, the list and every
+  interface on the page listen on `window`. A press that one of them handled
+  is not offered to the others. With several interfaces on a page (the
+  qualification test) the keys go to one card only: the one that holds the
+  focus or was clicked last, anywhere in it. That card is marked, and before
+  any card is, the keys do nothing. A key never changes an answer the person
+  is not working on.
+- **Nothing is thrown away by a slip.** No single letter or digit skips,
+  releases, deletes or decides: `s` only opens the skip form, releasing has
+  no key, approving takes two keys. Removing a box takes Delete or Backspace
+  on a box that was selected first. Removing a span takes Delete (Backspace
+  is left to text boxes), a span is let go when the cursor moves into a text
+  box, and the last removal can be put back with the "Undo" next to it or
+  Ctrl+Z.
+
+The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
+pass on what the key map decides. Pairwise score rows are real radio groups:
+one tab stop each, the arrows choose, and a typed digit scores the row that
+has focus (or the first empty one) and moves to the next, A then B for each
+dimension.
 
 ## Quality
 
@@ -320,6 +437,22 @@ same way.
   first claim gets, and never more than three time limits for an assignment
   in total, however often it is sent back. Every project has a time limit
   (1 to 480 minutes), so there is always a bound.
+- **A person's time is credited once.** Those bounds are per assignment, and
+  wall-clock time is one resource per person: three submissions sent back
+  together and handed in twenty minutes later hold twenty minutes of work
+  between them, and a revision made while a claim is held is not also time
+  on the claim. So each membership keeps `creditedUntil`, the moment up to
+  which the person's time has been credited. `creditTime` in
+  `app/domain/active-time.ts` is the one place time is credited, for first
+  submissions and revisions alike: a piece of work is credited from the later
+  of that moment and its own start (the claim, or the review that sent it
+  back), up to now, within its own cap, and the moment moves forward by what
+  was credited. Each credit is then its own interval and no two overlap. The
+  submit and resubmit transactions lock the membership row first, so two
+  submissions of one person are credited one after the other. The clock is
+  per organisation and not per project, so the same minutes cannot be paid
+  on two projects either. The revision draft only keeps a count; the
+  resubmission credits it.
 - **Money is whole cents everywhere.** Amounts are computed per block of
   work, which is one person, project, pay mode and rate, by `amountCents`.
   An hourly block is rounded once, to the nearest cent with half a cent
@@ -346,17 +479,19 @@ saved. The rule lives in the model, so it holds for any form post, not only
 for the settings page. The page gets the same counts from its loader and
 shows what an edit would do while the manager types.
 
-"Stored answers" are the six places an answer is kept: submissions
+"Stored answers" are the seven places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
-answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
-a dispute was about (`Dispute.answer`, counted only once the submission has
-been revised and says something else, so no answer is counted twice) and
-qualification attempts (`QualificationAttempt.answers`). A correction that a
-dispute overturned still counts: the review row is kept and shown. The error
-names the places, for example "2 stored answers use it (1 submission, 1 gold
-answer)", so the manager knows where to look. An attempt keeps the posted map
-of answers as it came, and only the entries of the project's test questions
-were validated, so only those count.
+answers (`Task.goldAnswer`), the expected answers a gold task had before it
+was edited (`GoldRevision.previousAnswer`, which its history still shows),
+consensus answers (`Task.consensus`), the answer a dispute was about
+(`Dispute.answer`, counted only once the submission has been revised and says
+something else) and qualification attempts (`QualificationAttempt.answers`).
+No answer is counted twice. A correction that a dispute overturned still
+counts: the review row is kept and shown. The error names the places, for
+example "2 stored answers use it (1 submission, 1 gold answer)", so the
+manager knows where to look. An attempt keeps the posted map of answers as it
+came, and only the entries of the project's test questions were validated, so
+only those count.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |
@@ -428,7 +563,9 @@ schema union:
    answers name labels in a new place, `schemaUsage` in
    `app/models/projects.server.ts` has to count them.
 6. `app/components/labeling/`: the interface, wired up in `index.tsx`.
-7. A `TaskKind` enum value and a migration.
+7. `app/domain/hotkeys.ts`: its keys in `INTERFACE_KEYS`, and how many label
+   keys it needs.
+8. A `TaskKind` enum value and a migration.
 
 ## Conventions
 

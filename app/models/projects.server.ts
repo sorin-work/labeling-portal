@@ -80,6 +80,7 @@ export async function createProject(orgId: string, input: ProjectInput) {
       reviewRequired: input.reviewRequired,
       reviewSamplePercent: input.reviewSamplePercent,
       disputeWindowDays: input.disputeWindowDays,
+      goldFeedback: input.goldFeedback,
       qualificationRequired: input.qualificationRequired,
       qualificationPassPercent: input.qualificationPassPercent,
       payMode: input.payMode,
@@ -103,16 +104,18 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
 /**
  * Counts what the stored work of a project uses from its schema, in one
  * statement so every number comes from the same snapshot. Every count is
- * split by where the answers are stored. It reads the six columns that hold
+ * split by where the answers are stored. It reads every column that holds
  * answers: `Assignment.answer`, `Review.correctedAnswer`, `Task.goldAnswer`,
- * `Task.consensus`, `Dispute.answer` (the answer as it stood when it was
- * disputed, counted only once the submission has been revised and says
- * something else) and `QualificationAttempt.answers` (a map from task id to
- * answer). Attempt answers are kept as they were posted. Only the entries of
- * the project's test questions were validated, so only those count: anything
- * else in the map is whatever the browser sent, and would otherwise block an
- * edit for good. For the same reason nothing here trusts the shape of a value
- * before it is taken apart.
+ * `GoldRevision.previousAnswer` (the expected answers a gold task had before,
+ * which its history still shows; the current one is `Task.goldAnswer`, and no
+ * answer is counted twice), `Task.consensus`, `Dispute.answer` (the answer as
+ * it stood when it was disputed, counted only once the submission has been
+ * revised and says something else) and `QualificationAttempt.answers` (a map
+ * from task id to answer). Attempt answers are kept as they were posted. Only
+ * the entries of the project's test questions were validated, so only those
+ * count: anything else in the map is whatever the browser sent, and would
+ * otherwise block an edit for good. For the same reason nothing here trusts
+ * the shape of a value before it is taken apart.
  */
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
   type Row = { metric: string; name: string | null; source: AnswerSource | null; count: number };
@@ -126,6 +129,14 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
       WHERE a."projectId" = ${projectId}
       UNION ALL
       SELECT 'gold', t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
+      UNION ALL
+      SELECT 'goldHistory', earlier."previousAnswer"
+      FROM (
+        SELECT DISTINCT g."taskId", g."previousAnswer"
+        FROM "GoldRevision" g JOIN "Task" t ON t.id = g."taskId"
+        WHERE t."projectId" = ${projectId}
+          AND g."previousAnswer" IS DISTINCT FROM t."goldAnswer"
+      ) earlier
       UNION ALL
       SELECT 'consensus', t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
@@ -273,6 +284,7 @@ export async function updateProject(
         reviewRequired: input.reviewRequired,
         reviewSamplePercent: input.reviewSamplePercent,
         disputeWindowDays: input.disputeWindowDays,
+        goldFeedback: input.goldFeedback,
         qualificationRequired: input.qualificationRequired,
         qualificationPassPercent: input.qualificationPassPercent,
         payMode: input.payMode,
@@ -312,6 +324,7 @@ export async function duplicateProject(project: Project) {
       reviewRequired: project.reviewRequired,
       reviewSamplePercent: project.reviewSamplePercent,
       disputeWindowDays: project.disputeWindowDays,
+      goldFeedback: project.goldFeedback,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

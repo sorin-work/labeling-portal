@@ -35,6 +35,23 @@
 - A gold answer for a comparison may only be a tie where the schema allows
   ties, and a batch is refused when the schema changed while its file was
   read
+- Shortcuts for every action, all from one key map: a key for every label (1
+  to 9, 0 for the tenth, then letters, shown on the buttons), pairwise rubrics
+  that can be typed (digits walk the score rows, the arrows choose inside a
+  row), `s` for the skip form, and on the review page `s` for the feedback
+  box, `e` for "Fix it myself" and Esc to cancel a fix. Ctrl+Enter hands in
+  the task, or the skip while the skip form is open
+- Approving by key takes two keys, `a` and then Enter, and any other key
+  calls it off. Right after a decision the keys that decide wait a moment, so
+  a held or repeated key cannot approve the next submission unseen
+- Entity spans are selected with a click, get another type with a key and are
+  removed with Delete or the × next to them. The last removal can be undone
+- `?` lists the shortcuts of the page and the project's labeling kind, on the
+  work, review, revise and qualification pages
+- Shortcuts keep working while a radio button has focus, and work on keyboard
+  layouts where the digits need Shift and on the number pad. On the
+  qualification test they act on one question, the one that was clicked or
+  holds the focus, and that question is marked
 
 ### Review and quality
 
@@ -79,7 +96,11 @@
 - Time spent revising sent-back work is added to the active time, which is
   paid on hourly projects. It is saved with the revision draft, so a reload
   does not lose it. A revision is credited at most the project's time limit,
-  and a task at most three time limits in all
+  and a task at most three time limits in all. A person's time is credited
+  once: time for any submission or revision counts from where their time was
+  last credited (`Membership.creditedUntil`), so several sent-back
+  submissions handed in together, or a revision made while a claim is held,
+  do not pay the same minutes twice
 - New export formats: YOLO and Pascal VOC (a zip with one file per image) for
   box projects and CoNLL BIO tags for entity projects
 - Exports name annotators by a pseudonym that is stable within a project.
@@ -115,6 +136,26 @@ the period of its approval.
   into a scratch database and compares the row counts, and runs the daily
   loop and the pruning against made-up clocks
 
+- Gold tasks can be managed after import. A manager can change the expected
+  answer with a reason (the old answer, who, when and why are kept), see what
+  a rescore would change and apply it, retire a gold task and bring it back,
+  and make gold tasks from completed tasks, one by one or several from the
+  batch page. A rescore only changes gold scores: accepted work stays
+  accepted and paid, and past qualification attempts are not regraded
+- After submitting a gold task, annotators see their score and the expected
+  answer. A project setting, "gold feedback", controls it. It is on for new
+  projects and off for every project that exists when this is deployed,
+  because turning it on shows annotators the expected answers of the gold
+  tasks they have already submitted
+- Nothing on the work page tells a gold task from any other. The page no
+  longer gets any id of the task: it shows a short reference cut from the
+  claim's id in place of the external id, and managers find a task by that
+  reference on the task page and in the batch search. A gold copy is placed
+  among the open tasks of a batch that is being worked on and is never handed
+  to someone who labeled its original or an earlier copy
+- Quality page: the gold tasks with the lowest average score. Batch progress
+  no longer counts gold tasks and test questions, which never complete
+
 ### Fixes
 
 - A task could stay open for good with its overlap met when its last
@@ -127,7 +168,11 @@ the period of its approval.
   submission into an expired claim. Skipping and releasing are guarded the
   same way
 - The work page starts fresh for every task: the previous task's answer and
-  working time no longer carry over after "Submit and next"
+  working time no longer carry over after "Submit and next". The review page
+  does the same for the score, the feedback and an open fix
+- Entity and box tasks with nothing to label could not be submitted: the
+  button stayed off until something had been marked and removed again. The
+  qualification test has a "Nothing to label here" button for such a question
 - Box projects: the drawing layer no longer goes missing after a reload, when
   the image came from the browser cache before the page was ready
 

@@ -40,6 +40,15 @@ export const MAX_REPORTED_ERRORS = 20;
 const ID_KEYS = ['_id', 'id'];
 const GOLD_KEY = '_gold';
 
+/**
+ * A task's data as an annotator's browser gets it: without the id its row
+ * was imported with. That id says where and when a task came from, and a
+ * gold task copied from an older task would carry the older one's.
+ */
+export function withoutImportId(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(data).filter(([key]) => !ID_KEYS.includes(key)));
+}
+
 type Decoded = { ok: true; text: string } | { ok: false; error: string };
 
 function startsWith(bytes: Uint8Array, ...magic: number[]): boolean {

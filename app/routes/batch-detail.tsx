@@ -4,6 +4,7 @@ import { data, Form, Link } from 'react-router';
 import { Pagination } from '~/components/pagination';
 import { Alert, Badge, Button, EmptyState, Input, PageHeader } from '~/components/ui';
 import { taskPreview } from '~/domain/preview';
+import { refSuffix } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDate, titleCase } from '~/lib/format';
@@ -12,6 +13,7 @@ import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
 import { logActivity } from '~/models/activity.server';
 import { deleteBatch } from '~/models/batches.server';
+import { openBatches, promoteToGold } from '~/models/gold.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
@@ -41,6 +43,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       : schema.kind === 'bbox'
         ? schema.imageField
         : schema.textField;
+  // a reference an annotator quoted from the work page finds the task they had
+  const ref = refSuffix(q);
   const where: Prisma.TaskWhereInput = {
     batchId: batch.id,
     ...(status ? { status } : {}),
@@ -49,6 +53,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           OR: [
             { externalId: { contains: q, mode: 'insensitive' } },
             { data: { path: [textField], string_contains: q } },
+            ...(ref ? [{ assignments: { some: { id: { endsWith: ref } } } }] : []),
           ],
         }
       : {}),
@@ -61,7 +66,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     orderBy: { position: 'asc' },
     skip: page.skip,
     take: page.take,
-    select: { id: true, position: true, externalId: true, status: true, data: true, isGold: true },
+    select: {
+      id: true,
+      position: true,
+      externalId: true,
+      status: true,
+      data: true,
+      isGold: true,
+      isQualification: true,
+      goldRetiredAt: true,
+      consensus: true,
+      goldCopies: { where: { goldRetiredAt: null }, select: { id: true } },
+    },
   });
 
   return {
@@ -70,12 +86,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     status,
     q,
     page,
+    openBatches: await openBatches(project.id),
     tasks: tasks.map((t) => ({
       id: t.id,
       position: t.position,
       externalId: t.externalId,
       status: t.status,
       isGold: t.isGold,
+      goldRetired: t.goldRetiredAt !== null,
+      // a completed task with a consensus that is not gold yet can become gold
+      canBeGold:
+        !t.isGold &&
+        !t.isQualification &&
+        t.status === 'COMPLETE' &&
+        t.consensus !== null &&
+        t.goldCopies.length === 0,
       preview: taskPreview(schema, t.data),
     })),
   };
@@ -85,6 +110,35 @@ export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'manageProjects');
   const form = await request.formData();
+  if (form.get('intent') === 'gold-copy') {
+    const taskIds = form.getAll('taskId').map(String).slice(0, 200);
+    if (taskIds.length === 0)
+      return data({ error: 'Tick the tasks to use as gold.' }, { status: 400 });
+    const batchTasks = await prisma.task.findMany({
+      where: { id: { in: taskIds }, batchId: params.batchId, projectId: project.id },
+      select: { id: true },
+    });
+    const outcome = await promoteToGold(
+      project,
+      batchTasks.map((t) => t.id),
+      current.user.id,
+      { batchId: String(form.get('targetBatchId') ?? '') || null },
+    );
+    if (outcome.refused) {
+      return data({ error: `No gold task was made: ${outcome.refused}.` }, { status: 409 });
+    }
+    const made = outcome.created.length;
+    const skipped = taskIds.length - made;
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/batches/${params.batchId}`,
+      `Made ${made} gold task${made === 1 ? '' : 's'} from the consensus.${
+        skipped > 0
+          ? ` Skipped ${skipped}: ${[...new Set(outcome.skipped.map((s) => s.why))].join('; ') || 'not in this batch'}.`
+          : ''
+      }`,
+    );
+  }
   if (form.get('intent') !== 'delete') throw badRequest('Unknown action');
   const result = await deleteBatch(project.id, params.batchId);
   if (!result.ok) return data({ error: result.error }, { status: 409 });
@@ -102,7 +156,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 }
 
 export default function BatchDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { projectId, batch, tasks, page, status, q } = loaderData;
+  const { projectId, batch, tasks, page, status, q, openBatches } = loaderData;
   const filters = [
     { label: 'All', value: null },
     { label: 'Open', value: 'OPEN' },
@@ -152,7 +206,7 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
             type="search"
             name="q"
             defaultValue={q}
-            placeholder="Search id or text"
+            placeholder="Search id, text or reference"
             aria-label="Search tasks"
             className="w-56"
           />
@@ -161,10 +215,46 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
       {tasks.length === 0 ? (
         <EmptyState title="No tasks match this filter" />
       ) : (
-        <div className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+        <Form
+          method="post"
+          className="overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-slate-200"
+        >
+          {tasks.some((t) => t.canBeGold) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2 text-sm text-slate-600">
+              <span>
+                Tick completed tasks to use them as gold. Each gets a copy with the consensus as its
+                expected answer, among the open tasks of the batch you choose; the originals stay as
+                they are.
+              </span>
+              {openBatches.length === 0 ? (
+                <span className="text-slate-500">No batch has open tasks to put them among.</span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <select
+                    name="targetBatchId"
+                    defaultValue={openBatches[0].id}
+                    aria-label="Batch for the gold tasks"
+                    className="rounded-md border-0 py-1.5 pl-2 pr-8 text-sm ring-1 ring-slate-300"
+                  >
+                    {openBatches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button name="intent" value="gold-copy" variant="secondary">
+                    Use ticked as gold
+                  </Button>
+                </span>
+              )}
+            </div>
+          )}
           <table className="w-full min-w-[36rem] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
+                <th className="w-10 px-4 py-2">
+                  <span className="sr-only">Use as gold</span>
+                </th>
                 <th className="w-16 px-4 py-2">#</th>
                 <th className="px-4 py-2">Task</th>
                 <th className="w-28 px-4 py-2">Status</th>
@@ -173,6 +263,16 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
             <tbody className="divide-y divide-slate-100">
               {tasks.map((task) => (
                 <tr key={task.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2">
+                    {task.canBeGold && (
+                      <input
+                        type="checkbox"
+                        name="taskId"
+                        value={task.id}
+                        aria-label={`Use task ${task.position} as gold`}
+                      />
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-slate-400">{task.position}</td>
                   <td className="max-w-0 px-4 py-2">
                     <Link
@@ -189,7 +289,7 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
                   </td>
                   <td className="px-4 py-2">
                     {task.isGold ? (
-                      <Badge tone="amber">Gold</Badge>
+                      <Badge tone="amber">{task.goldRetired ? 'Gold, retired' : 'Gold'}</Badge>
                     ) : (
                       <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
                         {titleCase(task.status)}
@@ -200,7 +300,7 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
               ))}
             </tbody>
           </table>
-        </div>
+        </Form>
       )}
       <Pagination info={page} />
     </div>

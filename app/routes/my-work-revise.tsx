@@ -4,6 +4,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { DisputePanel } from '~/components/dispute-panel';
 import { DraftNote } from '~/components/draft-note';
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useActiveTime } from '~/components/use-active-time';
@@ -11,6 +12,8 @@ import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { annotatorDisputeState, DISPUTE_REFUSALS, parseDisputeReason } from '~/domain/disputes';
 import { droppedNote, fitDraft } from '~/domain/drafts';
+import { describeGoldAnswer, formatGoldScore, goldFeedback } from '~/domain/gold';
+import { withoutImportId } from '~/domain/import';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -44,39 +47,55 @@ async function loadReturned(assignmentId: string, userId: string) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadReturned(params.assignmentId, user.id);
-  if (assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
+  const schema = projectSchema(assignment.project);
+  // their own gold submission, compared with the expected answer
+  const gold = goldFeedback(assignment, schema);
+  if (!gold && assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
     throw redirect('/my-work');
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
-  const schema = projectSchema(assignment.project);
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   const decision = assignment.reviews.at(0) ?? null;
+  const disputes = annotatorDisputeState(
+    {
+      reviewStatus: assignment.reviewStatus,
+      annotatorId: user.id,
+      review: decision,
+      windowDays: assignment.project.disputeWindowDays,
+      resolvers: decision
+        ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
+        : 0,
+    },
+    new Date(),
+  );
+  const mode = gold
+    ? ('gold' as const)
+    : assignment.reviewStatus === 'FIXED'
+      ? ('compare' as const)
+      : ('revise' as const);
   return {
     userId: user.id,
-    mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
-    corrected: (fix?.correctedAnswer ?? null) as Answer | null,
+    mode,
+    corrected: (gold?.expected ?? fix?.correctedAnswer ?? null) as Answer | null,
+    goldCheck: gold && {
+      score: gold.score,
+      expected: describeGoldAnswer(schema, gold.expected),
+    },
     id: assignment.id,
     projectName: assignment.project.name,
     schema,
-    data: assignment.task.data as Record<string, unknown>,
+    data: withoutImportId(assignment.task.data as Record<string, unknown>),
     answer: assignment.answer as Answer,
     draft: draft.answer,
     draftNote: droppedNote(schema, draft.dropped),
     draftSeconds: assignment.draftSeconds,
     feedback: assignment.reviews[0]?.feedback ?? '',
-    ...annotatorDisputeState(
-      {
-        reviewStatus: assignment.reviewStatus,
-        annotatorId: user.id,
-        review: decision,
-        windowDays: assignment.project.disputeWindowDays,
-        resolvers: decision
-          ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
-          : 0,
-      },
-      new Date(),
-    ),
+    ...disputes,
+    // The answer can only change, and the draft be saved, on a revision that
+    // is not disputed. While a dispute is open the page is read-only and the
+    // draft route refuses saves, so the page does not send any.
+    editable: mode === 'revise' && disputes.dispute?.status !== 'OPEN',
   };
 }
 
@@ -137,8 +156,8 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   // revising is work too: on an hourly project this time is paid. It is
   // saved with the draft, so a reload does not start the count again
-  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds);
-  const disputeOpen = loaderData.dispute?.status === 'OPEN';
+  const { editable } = loaderData;
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds, editable);
   const disputePanel = (
     <DisputePanel
       dispute={loaderData.dispute}
@@ -156,6 +175,8 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
     seconds: mode === 'revise' ? activeSeconds : 0,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
+    // a withdrawn dispute reloads this page's data, and saving starts then
+    paused: !editable,
     onRecover: (unsaved) => {
       raiseActiveSeconds(unsaved.seconds);
       const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
@@ -163,13 +184,23 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
     },
   });
 
-  if (mode === 'compare') {
+  if (mode === 'compare' || mode === 'gold') {
+    const { goldCheck } = loaderData;
     return (
       <div className="space-y-4">
         <Link to="/my-work" className="text-sm text-indigo-700 hover:underline">
           ← My work
         </Link>
-        <h1 className="text-xl font-semibold">Reviewer correction: {projectName}</h1>
+        <h1 className="text-xl font-semibold">
+          {goldCheck ? 'Gold check' : 'Reviewer correction'}: {projectName}
+        </h1>
+        {goldCheck && (
+          <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
+            This was a gold task: it has a known answer and is mixed into the queue to measure
+            accuracy. You scored {formatGoldScore(goldCheck.score)}; the expected answer was{' '}
+            {goldCheck.expected}. Gold tasks are paid like any other task, whatever the score.
+          </p>
+        )}
         {feedback && (
           <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
             {feedback}
@@ -192,7 +223,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
           </Card>
           <Card>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Corrected
+              {goldCheck ? 'Expected answer' : 'Corrected'}
             </h2>
             <LabelingInterface
               schema={schema}
@@ -226,12 +257,12 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
         <LabelingInterface
           schema={schema}
           data={taskData}
-          value={disputeOpen ? answer : value}
+          value={editable ? value : answer}
           onChange={setValue}
-          readOnly={disputeOpen}
+          readOnly={!editable}
         />
       </Card>
-      {!disputeOpen && (
+      {editable && (
         <Form method="post" className="flex items-center gap-3">
           <input type="hidden" name="answer" value={JSON.stringify(value)} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
@@ -239,6 +270,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
             Resubmit for review
           </Button>
           <DraftNote state={draftState} />
+          <KeyboardHelp page={null} schema={schema} />
         </Form>
       )}
     </div>

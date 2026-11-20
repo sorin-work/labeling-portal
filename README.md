@@ -15,7 +15,10 @@ or fix the work.
 - **Four labeling interfaces**: text classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
-  rationale) and bounding boxes on images, all with keyboard shortcuts
+  rationale) and bounding boxes on images
+- **Keyboard shortcuts** for every action: a key for each label (1 to 9, 0,
+  then letters), a rubric that can be typed, keys for skipping, reviewing and
+  fixing, and a list of them behind `?` on every labeling page
 - **Import** CSV, TSV, JSON Lines or a JSON array into batches. A file goes
   in completely or not at all, with the lines that failed listed; example
   files and gold answers in a `_gold` column
@@ -37,7 +40,10 @@ or fix the work.
   accuracy, speed and throughput; Cohen's and Fleiss' kappa; consensus answers
   per task
 - **Gold tasks** scored automatically and a **qualification test** before an
-  annotator may work on a project
+  annotator may work on a project. Managers can correct a gold answer (with a
+  history of who changed it and why), rescore the stored answers against it
+  after seeing what that changes, retire a gold task, and turn completed
+  tasks into gold. After submitting, annotators see how they did
 - **Time tracking** of active time per task and a **payouts** report (per task
   or hourly) with CSV download. Each submission keeps the rate its project
   had when it was made, and work counts in the period it became payable

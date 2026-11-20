@@ -7,6 +7,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { describeKappa } from '~/domain/agreement';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
+import { lowestGoldTasks } from '~/models/gold.server';
 import { requireProject } from '~/models/projects.server';
 import { dailyThroughput, projectQuality } from '~/models/quality.server';
 
@@ -19,11 +20,12 @@ export function meta({ matches }: Route.MetaArgs) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'viewQuality');
-  const [quality, daily] = await Promise.all([
+  const [quality, daily, lowestGold] = await Promise.all([
     projectQuality(project),
     dailyThroughput(project.id),
+    lowestGoldTasks(project),
   ]);
-  return { ...quality, daily, projectId: project.id };
+  return { ...quality, daily, lowestGold, projectId: project.id };
 }
 
 function pct(value: number | null): string {
@@ -56,7 +58,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
 ];
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
-  const { annotators, agreement, skipReasons, daily, projectId } = loaderData;
+  const { annotators, agreement, skipReasons, daily, lowestGold, projectId } = loaderData;
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
     key: 'submitted',
     desc: true,
@@ -192,6 +194,36 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
           </table>
         </div>
       </section>
+
+      {lowestGold.length > 0 && (
+        <section>
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Gold tasks with the lowest scores
+          </h2>
+          <p className="mb-2 text-sm text-slate-500">
+            A gold task that most people miss is usually the one that is wrong. Tasks with at least
+            two answers, lowest average first.
+          </p>
+          <ul className="divide-y divide-slate-100 rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
+            {lowestGold.map((g) => (
+              <li key={g.taskId} className="flex items-center justify-between gap-3 px-4 py-2">
+                <Link
+                  to={`/projects/${projectId}/tasks/${g.taskId}`}
+                  className="min-w-0 flex-1 truncate hover:text-indigo-700"
+                >
+                  {g.externalId && (
+                    <span className="mr-2 font-mono text-xs text-slate-400">{g.externalId}</span>
+                  )}
+                  {g.preview}
+                </Link>
+                <span className="text-slate-500">
+                  {pct(g.average)} over {g.answers} answers
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {skipReasons.length > 0 && (
         <section>

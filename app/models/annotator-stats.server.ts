@@ -19,7 +19,14 @@ export async function myStats(userId: string, days = 30, now = new Date()): Prom
   const [byStatus, gold, time] = await Promise.all([
     prisma.assignment.groupBy({ by: ['reviewStatus'], where, _count: { _all: true } }),
     prisma.assignment.aggregate({
-      where: { ...where, goldScore: { not: null } },
+      // Retired gold tasks count for nobody. Projects that give no gold
+      // feedback stay out too: this number moves right after a gold task, and
+      // would tell the annotator which one it was.
+      where: {
+        ...where,
+        goldScore: { not: null },
+        task: { isGold: true, goldRetiredAt: null, project: { goldFeedback: true } },
+      },
       _avg: { goldScore: true },
     }),
     prisma.assignment.aggregate({ where, _sum: { activeSeconds: true } }),

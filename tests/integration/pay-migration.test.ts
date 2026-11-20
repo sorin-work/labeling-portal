@@ -13,6 +13,9 @@ import { prisma } from './helpers';
  * This test builds a database as it is before them, with accepted, pending
  * and sent-back work in it, reads the pay report the way it was computed then,
  * applies the two migrations and reads the report as it is computed now.
+ * Migrations run in their order: every one before the first of the two, then
+ * the history, then the rest from there (the two and whatever came between or
+ * after them), as `prisma migrate deploy` would run them on an upgrade.
  */
 const UPGRADE = ['20261120191722_frozen_pay_rate', '20261120200249_payable_at'];
 
@@ -112,7 +115,9 @@ describe('upgrading a database that already has pay history', () => {
       .filter((entry) => !entry.endsWith('.toml'))
       .sort();
     expect(all).toEqual(expect.arrayContaining(UPGRADE));
-    await apply(all.filter((folder) => !UPGRADE.includes(folder)));
+    const first = all.indexOf(UPGRADE[0]);
+    expect(all.indexOf(UPGRADE[1])).toBeGreaterThan(first);
+    await apply(all.slice(0, first));
 
     // history as the old code wrote it: no rate on the work, no payable date
     const sql = (statement: string) => scratch.$executeRawUnsafe(statement);
@@ -164,7 +169,7 @@ describe('upgrading a database that already has pay history', () => {
     // the fixture is worth something: money in every month and across the boundary
     expect(before.map((period) => period.totalCents)).toEqual([131, 1606, 617, 2354, 31]);
 
-    await apply(UPGRADE);
+    await apply(all.slice(first));
 
     const after = [];
     for (const [from, to] of PERIODS) after.push(await newReport(from, to));

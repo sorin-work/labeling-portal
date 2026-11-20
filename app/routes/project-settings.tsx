@@ -47,6 +47,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       reviewRequired: project.reviewRequired,
       reviewSamplePercent: project.reviewSamplePercent,
       disputeWindowDays: project.disputeWindowDays,
+      goldFeedback: project.goldFeedback,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

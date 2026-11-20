@@ -63,6 +63,14 @@ enum ReviewSample {
   NOT_DRAWN
 }
 
+/// What a manager did to a gold task.
+enum GoldChange {
+  CREATED
+  EDITED
+  RETIRED
+  RESTORED
+}
+
 enum DisputeStatus {
   OPEN
   UPHELD
@@ -105,18 +113,22 @@ model User {
   reviewHolds           Assignment[]           @relation("ReviewHold")
   disputesOpened        Dispute[]              @relation("DisputeOpenedBy")
   disputesResolved      Dispute[]              @relation("DisputeResolvedBy")
+  goldRevisions         GoldRevision[]
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
 }
 
 model Membership {
-  id        String       @id @default(cuid())
-  orgId     String
-  userId    String
-  role      Role
-  createdAt DateTime     @default(now())
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  orgId         String
+  userId        String
+  role          Role
+  createdAt     DateTime     @default(now())
+  /// up to when this person's working time has been credited, for any task;
+  /// time for the next submission counts from here, so no minute is paid twice
+  creditedUntil DateTime?
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, userId])
   @@index([userId])
@@ -139,6 +151,8 @@ model Project {
   reviewSamplePercent      Int                    @default(100)
   /// days after a review in which the annotator may dispute it; 0 turns disputes off
   disputeWindowDays        Int                    @default(14)
+  /// annotators see their score and the expected answer of a gold task once they have submitted it
+  goldFeedback             Boolean                @default(true)
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -198,15 +212,41 @@ model Task {
   /// part of the qualification test, never handed out in the queue
   isQualification Boolean      @default(false)
   goldAnswer      Json?
+  /// set when a manager retired this gold task: not handed out any more, its scores do not count
+  goldRetiredAt   DateTime?
+  /// the completed task this gold task was copied from
+  goldSourceId    String?
   createdAt       DateTime     @default(now())
   completedAt     DateTime?
   project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   batch           Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  goldSource      Task?        @relation("GoldCopy", fields: [goldSourceId], references: [id], onDelete: SetNull)
+  goldCopies      Task[]       @relation("GoldCopy")
+  goldRevisions   GoldRevision[]
   assignments     Assignment[]
 
   @@index([projectId, status, position])
   @@index([batchId, position])
   @@index([batchId, status])
+  @@index([goldSourceId])
+}
+
+/// One change to a gold task: who made it, when, why, and the expected answer before and after.
+model GoldRevision {
+  id             String     @id @default(cuid())
+  taskId         String
+  change         GoldChange
+  /// the expected answer before the change; empty when the task became gold with it
+  previousAnswer Json?
+  /// the expected answer after the change
+  answer         Json?
+  reason         String
+  changedById    String
+  createdAt      DateTime   @default(now())
+  task           Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  changedBy      User       @relation(fields: [changedById], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
 }
 
 /// One annotator's claim on a task, and later their answer.

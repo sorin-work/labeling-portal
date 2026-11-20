@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
+import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
+import { KeyScopeProvider, useKeyScope, useKeysUnclaimed } from '~/components/labeling/use-hotkeys';
 import { MarkdownBody } from '~/components/markdown';
-import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
-import type { Answer } from '~/domain/answers';
+import { Alert, Button, Card, cx, EmptyState, PageHeader } from '~/components/ui';
+import { emptyAnswer, type Answer, type ImageSize } from '~/domain/answers';
 import { packTestAnswers, restoreTestAnswers, testAnswersKey } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
@@ -63,9 +65,61 @@ export async function action({ request, params }: Route.ActionArgs) {
   );
 }
 
+/**
+ * A question counts as answered once something was marked. Where nothing to
+ * mark is a possible answer (entities, boxes), it has to be said explicitly,
+ * so an untouched question is not handed in by accident.
+ */
+function NothingToLabel({
+  shown,
+  empty,
+  onPick,
+}: {
+  shown: boolean;
+  empty: Answer | null;
+  onPick: (value: Answer) => void;
+}) {
+  if (!shown || !empty) return null;
+  return (
+    <Button type="button" variant="secondary" className="mt-3" onClick={() => onPick(empty)}>
+      Nothing to label here
+    </Button>
+  );
+}
+
+/**
+ * One question of the test. The page has several labeling interfaces, so the
+ * keys go to one card only: the one that holds the focus or was clicked last,
+ * anywhere in it. That card is marked, and before any is, keys do nothing.
+ */
+function Question({ title, children }: { title: string; children: ReactNode }) {
+  const scope = useKeyScope();
+  return (
+    <div
+      {...scope.props}
+      data-keys={scope.active ? 'here' : undefined}
+      className={cx('rounded-lg', scope.active && 'ring-2 ring-indigo-500')}
+    >
+      <Card>
+        <div className="mb-3 flex items-center justify-between text-sm font-medium text-slate-500">
+          {title}
+          {scope.active && (
+            <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-normal text-indigo-700">
+              Keyboard shortcuts act on this question
+            </span>
+          )}
+        </div>
+        <KeyScopeProvider value={scope.token}>{children}</KeyScopeProvider>
+      </Card>
+    </div>
+  );
+}
+
 export default function Qualification({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
+  // image sizes of box questions, needed to answer "nothing in this image"
+  const [sizes, setSizes] = useState<Record<string, ImageSize>>({});
   const navigation = useNavigation();
 
   // The test has no row to keep a draft on, so the answers so far stay in this
@@ -105,6 +159,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
   };
 
   const answered = tasks.filter((t) => answers[t.id]).length;
+  const keysUnclaimed = useKeysUnclaimed();
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -137,18 +192,26 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
           </EmptyState>
         ) : (
           <>
+            {keysUnclaimed && (
+              <p className="text-sm text-slate-500">
+                Click a question to use the keyboard shortcuts on it.
+              </p>
+            )}
             {tasks.map((task, i) => (
-              <Card key={task.id}>
-                <div className="mb-3 text-sm font-medium text-slate-500">
-                  Question {i + 1} of {tasks.length}
-                </div>
+              <Question key={task.id} title={`Question ${i + 1} of ${tasks.length}`}>
                 <LabelingInterface
                   schema={schema}
                   data={task.data}
                   value={answers[task.id] ?? null}
                   onChange={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
+                  onImageSize={(size) => setSizes((prev) => ({ ...prev, [task.id]: size }))}
                 />
-              </Card>
+                <NothingToLabel
+                  shown={!answers[task.id]}
+                  empty={emptyAnswer(schema, sizes[task.id])}
+                  onPick={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
+                />
+              </Question>
             ))}
             <Form method="post" className="flex items-center gap-3" onSubmit={forget}>
               <input type="hidden" name="answers" value={JSON.stringify(answers)} />
@@ -161,6 +224,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
               <span className="text-sm text-slate-500">
                 {answered} of {tasks.length} answered
               </span>
+              <KeyboardHelp page={null} schema={schema} />
             </Form>
           </>
         )}

@@ -1,9 +1,3 @@
--- DropIndex
-DROP INDEX "Assignment_projectId_reviewedAt_idx";
-
--- DropIndex
-DROP INDEX "Assignment_userId_reviewedAt_idx";
-
 -- AlterTable
 ALTER TABLE "Assignment" ADD COLUMN     "payableAt" TIMESTAMP(3);
 
