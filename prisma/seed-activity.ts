@@ -210,7 +210,13 @@ export async function seedPairwiseActivity(
 ) {
   const project = await prisma.project.update({
     where: { id: projectId },
-    data: { qualificationRequired: true, qualificationPassPercent: 70 },
+    // a split between the two annotators gets a third one, then a reviewer
+    data: {
+      qualificationRequired: true,
+      qualificationPassPercent: 70,
+      agreementThreshold: 0.6,
+      maxExtraAnnotators: 1,
+    },
   });
   const questions = [
     {
