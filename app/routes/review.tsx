@@ -8,7 +8,7 @@ import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys
 import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration, useLastInput } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
-import { pageShortcut } from '~/domain/hotkeys';
+import { decisionsOpen, pageShortcut } from '~/domain/hotkeys';
 import { parseReviewForm } from '~/domain/review-form';
 import {
   activeHold,
@@ -85,6 +85,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       qaScore: r.qaScore,
       feedback: r.feedback,
       createdAt: r.createdAt,
+      overturned: r.overturnedAt !== null,
     })),
   };
 }
@@ -200,7 +201,25 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
   // the decision form is only there for the reviewer who holds the submission
   const deciding = pending && !ownWork && hold?.mine === true;
   const renewHold = useHoldRenewal(deciding);
+  // "a" does not approve, it arms: the button says so and Enter approves. One
+  // slip must not record a decision, and neither may a key that is still held
+  // down when the next submission appears.
+  const [armed, setArmed] = useState(false);
+  const armedHint = useRef<HTMLParagraphElement>(null);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    shownAt.current = Date.now();
+  }, []);
+  useEffect(() => {
+    if (!armed) return;
+    // focus goes to the hint, so that Enter cannot press some other button
+    armedHint.current?.focus();
+    const disarm = () => setArmed(false);
+    window.addEventListener('pointerdown', disarm);
+    return () => window.removeEventListener('pointerdown', disarm);
+  }, [armed]);
   const startFix = () => {
+    setArmed(false);
     setFixing(true);
     renewHold();
   };
@@ -208,12 +227,23 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
   // The keys of this page are rows of the key map (domain/hotkeys.ts). While
   // looking, "a" approves and the digits score; while fixing they belong to
   // the labeling interface.
-  useHotkeyPage(deciding ? 'review' : null, fixing ? 'fixing' : 'viewing');
+  useHotkeyPage(deciding ? 'review' : null, fixing ? 'fixing' : armed ? 'approving' : 'viewing');
   usePageHotkeys((action, key) => {
     if (!deciding) return false;
+    // keys that decide wait until this submission has been on screen a moment
+    const settled = navigation.state === 'idle' && decisionsOpen(shownAt.current, Date.now());
+    // whatever else is pressed after "a" (the list of shortcuts, too) calls it off
+    if (armed && action !== 'approve') setArmed(false);
     if (action === 'score') setScore(Number(key));
-    else if (action === 'approve') approveRef.current?.click();
-    else if (action === 'feedback') feedbackRef.current?.focus();
+    else if (action === 'armApprove') setArmed(settled);
+    else if (action === 'approve') {
+      setArmed(false);
+      if (settled) approveRef.current?.click();
+    } else if (action === 'disarm') {
+      setArmed(false);
+      // any other key only calls the approval off and still does what it does
+      return key === 'Escape';
+    } else if (action === 'feedback') feedbackRef.current?.focus();
     else if (action === 'fix') startFix();
     else if (action === 'cancelFix') setFixing(false);
     else return false;
@@ -357,8 +387,9 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                     ref={approveRef}
                     name="intent"
                     value="approve"
-                    title={`Shortcut: ${pageShortcut('review', 'approve')}`}
+                    title={`Shortcut: ${pageShortcut('review', 'armApprove')}, then ${pageShortcut('review', 'approve')}`}
                     disabled={navigation.state !== 'idle'}
+                    className={cx(armed && 'ring-2 ring-indigo-600 ring-offset-2')}
                   >
                     Approve
                   </Button>
@@ -382,6 +413,17 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                 </>
               )}
             </div>
+            {armed && !fixing && (
+              <p
+                ref={armedHint}
+                tabIndex={-1}
+                role="status"
+                className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 outline-none"
+              >
+                Press {pageShortcut('review', 'approve')} to approve this submission. Any other key
+                calls it off.
+              </p>
+            )}
           </Form>
         )}
         {history.length > 0 && (
@@ -397,6 +439,9 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                       {h.decision.replace('_', ' ').toLowerCase()}
                     </span>{' '}
                     by {h.reviewer}
+                    {h.overturned && (
+                      <span className="text-slate-500"> · overturned after a dispute</span>
+                    )}
                     {h.qaScore !== null && (
                       <span className="text-slate-500"> · score {h.qaScore}</span>
                     )}

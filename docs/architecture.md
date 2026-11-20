@@ -28,6 +28,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
 | `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
+| `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -50,7 +51,8 @@ tests/integration/  loaders and actions against a real PostgreSQL
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
    A submission is reserved for one reviewer while they look at it (see
    "Reviewer reservations" below). Sent-back work can be revised and
-   resubmitted by the annotator, and always returns to review.
+   resubmitted by the annotator, and always returns to review. Instead of
+   revising, the annotator can dispute the decision (see "Disputes" below).
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
    `refreshTaskStatus` runs in the transaction that accepted the submission
@@ -107,6 +109,63 @@ background job that clears it.
   it at once, and so does a posted decision that does not validate. So a
   long fix keeps its submission, and a tab that was left open lets it go. A
   renewal only touches a hold that is still the reviewer's own.
+
+## Disputes
+
+An annotator who thinks a send-back or a correction is wrong can dispute it
+from `/my-work/:assignmentId`, with a reason. Approvals and gold scores cannot
+be disputed.
+
+- **Opening** (`openDispute` in `app/models/disputes.server.ts`): only the
+  annotator whose work it is, only on the latest decision while the work is
+  sent back or fixed, once per decision (`Dispute.reviewId` is unique), and
+  only within `Project.disputeWindowDays` of the review (14 by default, 0
+  turns disputes off). The dispute keeps a copy of the answer as it stood.
+- **Somebody must be there to settle it.** Opening is refused, with a message
+  that says so, when nobody but the deciding reviewer and the annotator can
+  review in the project (`countResolvers`, by the rule of `requireProject`).
+  A dispute that nobody may settle would hold the work for good: unpaid, not
+  revisable, its task never complete.
+- **Revise or dispute, never both.** Opening a dispute and `resubmitAssignment`
+  both start by locking the submission row, so the second one waits and then
+  sees what the first did: a revision is refused while a dispute is open, and
+  a dispute is refused once the work is back in review. A draft of a revision
+  is not saved while a dispute is open either (`saveRevisionDraft`); one that
+  was saved before waits for the outcome.
+- **Withdrawing** (`withdrawDispute`): the annotator can take their own open
+  dispute back. The decision stands and the work is exactly where it was,
+  sent back and revisable or fixed. The dispute is kept as `WITHDRAWN`, so
+  that decision cannot be disputed a second time.
+- **Settling** (`resolveDispute`): anyone who can review in the project,
+  except the reviewer who made the decision and the annotator who did the
+  work, with a note. The rules are checked in the model, not only on the page.
+  It is one transaction. The dispute is closed with a write that requires it
+  to be open, so of two people settling at once one gets a 409.
+- **Upheld** changes nothing but the dispute. The annotator sees the note and
+  can revise again.
+- **Overturned** takes the decision back in the same transaction:
+  - the `Review` row is kept exactly as it was and gets `overturnedAt`;
+  - the submission becomes `APPROVED` and `refreshTaskStatus` runs, so the
+    consensus is rebuilt from the annotator's own answer (`finalAnswer` skips
+    overturned corrections) and the task may complete;
+  - an overturned send-back gets `reviewedAt` set to the time of the overturn,
+    which is the day the work became payable. An overturned fix was accepted
+    and payable since the review, so its `reviewedAt` stays. That is as far
+    as it goes today: the payouts report still selects by `submittedAt`, so
+    overturned work shows in the period it was submitted in. It will show in
+    the period of the overturn, and never in one that was already paid, once
+    the report goes by the day work became payable (roadmap item 5);
+  - a draft of a revision that was started before the dispute is dropped, so
+    approved work never carries one;
+  - if the submission is not in the state the decision left it in, the
+    transaction throws and nothing is changed.
+- **Who reads an overturned review.** `standingReviews` in
+  `app/domain/outcome.ts` leaves it out, and with it the quality page
+  (reviewed, approval, sent back, QA score), the reviewer's own numbers (which
+  get an "overturned" count instead), the corrected answer and the `qa_score`
+  in the export. "My work", the revise page and the annotator page show the
+  outcome of the dispute in place of the review's feedback and score. The
+  histories on the review page and the task page keep the row and mark it.
 
 ## Drafts
 
@@ -170,30 +229,49 @@ A new shortcut is added there first; the unit tests fail when a key gets two
 meanings on one page.
 
 - **Modes.** A page key can be limited to a mode: `labeling` or `skipping` on
-  the work page, `viewing` or `fixing` on the review page. Each page names the
-  one mode in which the labeling interface gets its keys. That is why `a`
-  approves while a reviewer looks at a submission and picks response A while
-  they fix it, and why the label keys are off while the skip form is open.
+  the work page, `viewing`, `approving` or `fixing` on the review page. Each
+  page names the one mode in which the labeling interface gets its keys. That
+  is why `a` is for approving while a reviewer looks at a submission and picks
+  response A while they fix it, and why the label keys are off while the skip
+  form is open.
+- **Keys that commit** (a task, a skip, a review decision) are marked
+  `commits` and must name their mode; a unit test walks the table for that.
+  Ctrl or Cmd with Enter hands in what the mode is about: the task while
+  labeling, the skip while the skip form is open, never the task from the
+  skip form. A review decision takes two keys: `a` arms the approval (the
+  button and a line under it say so), Enter approves, and Escape or any other
+  key calls it off. After a decision the next submission appears on the same
+  page, and the keys that decide are ignored until it has been on screen for
+  a moment (`DECISION_PAUSE_MS`), so a key that is still held or pressed twice
+  cannot decide on work nobody has looked at.
 - **Label keys** skip the letters that mean something else somewhere (`a`,
   `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
   page, so a label always has the same key.
 - **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
-  browser and to screen readers; only Ctrl or Cmd with Enter submits. A key
-  that is held down does not repeat. Nothing acts while the cursor is in a
-  text box (except submit and closing the skip form) or while the list of
-  shortcuts is open. A focused radio button keeps its arrow keys and Space,
-  a button its Enter.
-- **Layouts.** Digits are read from the physical key (`event.code`), so the
-  digit row works where it needs Shift, and the number pad works with Num
-  Lock on. Letters and `?` are taken as typed.
+  browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
+  with Z, which the browser only uses inside text boxes. A key that is held
+  down does not repeat. What is typed into a text box is text, also `?` and
+  Escape while the list of shortcuts is open; only handing in and closing the
+  skip form work from there. While the list is open nothing else acts. A
+  focused radio button keeps its arrow keys and Space, a button its Enter.
+- **Layouts.** A digit is taken as typed. Only when the key did not type a
+  digit is the physical key read (`event.code`), which makes the digit row
+  work where it needs Shift. The number pad works with Num Lock on. Letters
+  and `?` are taken as typed.
 - **One press, one action, one interface.** The page, the list and every
   interface on the page listen on `window`. A press that one of them handled
-  is not offered to the others, and with several interfaces on a page (the
-  qualification test) the keys go to the one that was used last.
+  is not offered to the others. With several interfaces on a page (the
+  qualification test) the keys go to one card only: the one that holds the
+  focus or was clicked last, anywhere in it. That card is marked, and before
+  any card is, the keys do nothing. A key never changes an answer the person
+  is not working on.
 - **Nothing is thrown away by a slip.** No single letter or digit skips,
-  releases or deletes: `s` only opens the skip form, releasing has no key, and
-  removing a box or a span takes Delete or Backspace on something that was
-  selected first.
+  releases, deletes or decides: `s` only opens the skip form, releasing has
+  no key, approving takes two keys. Removing a box takes Delete or Backspace
+  on a box that was selected first. Removing a span takes Delete (Backspace
+  is left to text boxes), a span is let go when the cursor moves into a text
+  box, and the last removal can be put back with the "Undo" next to it or
+  Ctrl+Z.
 
 The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
 pass on what the key map decides. Pairwise score rows are real radio groups:
@@ -279,10 +357,13 @@ saved. The rule lives in the model, so it holds for any form post, not only
 for the settings page. The page gets the same counts from its loader and
 shows what an edit would do while the manager types.
 
-"Stored answers" are the five places an answer is kept: submissions
+"Stored answers" are the six places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
-answers (`Task.goldAnswer`), consensus answers (`Task.consensus`) and
-qualification attempts (`QualificationAttempt.answers`).
+answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
+a dispute was about (`Dispute.answer`, counted only once the submission has
+been revised and says something else, so no answer is counted twice) and
+qualification attempts (`QualificationAttempt.answers`). A correction that a
+dispute overturned still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |

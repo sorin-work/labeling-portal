@@ -67,6 +67,12 @@ describe('dashboard', () => {
     const data = payload<Dashboard>(
       await run(dashboardLoader, makeRequest('/', { cookie: await cookieFor(reviewer, org.id) })),
     );
-    expect(data.reviewing).toEqual({ reviews: 0, sentBack: 0, fixed: 0, avgScore: null });
+    expect(data.reviewing).toEqual({
+      reviews: 0,
+      sentBack: 0,
+      fixed: 0,
+      overturned: 0,
+      avgScore: null,
+    });
   });
 });

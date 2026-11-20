@@ -226,12 +226,16 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     },
   });
   const submitRef = useRef<HTMLButtonElement>(null);
+  const skipRef = useRef<HTMLButtonElement>(null);
 
   // The keys of this page are rows of the key map (domain/hotkeys.ts). While
   // the skip form is open the labeling interface gets no keys.
   useHotkeyPage('work', skipping ? 'skipping' : 'labeling');
   usePageHotkeys((action) => {
+    // Ctrl+Enter hands in what the page is on: the task, or with the skip
+    // form open the skip. It never submits the task from the skip form.
     if (action === 'submit') submitRef.current?.click();
+    else if (action === 'confirmSkip') skipRef.current?.click();
     else if (action === 'skip') setSkipping(true);
     else if (action === 'closeSkip') setSkipping(false);
     else return false;
@@ -354,7 +358,15 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
               placeholder="Details (required for Other)"
               className="block w-full rounded-md px-3 py-2 text-sm ring-1 ring-slate-300"
             />
-            <Button type="submit" name="intent" value="skip" variant="secondary" disabled={busy}>
+            <Button
+              ref={skipRef}
+              type="submit"
+              name="intent"
+              value="skip"
+              variant="secondary"
+              disabled={busy}
+              title={`Shortcut: ${pageShortcut('work', 'confirmSkip')}`}
+            >
               Skip task
             </Button>
           </Form>

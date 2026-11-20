@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
+import { KeyScopeProvider, useKeyScope, useKeysUnclaimed } from '~/components/labeling/use-hotkeys';
 import { MarkdownBody } from '~/components/markdown';
-import { Alert, Button, Card, EmptyState, PageHeader } from '~/components/ui';
+import { Alert, Button, Card, cx, EmptyState, PageHeader } from '~/components/ui';
 import { emptyAnswer, type Answer, type ImageSize } from '~/domain/answers';
 import { packTestAnswers, restoreTestAnswers, testAnswersKey } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
@@ -86,6 +87,34 @@ function NothingToLabel({
   );
 }
 
+/**
+ * One question of the test. The page has several labeling interfaces, so the
+ * keys go to one card only: the one that holds the focus or was clicked last,
+ * anywhere in it. That card is marked, and before any is, keys do nothing.
+ */
+function Question({ title, children }: { title: string; children: ReactNode }) {
+  const scope = useKeyScope();
+  return (
+    <div
+      {...scope.props}
+      data-keys={scope.active ? 'here' : undefined}
+      className={cx('rounded-lg', scope.active && 'ring-2 ring-indigo-500')}
+    >
+      <Card>
+        <div className="mb-3 flex items-center justify-between text-sm font-medium text-slate-500">
+          {title}
+          {scope.active && (
+            <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-normal text-indigo-700">
+              Keyboard shortcuts act on this question
+            </span>
+          )}
+        </div>
+        <KeyScopeProvider value={scope.token}>{children}</KeyScopeProvider>
+      </Card>
+    </div>
+  );
+}
+
 export default function Qualification({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, status, tasks, justFailed, instructionsHtml } = loaderData;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
@@ -130,6 +159,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
   };
 
   const answered = tasks.filter((t) => answers[t.id]).length;
+  const keysUnclaimed = useKeysUnclaimed();
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -162,11 +192,13 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
           </EmptyState>
         ) : (
           <>
+            {keysUnclaimed && (
+              <p className="text-sm text-slate-500">
+                Click a question to use the keyboard shortcuts on it.
+              </p>
+            )}
             {tasks.map((task, i) => (
-              <Card key={task.id}>
-                <div className="mb-3 text-sm font-medium text-slate-500">
-                  Question {i + 1} of {tasks.length}
-                </div>
+              <Question key={task.id} title={`Question ${i + 1} of ${tasks.length}`}>
                 <LabelingInterface
                   schema={schema}
                   data={task.data}
@@ -179,7 +211,7 @@ export default function Qualification({ loaderData, actionData }: Route.Componen
                   empty={emptyAnswer(schema, sizes[task.id])}
                   onPick={(value) => setAnswers((prev) => ({ ...prev, [task.id]: value }))}
                 />
-              </Card>
+              </Question>
             ))}
             <Form method="post" className="flex items-center gap-3" onSubmit={forget}>
               <input type="hidden" name="answers" value={JSON.stringify(answers)} />

@@ -42,7 +42,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
 | 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
-| 9   | Disputes on review decisions                 | Later   | review        | M    | -          |
+| 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
 | 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
@@ -216,75 +216,6 @@ checks any of it. Gaps I already know about:
   task for ever. I lean towards three, each still asked for by the annotator.
 
 ## Later
-
-### 9. Disputes on review decisions
-
-A reviewer's decision is final. An annotator whose answer was fixed can look
-at the correction, and one whose work was sent back can revise it, but nobody
-can say "I think my answer was right". The decision still counts in their
-approval rate, and a send-back they disagree with stays unpaid until they give
-in. Being marked down with no way to contest it is the complaint I read most
-often from people who do this work on the big platforms.
-
-- Data: a `Dispute` model: `assignmentId`, `reviewId` (the decision, unique,
-  so one dispute per decision), `openedById`, `reason`, `status` (`OPEN`,
-  `UPHELD`, `OVERTURNED`), `resolvedById`, `resolution`, `createdAt`,
-  `resolvedAt`. And `overturnedAt DateTime?` on `Review`.
-- Annotator side: a "Dispute" button with a required reason on
-  `/my-work/:assignmentId` (`routes/my-work-revise.tsx`, a new `intent`) for
-  `SENT_BACK` and `FIXED` work, and the state as a badge in the list in
-  `routes/my-work.tsx`.
-- Resolver side: a "Disputes" tab in `routes/project-layout.tsx` with the open
-  count, the way the Review tab shows `pendingReviews`, and a new
-  `routes/project-disputes.tsx`. The decision page shows the task, the
-  annotator's answer, the reviewer's correction and feedback side by side (the
-  comparison in `my-work-revise.tsx` already renders two read-only
-  interfaces), with "Uphold" and "Overturn" and a required note.
-- Overturning has to undo the decision everywhere:
-  - `finalAnswer` in `domain/outcome.ts` picks the latest `FIX` and must skip
-    overturned reviews. It is called from `models/tasks.server.ts`,
-    `models/quality.server.ts`, `models/export.server.ts` and
-    `routes/task-detail.tsx`;
-  - `Assignment.reviewStatus` becomes `APPROVED`, and `refreshTaskStatus`
-    runs, because the consensus can change and the task may complete;
-  - pay goes by the day work became payable (item 5), which for reviewed work
-    is `reviewedAt`. An overturned send-back becomes payable at the overturn,
-    so `reviewedAt` is set to that time: the work shows in the current period
-    and never in one that was already paid. An overturned fix was accepted and
-    payable since the original review, so its `reviewedAt` stays; moving it
-    would take it out of a period that may be paid and pay it again. The
-    original decision, its reviewer and its date stay on the `Review` row and
-    on the `Dispute`;
-  - `projectQuality` counts every review row (`reviewed`, `approved`,
-    `sentBack`, QA scores) and `reviewerStats` counts decisions. Both leave
-    overturned rows out. `myStats` groups by `reviewStatus` and follows;
-  - `loadExportTasks` in `models/export.server.ts` exports the QA score of
-    the last review that has one (`qa_score` in JSONL and CSV). An overturned
-    review must not supply it;
-  - the pages that show the latest review read `reviews[0]` for feedback and
-    score: `routes/my-work.tsx`, `routes/my-work-revise.tsx` and
-    `routes/project-annotator.tsx`. They show the outcome of the dispute
-    instead. The full histories in `routes/review.tsx` and
-    `routes/task-detail.tsx` keep the row and mark it as overturned.
-- Upholding changes nothing but the status. The annotator sees the note.
-- Tricky: sent-back work can be revised while a dispute is open
-  (`resubmitAssignment` puts it back to `PENDING`). Make it one or the other:
-  an open dispute hides "Revise" and `resubmitAssignment` refuses.
-- Tricky: limits. One dispute per decision, only within 14 days of the review,
-  and never on your own decision or your own work.
-- Tricky: the reviewer should see the outcome too, for example an "overturned"
-  number beside "sent back" and "fixed" on their dashboard.
-- Not covered: gold scores, which no reviewer decided (item 10 lets a manager
-  fix a wrong gold answer), and low QA scores on approved work.
-- Undecided: who resolves. Anyone with the `review` capability except the
-  reviewer who decided, or managers only. I lean towards the first, so a
-  project with two reviewers does not wait for a manager.
-- Tests: a new `tests/integration/disputes.test.ts` (who may open and resolve,
-  an overturned fix restores the annotator's answer in the consensus and the
-  export and drops its QA score there, an overturned send-back completes the
-  task and is payable from the overturn, an overturned fix keeps its date,
-  upheld changes nothing, no revise while open) and
-  `tests/unit/outcome.test.ts` for `finalAnswer`.
 
 ### 10. Gold tasks: add, fix and rescore
 
@@ -866,16 +797,21 @@ buttons are made from it. Pairwise score rows are real radio groups and typed
 digits walk them; entity spans are selected with a click, get another type
 with a key and are removed with Delete; `s` opens the skip form; on the review
 page `s` goes to the feedback box, `e` starts a fix and Escape cancels it.
-`use-hotkeys.ts` stops only for text entry, reads digits from the physical
-key, sends the keys to one interface on the test page and lets one press
+`use-hotkeys.ts` stops only for text entry, takes digits as typed and reads
+the physical key where a layout needs Shift for them, and lets one press
 trigger one action. Different from the design: a digit typed while no score
 row has focus goes to the first row without a score, so a rubric can be typed
-on a fresh page. Not built: "submit on pick". A slip cannot be taken back once
-the next task has loaded, so it waits for a way to reopen the last submission.
-Fixed on the way: entity and box tasks can be submitted with nothing marked,
-and the review page starts fresh for every submission. Still open: letters
-follow the typed character, so they need a Latin layout; the list of shortcuts
-does not take focus (item 8); removing a box or a span has no undo (item 13).
+on a fresh page. On a page with several interfaces (the test) the keys go to
+the card that holds the focus or was clicked last, which is marked, and to
+none before that, not to "the one used last". Approving by key takes two keys
+(`a` arms, Enter approves, anything else calls it off) and waits a moment
+after each decision, and Ctrl+Enter in the skip form skips. Not built: "submit
+on pick". A slip cannot be taken back once the next task has loaded, so it
+waits for a way to reopen the last submission. Fixed on the way: entity and
+box tasks can be submitted with nothing marked, and the review page starts
+fresh for every submission. Still open: letters follow the typed character,
+so they need a Latin layout; the list of shortcuts does not take focus (item
+8); a removed span can be put back once, a removed box not at all (item 13).
 
 ### 4. Review sampling and reviewer reservations
 
@@ -915,3 +851,24 @@ clocks, then a real dump, a restore into a scratch database and the row
 counts. Still open: the dumps are not encrypted and stay on the same disk
 unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
 apart from the service's log.
+
+### 9. Disputes on review decisions
+
+An annotator can dispute a send-back or a correction from
+`/my-work/:assignmentId`, once per decision and within
+`Project.disputeWindowDays` (14 by default, 0 turns disputes off). Anyone who
+can review, except the reviewer who decided and the annotator, settles it on
+the new Disputes tab with a note. Overturning is one transaction: the review
+keeps its row and gets `overturnedAt`, the submission becomes approved, the
+task is refreshed, and every reader named in the design skips the overturned
+review. An overturned send-back is dated at the overturn; an overturned fix
+keeps its date. Sent-back work cannot be revised while its dispute is open.
+Different from the design: the window is a project setting instead of a fixed
+14 days, the dispute stores a copy of the answer it was about, the annotator
+can withdraw an open dispute, and a dispute is not opened when nobody but the
+deciding reviewer could settle it. Still open: the payouts report selects by
+`submittedAt`, so an overturned send-back shows in the period it was
+submitted in until item 5 makes the report go by the day work became payable
+(the date is stamped for it). Gold scores and low QA scores on approved work
+cannot be disputed, and nobody is told about a new dispute or its outcome
+except by the tab count and the "My work" page.

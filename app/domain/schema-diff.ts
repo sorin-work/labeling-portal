@@ -13,7 +13,8 @@ import {
  * these counts to tell a harmless edit from one that would orphan answers.
  *
  * "Stored answers" are submissions, reviewer corrections, gold answers,
- * consensus answers and the answers of qualification attempts.
+ * consensus answers, the answer a dispute was about (once the submission has
+ * moved on from it) and the answers of qualification attempts.
  */
 export type SchemaUsage = {
   /** Imported tasks, gold and qualification tasks included. */

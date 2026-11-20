@@ -153,6 +153,27 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
     if (accepted >= project.overlap) await complete(prisma, task.id, project.schema, answers);
   }
 
+  // Chen disputes the first send-back. The reviewer who decided cannot settle
+  // it, so it waits for a manager.
+  const returned = await prisma.assignment.findFirst({
+    where: { projectId, userId: chen, reviewStatus: 'SENT_BACK' },
+    orderBy: { submittedAt: 'asc' },
+    include: { reviews: true },
+  });
+  if (returned?.reviews[0]) {
+    await prisma.dispute.create({
+      data: {
+        assignmentId: returned.id,
+        reviewId: returned.reviews[0].id,
+        openedById: chen,
+        reason:
+          'I did read the whole review. The last sentence is what the customer concludes, and my label follows it.',
+        answer: returned.answer as Prisma.InputJsonValue,
+        createdAt: new Date(returned.reviews[0].createdAt.getTime() + 20 * 60 * 60_000),
+      },
+    });
+  }
+
   const schema = parseTaskSchema(project.schema);
   for (const [i, task] of gold.entries()) {
     for (const userId of [ben, chen]) {

@@ -9,8 +9,8 @@ import { KIND_LABELS, type SchemaKind, type TaskSchema } from './task-schema';
  * fails when a key ends up with two meanings on one page.
  *
  * Key names: digits are '0' to '9', letters are lower case, other keys use
- * their `KeyboardEvent.key` name ('Delete', 'Escape', '?'), and 'Mod+Enter'
- * is Enter with Ctrl or Cmd.
+ * their `KeyboardEvent.key` name ('Delete', 'Escape', '?'). 'Mod+Enter' and
+ * 'Mod+z' are Enter and Z with Ctrl or Cmd. '*' stands for any other key.
  */
 
 export type Page = 'work' | 'review';
@@ -28,6 +28,12 @@ export type KeyBinding = {
   dialog?: boolean;
   /** throws work away: never on a plain letter or digit, see the tests */
   destructive?: boolean;
+  /**
+   * Hands something in for good: a task, a skip, a review decision. Such a
+   * key must name the one mode it belongs to (`when`), so that it can never
+   * commit something else than what is on the screen.
+   */
+  commits?: boolean;
   /** interface keys: also works in a read-only view */
   readOnly?: boolean;
 };
@@ -59,11 +65,30 @@ const HELP_KEYS: KeyBinding[] = [
   { action: 'closeHelp', keys: ['?', 'Escape'], label: 'Close this list', dialog: true },
 ];
 
+/** In a row's keys: every key that no other live row of the page takes. */
+export const ANY_OTHER_KEY = '*';
+
+/**
+ * After a review decision the next submission loads on the same page. Keys
+ * that decide are ignored until it has been on screen this long, so a key
+ * that is still held or pressed twice cannot decide on work nobody has seen.
+ */
+export const DECISION_PAUSE_MS = 800;
+
+export function decisionsOpen(shownAt: number, now: number): boolean {
+  return now - shownAt >= DECISION_PAUSE_MS;
+}
+
 /**
  * Keys of a page. `labeling` names the mode in which the keys of the labeling
  * interface are on: while the skip form is open, or while a reviewer only
  * looks at a submission, the interface keys are off and the page may use the
- * same key for something else ("a" approves, and picks response A in a fix).
+ * same key for something else ("a" is for approving, and picks response A in
+ * a fix).
+ *
+ * Ctrl or Cmd with Enter always commits what the current mode is about: the
+ * task while labeling, the skip while the skip form is open. A review
+ * decision takes two keys: "a" only arms the approval and Enter records it.
  */
 export const PAGES: Record<Page, { labeling: string; keys: KeyBinding[] }> = {
   work: {
@@ -73,9 +98,19 @@ export const PAGES: Record<Page, { labeling: string; keys: KeyBinding[] }> = {
         action: 'submit',
         keys: ['Mod+Enter'],
         label: 'Submit and go to the next task',
+        when: 'labeling',
         typing: true,
+        commits: true,
       },
       { action: 'skip', keys: ['s'], label: 'Open the skip form', when: 'labeling' },
+      {
+        action: 'confirmSkip',
+        keys: ['Mod+Enter'],
+        label: 'In the skip form: skip the task',
+        when: 'skipping',
+        typing: true,
+        commits: true,
+      },
       {
         action: 'closeSkip',
         keys: ['Escape'],
@@ -94,7 +129,26 @@ export const PAGES: Record<Page, { labeling: string; keys: KeyBinding[] }> = {
         label: 'Set the quality score',
         when: 'viewing',
       },
-      { action: 'approve', keys: ['a'], label: 'Approve', when: 'viewing' },
+      {
+        action: 'armApprove',
+        keys: ['a'],
+        label: 'Get ready to approve: Enter then approves',
+        when: 'viewing',
+      },
+      {
+        action: 'approve',
+        keys: ['Enter'],
+        label: 'After a: approve',
+        when: 'approving',
+        commits: true,
+      },
+      {
+        action: 'disarm',
+        keys: ['Escape', ANY_OTHER_KEY],
+        label: 'After a: do not approve',
+        when: 'approving',
+        typing: true,
+      },
       {
         action: 'feedback',
         keys: ['s'],
@@ -116,12 +170,10 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
       keys: LABEL_KEYS,
       label: 'Choose the entity type, or change the type of the selected span',
     },
-    {
-      action: 'remove',
-      keys: ['Delete', 'Backspace'],
-      label: 'Remove the selected span',
-      destructive: true,
-    },
+    // Not Backspace: a reviewer who clicks a span leaves the feedback box, and
+    // the next Backspace is meant for text.
+    { action: 'remove', keys: ['Delete'], label: 'Remove the selected span', destructive: true },
+    { action: 'undoRemove', keys: ['Mod+z'], label: 'Put back the span that was just removed' },
   ],
   pairwise: [
     {
@@ -180,23 +232,35 @@ export type KeyPress = {
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
+  shiftKey?: boolean;
   repeat?: boolean;
   isComposing?: boolean;
 };
 
+/** Pressed on their own they are not a key press for the map. */
+const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'Fn', 'OS'];
+
 /**
  * The name a key press has in the key map, or null when it is not for the
- * app: a key that is held down, text being composed, or anything with Ctrl,
- * Cmd or Alt, which belong to the browser and to screen readers. Only Ctrl or
- * Cmd with Enter is ours.
+ * app: a key that is held down, a modifier on its own, text being composed,
+ * or anything with Ctrl, Cmd or Alt, which belong to the browser and to
+ * screen readers. The exceptions are Ctrl or Cmd with Enter and with Z,
+ * which the browser only uses inside text boxes.
  *
- * Digits are read from the physical key, so the digit row works on layouts
- * where it needs Shift (AZERTY), and so does the number pad while Num Lock is
- * on. "?" is taken as typed, because some layouts have it on a digit key.
+ * A digit is taken as typed, so a layout with its digits in another order
+ * gets the label it shows. Only when the key did not type a digit is the
+ * physical key read: that makes the digit row work on layouts where it needs
+ * Shift (AZERTY). The number pad types digits while Num Lock is on. "?" is
+ * taken as typed, because some layouts have it on a digit key.
  */
 export function keyName(press: KeyPress): string | null {
   if (press.repeat || press.isComposing || press.altKey) return null;
-  if (press.ctrlKey || press.metaKey) return press.key === 'Enter' ? 'Mod+Enter' : null;
+  if (MODIFIER_KEYS.includes(press.key)) return null;
+  if (press.ctrlKey || press.metaKey) {
+    if (press.key === 'Enter') return 'Mod+Enter';
+    return press.key.toLowerCase() === 'z' && !press.shiftKey ? 'Mod+z' : null;
+  }
+  if (/^\d$/.test(press.key)) return press.key;
   if (press.key === '?') return '?';
   const digit = /^Digit(\d)$/.exec(press.code);
   if (digit) return digit[1];
@@ -260,9 +324,11 @@ export type KeyContext = {
 };
 
 function isLive(binding: KeyBinding, context: KeyContext): boolean {
+  // first of all: what is typed into a text box is text, also "?" and Escape
+  // while the cheat sheet is open
+  if (context.typing && !binding.typing) return false;
   if (context.dialog) return binding.dialog === true;
   if (binding.dialog) return false;
-  if (context.typing && !binding.typing) return false;
   return binding.when === undefined || binding.when === context.page?.mode;
 }
 
@@ -286,7 +352,10 @@ function liveInterfaceKeys(schema: TaskSchema, context: InterfaceContext): KeyBi
 
 /** The page action a key stands for right now, or null. */
 export function pageAction(key: string, context: KeyContext): string | null {
-  return livePageKeys(context).find((b) => b.keys.includes(key))?.action ?? null;
+  const live = livePageKeys(context);
+  const hit =
+    live.find((b) => b.keys.includes(key)) ?? live.find((b) => b.keys.includes(ANY_OTHER_KEY));
+  return hit?.action ?? null;
 }
 
 /** `index` is the position of the key in its row: the label, or the score minus one. */
@@ -319,12 +388,14 @@ export function liveKeys(
 }
 
 /**
- * With several interfaces on one page (the qualification test), keys go to
- * one of them: the one that was used last, or the first while none was.
+ * Which interface the keys go to. A page with one interface has no choice to
+ * make. With several (the qualification test) it is the one whose card holds
+ * the focus or was clicked last, and none before that: a key must never
+ * change an answer that the person is not looking at.
  */
 export function activeInterface<T>(mounted: readonly T[], lastUsed: T | null): T | null {
-  if (lastUsed !== null && mounted.includes(lastUsed)) return lastUsed;
-  return mounted[0] ?? null;
+  if (mounted.length === 1) return mounted[0];
+  return lastUsed !== null && mounted.includes(lastUsed) ? lastUsed : null;
 }
 
 // ---------- pairwise: typing the rubric ----------
@@ -361,7 +432,12 @@ export function nextScoreGroup(groups: readonly ScoreGroup[], current: ScoreGrou
 
 // ---------- showing keys ----------
 
-const KEY_WORDS: Record<string, string> = { 'Mod+Enter': 'Ctrl + Enter', Escape: 'Esc' };
+const KEY_WORDS: Record<string, string> = {
+  'Mod+Enter': 'Ctrl + Enter',
+  'Mod+z': 'Ctrl + Z',
+  Escape: 'Esc',
+  [ANY_OTHER_KEY]: 'any other key',
+};
 
 /** Keys the way the cheat sheet and the hints print them. */
 export function showKeys(keys: readonly string[]): string {

@@ -56,6 +56,7 @@ describe('projects', () => {
       timeLimitMinutes: 20,
       reviewRequired: true,
       reviewSamplePercent: 100,
+      disputeWindowDays: 14,
     });
   });
 
@@ -77,11 +78,16 @@ describe('projects', () => {
 
     const path = `/projects/${project.id}/settings`;
     const params = { projectId: project.id };
-    const edited = { ...validForm, reviewSamplePercent: '40' };
+    const edited = { ...validForm, reviewSamplePercent: '40', disputeWindowDays: '7' };
     await run(settingsAction, makeRequest(path, { cookie, form: edited }), params);
     await run(settingsAction, makeRequest(path, { cookie, form: { intent: 'duplicate' } }), params);
-    const copies = await prisma.project.findMany({ select: { reviewSamplePercent: true } });
-    expect(copies).toEqual([{ reviewSamplePercent: 40 }, { reviewSamplePercent: 40 }]);
+    const copies = await prisma.project.findMany({
+      select: { reviewSamplePercent: true, disputeWindowDays: true },
+    });
+    expect(copies).toEqual([
+      { reviewSamplePercent: 40, disputeWindowDays: 7 },
+      { reviewSamplePercent: 40, disputeWindowDays: 7 },
+    ]);
   });
 
   it('saves the review share in the same save as a schema edit, or not at all', async () => {

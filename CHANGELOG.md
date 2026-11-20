@@ -25,14 +25,19 @@
   to 9, 0 for the tenth, then letters, shown on the buttons), pairwise rubrics
   that can be typed (digits walk the score rows, the arrows choose inside a
   row), `s` for the skip form, and on the review page `s` for the feedback
-  box, `e` for "Fix it myself" and Esc to cancel a fix
+  box, `e` for "Fix it myself" and Esc to cancel a fix. Ctrl+Enter hands in
+  the task, or the skip while the skip form is open
+- Approving by key takes two keys, `a` and then Enter, and any other key
+  calls it off. Right after a decision the keys that decide wait a moment, so
+  a held or repeated key cannot approve the next submission unseen
 - Entity spans are selected with a click, get another type with a key and are
-  removed with Delete or the × next to them, as boxes are
+  removed with Delete or the × next to them. The last removal can be undone
 - `?` lists the shortcuts of the page and the project's labeling kind, on the
   work, review, revise and qualification pages
-- Shortcuts keep working while a radio button has focus, read the digit row
-  on any keyboard layout and the number pad, and on the qualification test go
-  to one question instead of all of them
+- Shortcuts keep working while a radio button has focus, and work on keyboard
+  layouts where the digits need Shift and on the number pad. On the
+  qualification test they act on one question, the one that was clicked or
+  holds the focus, and that question is marked
 
 ### Review and quality
 
@@ -48,6 +53,18 @@
   The review page renews the hold while the reviewer works, so a long fix is
   not lost to the next reviewer
 - Quality page and its CSV: share of each annotator's work that was reviewed
+- Disputes: an annotator can contest a send-back or a correction, once per
+  decision and within a time limit set on the project. Anyone who can review,
+  except the reviewer who decided, upholds or overturns it with a note. An
+  overturned decision no longer counts in the consensus, the export, the
+  quality numbers or the reviewer's stats, and the work counts as approved.
+  Sent-back work cannot be revised while its dispute is open. The annotator
+  can withdraw an open dispute, and a dispute that nobody but the deciding
+  reviewer could settle is refused with a message that says why
+- Disputes are on for existing projects from the moment this is deployed: the
+  window defaults to 14 days, so every send-back and correction of the last
+  14 days can be disputed at once. Set "Dispute window" to 0 in a project's
+  settings to keep disputes off there
 
 ### Operations
 
