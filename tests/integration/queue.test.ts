@@ -138,8 +138,9 @@ describe('work routes', () => {
     });
     // the page gets the task's content, not its id (see the gold tests)
     expect(assignment.taskId).toBe(tasks[0].id);
-    expect(payload<{ task: Record<string, unknown> }>(page).task).toMatchObject({
-      externalId: tasks[0].externalId,
+    expect(payload<{ task: Record<string, unknown> }>(page).task).toEqual({
+      ref: assignment.id.slice(-6).toUpperCase(),
+      batch: 'batch',
       data: { text: 'one' },
     });
   });

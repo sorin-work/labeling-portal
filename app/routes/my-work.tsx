@@ -7,6 +7,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { shownReview } from '~/domain/disputes';
 import { formatGoldScore, goldFeedback } from '~/domain/gold';
 import { taskPreview } from '~/domain/preview';
+import { assignmentRef } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { DISPUTE_BADGES, formatRelative, REVIEW_BADGES } from '~/lib/format';
@@ -45,7 +46,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       project: true,
       task: {
         select: {
-          externalId: true,
           data: true,
           isGold: true,
           goldAnswer: true,
@@ -67,13 +67,14 @@ export async function loader({ request }: Route.LoaderArgs) {
     items: items.map((a) => ({
       id: a.id,
       projectName: a.project.name,
-      externalId: a.task.externalId,
+      // the reference the work page showed; a task's own ids could mark it as gold
+      ref: assignmentRef(a.id),
       preview: taskPreview(projectSchema(a.project), a.task.data, 70),
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
       reviewStatus: a.reviewStatus,
       // only the score, and only where the project shows gold feedback
-      goldScore: goldFeedback(a)?.score ?? null,
+      goldScore: goldFeedback(a, projectSchema(a.project))?.score ?? null,
       // feedback and score of an overturned decision give way to the dispute's outcome
       ...shownReview(a.reviews.at(0)),
     })),
@@ -128,7 +129,7 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                 <div className="min-w-0 flex-1">
                   <div className="text-xs text-slate-500">
                     {item.projectName}
-                    {item.externalId && <span className="ml-2 font-mono">{item.externalId}</span>}
+                    <span className="ml-2 font-mono">ref {item.ref}</span>
                   </div>
                   <div className="truncate">{item.preview}</div>
                   {item.feedback && (

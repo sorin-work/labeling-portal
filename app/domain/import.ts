@@ -27,6 +27,15 @@ export const MAX_IMPORT_ROWS = 5000;
 const ID_KEYS = ['_id', 'id'];
 const GOLD_KEY = '_gold';
 
+/**
+ * A task's data as an annotator's browser gets it: without the id its row
+ * was imported with. That id says where and when a task came from, and a
+ * gold task copied from an older task would carry the older one's.
+ */
+export function withoutImportId(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(data).filter(([key]) => !ID_KEYS.includes(key)));
+}
+
 export function detectFormat(filename: string, text: string): ImportFormat {
   const lower = filename.toLowerCase();
   if (lower.endsWith('.jsonl') || lower.endsWith('.ndjson') || lower.endsWith('.json')) {

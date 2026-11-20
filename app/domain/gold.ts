@@ -259,17 +259,29 @@ export function formatGoldScore(score: number | null): string {
  * submitted it, and then their score and the expected answer, if the project
  * shows gold feedback and the task has not been retired. Every page that
  * shows gold results to annotators goes through this.
+ *
+ * The score is only shown next to the expected answer it was computed
+ * against. After a manager changed the expected answer and before the
+ * rescore, a stored score can belong to the old one; such a submission gets
+ * no feedback until the rescore has run.
  */
-export function goldFeedback(submission: {
-  status: string;
-  goldScore: number | null;
-  task: { isGold: boolean; goldAnswer: unknown; goldRetiredAt: Date | null };
-  project: { goldFeedback: boolean };
-}): { score: number; expected: unknown } | null {
+export function goldFeedback(
+  submission: {
+    status: string;
+    answer: unknown;
+    goldScore: number | null;
+    task: { isGold: boolean; goldAnswer: unknown; goldRetiredAt: Date | null };
+    project: { goldFeedback: boolean };
+  },
+  schema: TaskSchema,
+): { score: number; expected: unknown } | null {
   const { task } = submission;
   if (!submission.project.goldFeedback || submission.status !== 'SUBMITTED') return null;
   if (!task.isGold || task.goldRetiredAt || !task.goldAnswer || submission.goldScore === null) {
     return null;
   }
+  if (!submission.answer) return null;
+  const current = scoreAgainstGold(schema, submission.answer as Answer, task.goldAnswer as Answer);
+  if (current !== submission.goldScore) return null;
   return { score: submission.goldScore, expected: task.goldAnswer };
 }

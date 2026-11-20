@@ -11,6 +11,7 @@ import {
   sameAnswer,
   scoreAgainstGold,
 } from '~/domain/gold';
+import { diffSchema } from '~/domain/schema-diff';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
 
 describe('scoreAgainstGold', () => {
@@ -209,28 +210,74 @@ describe('parseGoldReason', () => {
 });
 
 describe('goldFeedback', () => {
+  const schema = SCHEMA_TEMPLATES.text_classification;
   const submission = {
     status: 'SUBMITTED',
-    goldScore: 0.5,
+    answer: { labels: ['negative'] },
+    goldScore: 0,
     task: { isGold: true, goldAnswer: { labels: ['positive'] }, goldRetiredAt: null },
     project: { goldFeedback: true },
   };
 
   it('shows the score and the expected answer of a submitted gold task', () => {
-    expect(goldFeedback(submission)).toEqual({ score: 0.5, expected: { labels: ['positive'] } });
+    expect(goldFeedback(submission, schema)).toEqual({
+      score: 0,
+      expected: { labels: ['positive'] },
+    });
   });
 
   it('shows nothing before the work is submitted, or when the project hides it', () => {
-    expect(goldFeedback({ ...submission, status: 'ACTIVE' })).toBeNull();
-    expect(goldFeedback({ ...submission, project: { goldFeedback: false } })).toBeNull();
+    expect(goldFeedback({ ...submission, status: 'ACTIVE' }, schema)).toBeNull();
+    expect(goldFeedback({ ...submission, project: { goldFeedback: false } }, schema)).toBeNull();
   });
 
   it('shows nothing for other tasks, retired gold or unscored work', () => {
     const { task } = submission;
-    expect(goldFeedback({ ...submission, task: { ...task, isGold: false } })).toBeNull();
+    expect(goldFeedback({ ...submission, task: { ...task, isGold: false } }, schema)).toBeNull();
     expect(
-      goldFeedback({ ...submission, task: { ...task, goldRetiredAt: new Date() } }),
+      goldFeedback({ ...submission, task: { ...task, goldRetiredAt: new Date() } }, schema),
     ).toBeNull();
-    expect(goldFeedback({ ...submission, goldScore: null })).toBeNull();
+    expect(goldFeedback({ ...submission, goldScore: null }, schema)).toBeNull();
+  });
+
+  it('shows nothing while the stored score belongs to an earlier expected answer', () => {
+    // the expected answer became "negative" and the rescore has not run: the
+    // stored 0 would read as "you said negative, expected negative, 0%"
+    const edited = { ...submission.task, goldAnswer: { labels: ['negative'] } };
+    expect(goldFeedback({ ...submission, task: edited }, schema)).toBeNull();
+    expect(goldFeedback({ ...submission, task: edited, goldScore: 1 }, schema)).toEqual({
+      score: 1,
+      expected: { labels: ['negative'] },
+    });
+  });
+});
+
+describe('a label held by the history of a gold task', () => {
+  const before = SCHEMA_TEMPLATES.text_classification;
+  const [gone, ...kept] = before.labels;
+  const usage = {
+    tasks: 5,
+    answers: 4,
+    names: new Map([[gone, 3]]),
+    multiLabel: 0,
+    ties: 0,
+    scored: 0,
+    dimensions: new Map<string, number>(),
+  };
+  const reason = (goldHistory?: Map<string, number>) =>
+    diffSchema(before, { ...before, labels: kept }, { ...usage, goldHistory }).find(
+      (change) => change.impact === 'breaking',
+    )?.reason;
+
+  it('is named in the refusal, because that history never goes away', () => {
+    expect(reason()).toBe(
+      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it`,
+    );
+    expect(reason(new Map([[gone, 2]]))).toBe(
+      `the label “${gone}” cannot be removed or renamed while 3 stored answers use it, 2 of them in the history of a gold task whose expected answer was changed; that history is kept for good`,
+    );
+    expect(reason(new Map([[gone, 3]]))).toMatch(
+      /use it, all of them in the history of a gold task/,
+    );
   });
 });
