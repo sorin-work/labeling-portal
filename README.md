@@ -17,6 +17,8 @@ or fix the work.
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
   abandoned claims, one extension per claim, skip with a reason, release
+- **Drafts**: the answer in progress and its working time are saved to the
+  server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections
 - **Quality**: per-annotator approval rate, QA score, gold accuracy, speed and
@@ -137,6 +139,10 @@ More detail: [architecture](docs/architecture.md),
   fifteen minutes. Restarting the app clears the counter.
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
+- **"Draft not saved" next to the working time**: the claim ran out of time,
+  the task was finished in another tab, or the session ended. What is on the
+  screen is still there and can be submitted. "Draft not saved yet" means a
+  save did not reach the server and is tried again by itself.
 - **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
   and skips itself if the demo organisation already exists. Remove the volume
   with `docker compose down -v` to start over.

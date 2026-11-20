@@ -26,7 +26,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Project`              | Instructions, a JSON task schema, overlap, time limit, pay rate      |
 | `ProjectMember`        | Who may work on or review a project; `qualifiedAt` after the test    |
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
-| `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
+| `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
@@ -48,6 +48,42 @@ tests/integration/  loaders and actions against a real PostgreSQL
    Sent-back work can be revised and resubmitted by the annotator.
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
+
+## Drafts
+
+An answer in progress would otherwise live only in the browser tab. The work
+page therefore saves it to the assignment (`draft`, with the working time in
+`draftSeconds`) two seconds after the last change, at least every ten seconds
+while changes keep coming, when the tab is hidden or closed, and when the
+annotator leaves the page inside the app. Working time alone is saved every
+thirty seconds. After a reload the page starts from the draft and the working
+time counts on from the saved value.
+
+- A draft is not a valid answer (a comparison without a preference yet), so it
+  is stored without `validateAnswer` and only checked for size. Submitting
+  validates as before. When a draft is read back, `fitDraft` in
+  `app/domain/drafts.ts` keeps what still fits the task schema and drops the
+  rest, so a stored draft cannot break the page after a schema change.
+- The draft ends with the claim: submitting, skipping, releasing and running
+  out of time all clear it.
+- The same task in two tabs: the last save wins, and only the submit counts.
+  A tab that was only looked at sends no answer, so it cannot overwrite the
+  draft of the tab that was worked in. The saved working time never goes down.
+- Revising sent-back work keeps its draft in the same column. That assignment
+  is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+- The qualification test has no row to keep a draft on. Its answers stay in
+  `sessionStorage`, tagged with the attempt they belong to.
+- A reload is faster than the save the closing page sends, so the new page
+  would read the draft from before it. The closing page therefore also leaves
+  what the server has not confirmed in `sessionStorage`, and the next page
+  takes it from there. What can still be lost is the last couple of seconds
+  before a crash (up to ten while typing without a pause).
+- The save is a plain `fetch` to a small resource route (see
+  [routes](routes.md)), not a fetcher. A fetcher whose request fails puts the
+  error page in place of the task, and the unsaved answer would go with it.
+- The work page is rendered under `key={assignment.id}`. "Submit and next"
+  stays on the same route, and without the key React would keep the previous
+  task's answer and seconds and save them as the next task's draft.
 
 ## Quality
 
@@ -71,7 +107,8 @@ tests/integration/  loaders and actions against a real PostgreSQL
 
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
-at the time since the claim.
+at the time since the claim. It is saved with the draft, so a reload does not
+start the count again.
 
 ## Adding a labeling kind
 
@@ -80,7 +117,8 @@ points at every place that needs a new branch once the kind is added to the
 schema union:
 
 1. `app/domain/task-schema.ts`: the zod schema, `requiredFields`, a template.
-2. `app/domain/answers.ts`: the answer type and its validator.
+2. `app/domain/answers.ts`: the answer type and its validator, and
+   `app/domain/drafts.ts`: how an unfinished answer is read back.
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.

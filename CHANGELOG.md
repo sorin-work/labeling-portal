@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Importing and labeling
+
+- Drafts: the work page saves the answer in progress and the working time to
+  the server a moment after each change and when the tab is hidden or closed,
+  and a reload continues from there. Revising sent-back work keeps a draft the
+  same way; the qualification test keeps its answers in the browser tab
+- The work page starts fresh for every task: the previous task's answer and
+  working time no longer carry over after "Submit and next"
+- Box projects: the drawing layer no longer goes missing after a reload, when
+  the image came from the browser cache before the page was ready
+
 ## 1.0.0 - 2026-11-08
 
 First stable release.
