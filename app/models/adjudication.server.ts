@@ -5,6 +5,7 @@ import { ACCEPTED_STATUSES, finalAnswer } from '~/domain/outcome';
 import { prisma } from '~/lib/db.server';
 
 import { projectSchema } from './projects.server';
+import { acceptedAnswers } from './tasks.server';
 
 /** What the adjudicator settles a task with. */
 export type AdjudicationChoice =
@@ -24,18 +25,35 @@ export type AdjudicationRefusal =
   | { error: 'invalid'; message: string };
 
 /**
- * Whether the user has labeled the task: a submission of theirs, accepted or
- * not, or a claim they are working on. They may not settle it.
+ * Whether the user had a hand in the answers of the task, and so may not
+ * settle it: a submission or a claim of theirs, accepted or not, a fix of
+ * theirs in a review (the corrected answer is one of the answers), on this
+ * task or on any task of its gold group (the task it was copied from and that
+ * task's copies, which hold the same item).
  */
-async function labeledBy(db: Prisma.TransactionClient, taskId: string, userId: string) {
-  const mine = await db.assignment.count({
-    where: { taskId, userId, status: { in: ['SUBMITTED', 'ACTIVE'] } },
-  });
-  return mine > 0;
-}
-
-export async function canAdjudicate(taskId: string, userId: string): Promise<boolean> {
-  return !(await labeledBy(prisma, taskId, userId));
+export async function labeledBy(
+  db: Prisma.TransactionClient,
+  taskId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db.$queryRaw<Array<{ labeled: boolean }>>`
+    WITH task AS (SELECT id, "goldSourceId" FROM "Task" WHERE id = ${taskId}),
+    item AS (
+      SELECT t.id FROM "Task" t, task
+      WHERE t.id = task.id
+         OR t.id = task."goldSourceId"
+         OR t."goldSourceId" = COALESCE(task."goldSourceId", task.id)
+    )
+    SELECT EXISTS (
+      SELECT 1 FROM "Assignment" a
+      WHERE a."taskId" IN (SELECT id FROM item) AND a."userId" = ${userId}
+        AND a.status IN ('SUBMITTED', 'ACTIVE')
+    ) OR EXISTS (
+      SELECT 1 FROM "Review" r JOIN "Assignment" a ON a.id = r."assignmentId"
+      WHERE a."taskId" IN (SELECT id FROM item) AND r."reviewerId" = ${userId}
+        AND r.decision = 'FIX'
+    ) AS labeled`;
+  return row?.labeled ?? false;
 }
 
 /**
@@ -62,8 +80,9 @@ export async function adjudicateTask(
 
     let answer: Answer;
     if (choice.kind === 'consensus') {
-      if (task.consensus === null) return { ok: false, error: 'no_consensus' };
-      answer = task.consensus as Answer;
+      // what the majority said while the task waited; not a result before this
+      if (task.majority === null) return { ok: false, error: 'no_consensus' };
+      answer = task.majority as Answer;
     } else if (choice.kind === 'submission') {
       const picked = await tx.assignment.findFirst({
         where: {
@@ -88,6 +107,7 @@ export async function adjudicateTask(
         status: 'COMPLETE',
         completedAt: now,
         consensus: answer as Prisma.InputJsonValue,
+        majority: Prisma.DbNull,
         adjudicatedById: actorId,
         adjudicatedAt: now,
         adjudicatedNote: note,
@@ -121,9 +141,16 @@ export async function sendToAdjudication(
     await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR NO KEY UPDATE`;
     const task = await tx.task.findFirst({ where: { id: taskId, projectId: project.id } });
     if (!task) return { ok: false, error: 'not_found' };
+    // what the answers so far say, for "keep the consensus" on the task page
+    const merged = (await acceptedAnswers(tx, taskId, project.schema)).merge();
     const moved = await tx.task.updateMany({
       where: { id: taskId, status: 'OPEN', extraSlots: { gt: 0 } },
-      data: { status: 'ADJUDICATION', escalatedAt: now },
+      data: {
+        status: 'ADJUDICATION',
+        escalatedAt: now,
+        majority: merged.consensus,
+        agreement: merged.agreement,
+      },
     });
     if (moved.count === 0) return { ok: false, error: 'not_waiting' };
     await tx.activity.create({
@@ -161,7 +188,7 @@ export async function listAdjudication(projectId: string, userId: string) {
     agreement: task.agreement,
     answers: task.assignments.length,
     extraSlots: task.extraSlots,
-    hasConsensus: task.consensus !== null,
+    hasConsensus: task.majority !== null,
     escalatedAt: task.escalatedAt,
     ownWork: task.assignments.some((a) => a.userId === userId),
   }));
