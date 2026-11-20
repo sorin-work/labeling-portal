@@ -65,6 +65,18 @@ export async function requireProject(
   return project;
 }
 
+/**
+ * A project whose tasks the current user may look at one by one, with every
+ * answer: managers and reviewers. The task page and the API's task lookup
+ * both ask here.
+ */
+export async function requireTaskViewer(current: CurrentUser, projectId: string): Promise<Project> {
+  const project = await requireProject(current, projectId);
+  const role = current.membership.role;
+  if (!can(role, 'manageProjects') && !can(role, 'review')) throw forbidden();
+  return project;
+}
+
 export function projectSchema(project: Pick<Project, 'schema'>): TaskSchema {
   const parsed = parseTaskSchema(project.schema);
   if (!parsed.ok) throw new Error(`Stored project schema is invalid: ${parsed.errors.join(', ')}`);

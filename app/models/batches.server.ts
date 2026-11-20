@@ -1,4 +1,4 @@
-import type { Batch, Prisma } from '@prisma/client';
+import { Prisma, type Batch } from '@prisma/client';
 
 import type { ImportFormat, ImportRow } from '~/domain/import';
 import { diffSchema } from '~/domain/schema-diff';
@@ -7,7 +7,30 @@ import { prisma } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
 
-export type CreateBatchResult = { ok: true; batch: Batch } | { ok: false; error: 'schema_changed' };
+export type CreateBatchResult =
+  | {
+      ok: true;
+      batch: Batch;
+      /** tasks in the batch */
+      tasks: number;
+      /** an earlier upload with the same Idempotency-Key made it; nothing new was written */
+      repeated: boolean;
+    }
+  | { ok: false; error: 'schema_changed' };
+
+/** The batch an earlier upload with this key made, as its first result said. */
+async function earlierBatch(
+  db: Prisma.TransactionClient | typeof prisma,
+  projectId: string,
+  key: string,
+): Promise<CreateBatchResult | null> {
+  const batch = await db.batch.findUnique({
+    where: { projectId_idempotencyKey: { projectId, idempotencyKey: key } },
+  });
+  if (!batch) return null;
+  const tasks = await db.task.count({ where: { batchId: batch.id } });
+  return { ok: true, batch, tasks, repeated: true };
+}
 
 /**
  * Creates a batch and its tasks, all of them or none. Task positions continue
@@ -30,9 +53,39 @@ export async function createBatch(
     schema: TaskSchema;
     /** who imports it, for the audit trail */
     actorId: string;
+    /**
+     * An upload that is sent again with the same key, in the same project,
+     * gets the batch the first one made instead of a second copy.
+     */
+    idempotencyKey?: string | null;
+    /** for the audit trail: the import page or the API */
+    via?: 'page' | 'api';
   },
 ): Promise<CreateBatchResult> {
+  const key = input.idempotencyKey ?? null;
+  try {
+    return await writeBatch(projectId, input, key);
+  } catch (error) {
+    // two uploads with the same key at once: the second one's insert breaks
+    // the unique key, and it answers with the first one's batch
+    if (key && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const earlier = await earlierBatch(prisma, projectId, key);
+      if (earlier) return earlier;
+    }
+    throw error;
+  }
+}
+
+async function writeBatch(
+  projectId: string,
+  input: Parameters<typeof createBatch>[1],
+  key: string | null,
+): Promise<CreateBatchResult> {
   return prisma.$transaction(async (tx) => {
+    if (key) {
+      const earlier = await earlierBatch(tx, projectId, key);
+      if (earlier) return earlier;
+    }
     const [project] = await tx.$queryRaw<Array<{ schema: unknown }>>`
       SELECT schema FROM "Project" WHERE id = ${projectId} FOR SHARE`;
     const saved = parseTaskSchema(project?.schema);
@@ -43,7 +96,7 @@ export async function createBatch(
     const last = await tx.task.aggregate({ where: { projectId }, _max: { position: true } });
     const start = (last._max.position ?? 0) + 1;
     const batch = await tx.batch.create({
-      data: { projectId, name: input.name, format: input.format },
+      data: { projectId, name: input.name, format: input.format, idempotencyKey: key },
     });
     await tx.task.createMany({
       data: input.rows.map((row, i) => ({
@@ -67,9 +120,10 @@ export async function createBatch(
         format: input.format,
         tasks: input.rows.length,
         qualification: input.qualification ?? false,
+        ...(input.via === 'api' ? { via: 'api' } : {}),
       },
     });
-    return { ok: true, batch };
+    return { ok: true, batch, tasks: input.rows.length, repeated: false };
   });
 }
 

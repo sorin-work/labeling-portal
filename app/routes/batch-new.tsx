@@ -1,19 +1,15 @@
 import { data, Form, Link, useNavigation } from 'react-router';
 
 import { Alert, Button, Card, Field, Input } from '~/components/ui';
-import { MAX_IMPORT_BYTES, readImportFile, type ImportError } from '~/domain/import';
+import { MAX_UPLOAD_BYTES, type ImportError } from '~/domain/import';
 import { requiredFields } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
-import { internalImageHosts } from '~/lib/env.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { readBoundedForm } from '~/lib/upload.server';
-import { createBatch } from '~/models/batches.server';
+import { importFile } from '~/models/import.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-new';
-
-/** Room for the form's other fields and the multipart framing around the file. */
-const FORM_OVERHEAD_BYTES = 64 * 1024;
 
 type ActionResult = {
   error?: string;
@@ -40,15 +36,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
  */
 export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
-  const project = await requireProject(current, params.projectId, 'manageProjects');
-  if (project.status === 'ARCHIVED') {
-    return data<ActionResult>(
-      { error: 'Archived projects cannot take new tasks.' },
-      { status: 400 },
-    );
-  }
-
-  const form = await readBoundedForm(request, MAX_IMPORT_BYTES + FORM_OVERHEAD_BYTES);
+  // who may import is checked here first, before the body is read, and again
+  // by `importFile`, which the API calls too
+  await requireProject(current, params.projectId, 'manageProjects');
+  const form = await readBoundedForm(request, MAX_UPLOAD_BYTES);
   if (form === 'too_large') {
     return data<ActionResult>({ error: 'Files can be at most 5 MB.' }, { status: 413 });
   }
@@ -59,48 +50,20 @@ export async function action({ request, params }: Route.ActionArgs) {
       { status: 400 },
     );
   }
-
-  const schema = projectSchema(project);
-  const qualification = form.get('qualification') === 'on';
-  const outcome = readImportFile(new Uint8Array(await file.arrayBuffer()), file.name, schema, {
-    qualification,
-    internalImageHosts: internalImageHosts(),
+  const result = await importFile(current, params.projectId, {
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    filename: file.name,
+    name: String(form.get('name') ?? ''),
+    qualification: form.get('qualification') === 'on',
   });
-  if (!outcome.ok) {
-    return data<ActionResult>(
-      {
-        error: outcome.message,
-        errors: outcome.errors,
-        more: outcome.more,
-        unit: outcome.unit,
-        validRows: outcome.validRows,
-      },
-      { status: 400 },
-    );
-  }
-
-  const name = String(form.get('name') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
-  const created = await createBatch(project.id, {
-    name,
-    format: outcome.format,
-    rows: outcome.rows,
-    qualification,
-    schema,
-    actorId: current.user.id,
-  });
-  if (!created.ok) {
-    return data<ActionResult>(
-      {
-        error:
-          'The project\u2019s schema was changed while the file was being read. Nothing was imported. Upload the file again.',
-      },
-      { status: 409 },
-    );
+  if (!result.ok) {
+    const { status, ...body } = result;
+    return data<ActionResult>(body, { status });
   }
   return redirectWithFlash(
     request,
-    `/projects/${project.id}/batches/${created.batch.id}`,
-    `Imported ${outcome.rows.length} tasks.`,
+    `/projects/${params.projectId}/batches/${result.batch.id}`,
+    `Imported ${result.tasks} tasks.`,
   );
 }
 
