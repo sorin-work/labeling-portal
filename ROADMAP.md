@@ -570,8 +570,9 @@ qualification resets, gold tasks, review decisions, settled disputes, people,
 roles and passwords, plus sign-ins, lockouts of known accounts and the three
 downloads. `/audit` for admins has filters for person, action, project and
 days, pages and a CSV download; the project tab has pages. Different from the
-design: entries are append-only in the database too, through a trigger that
-only lets deleting the account or project clear its link; review decisions
+design: entries are append-only in the database too, through triggers that
+refuse UPDATE, DELETE and TRUNCATE and let only a foreign key cascade clear a
+link or remove an organisation's entries; review decisions
 and settled disputes get a short entry (whose work, which task, the decision,
 the QA score or the outcome) although their rows exist, because they change
 pay and quality and the trail should show them in one place; a gold edit no

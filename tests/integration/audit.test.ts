@@ -182,6 +182,17 @@ describe('entries are only ever added', () => {
       /cannot be removed/,
     );
     await expect(prisma.$executeRaw`DELETE FROM "Activity"`).rejects.toThrow(/cannot be removed/);
+    // clearing a link is what a deleted account or project does, and only that may do it
+    await expect(
+      prisma.activity.updateMany({ where: { id: entry.id }, data: { projectId: null } }),
+    ).rejects.toThrow(/cannot be changed/);
+    await expect(
+      prisma.activity.updateMany({ where: { id: entry.id }, data: { actorId: null } }),
+    ).rejects.toThrow(/cannot be changed/);
+    await expect(prisma.$executeRaw`TRUNCATE "Activity"`).rejects.toThrow(/cannot be removed/);
+    await expect(prisma.$executeRaw`TRUNCATE "Organization" CASCADE`).rejects.toThrow(
+      /cannot be removed/,
+    );
 
     await prisma.user.delete({ where: { id: pat.id } });
     await prisma.project.delete({ where: { id: project.id } });

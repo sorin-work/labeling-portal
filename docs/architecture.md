@@ -580,13 +580,18 @@ turns an entry into the sentence both pages show, and covers every action.
   all. Changes that turn out to change nothing (adding someone who is already
   on the project, the same role again) write nothing. A download is recorded
   before the file is sent.
-- **Append-only.** There is no code that updates or deletes an entry, and a
-  trigger (`activity_append_only`) refuses it in the database, whatever sends
-  it. The only updates it lets through clear `actorId` or `projectId`, which
-  is what deleting the account or the project does (`SET NULL`); the entry
-  keeps `actorName`. Entries go only with their organisation. Someone with
-  the database owner's rights can still drop the trigger; this protects
-  against the app, not against the database administrator.
+- **Append-only.** There is no code that updates or deletes an entry, and
+  triggers refuse it in the database, whatever sends it: `UPDATE`, `DELETE`
+  and `TRUNCATE` (also through `TRUNCATE ... CASCADE`). The only changes let
+  through are the ones a foreign key cascade makes, which the trigger tells
+  by running nested (`pg_trigger_depth() > 1`): clearing `actorId` or
+  `projectId` when the account or the project is deleted (`SET NULL`; the
+  entry keeps `actorName`), and removing the entries of an organisation that
+  is deleted. The same clearing sent directly is refused. A save that changes
+  nothing writes no entry. Someone with the database owner's rights can still
+  drop the triggers; this protects against the app, not against the database
+  administrator. The integration tests switch the `TRUNCATE` guard off for
+  their reset only.
 - **Sign-ins.** A lockout is recorded once per lock (the first refused
   attempt), and only for an email that has an account, in the organisation it
   signs in to. An unknown email records nothing, so the sign-in form cannot
