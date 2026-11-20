@@ -3,10 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useFetcher, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
-import { useHotkeys } from '~/components/labeling/use-hotkeys';
+import { KeyboardHelp } from '~/components/keyboard-help';
+import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration, useLastInput } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { decisionsOpen, pageShortcut } from '~/domain/hotkeys';
 import { parseReviewForm } from '~/domain/review-form';
 import {
   activeHold,
@@ -177,7 +179,16 @@ function useHoldRenewal(holding: boolean) {
   return renew;
 }
 
-export default function Review({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * Approving, sending back or fixing moves on to the next submission without
+ * leaving this route, so React would keep the page's state. The key makes the
+ * score, the feedback and the fix start fresh for every submission.
+ */
+export default function Review(props: Route.ComponentProps) {
+  return <ReviewPage key={props.loaderData.assignment.id} {...props} />;
+}
+
+function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, assignment, task, history, ownWork, hold, sampleNote } = loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
@@ -185,22 +196,59 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
   const [corrected, setCorrected] = useState<Answer>(assignment.answer);
   const navigation = useNavigation();
   const approveRef = useRef<HTMLButtonElement>(null);
-
-  // 1-5 sets the quality score, "a" approves; only while not editing a fix
-  useHotkeys((key) => {
-    if (fixing) return false;
-    if (/^[1-5]$/.test(key)) {
-      setScore(Number(key));
-      return true;
-    }
-    if (key === 'a') {
-      approveRef.current?.click();
-      return true;
-    }
-    return false;
-  });
+  const feedbackRef = useRef<HTMLTextAreaElement>(null);
   const pending = assignment.reviewStatus === 'PENDING';
-  const renewHold = useHoldRenewal(pending && !ownWork && hold?.mine === true);
+  // the decision form is only there for the reviewer who holds the submission
+  const deciding = pending && !ownWork && hold?.mine === true;
+  const renewHold = useHoldRenewal(deciding);
+  // "a" does not approve, it arms: the button says so and Enter approves. One
+  // slip must not record a decision, and neither may a key that is still held
+  // down when the next submission appears.
+  const [armed, setArmed] = useState(false);
+  const armedHint = useRef<HTMLParagraphElement>(null);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    shownAt.current = Date.now();
+  }, []);
+  useEffect(() => {
+    if (!armed) return;
+    // focus goes to the hint, so that Enter cannot press some other button
+    armedHint.current?.focus();
+    const disarm = () => setArmed(false);
+    window.addEventListener('pointerdown', disarm);
+    return () => window.removeEventListener('pointerdown', disarm);
+  }, [armed]);
+  const startFix = () => {
+    setArmed(false);
+    setFixing(true);
+    renewHold();
+  };
+
+  // The keys of this page are rows of the key map (domain/hotkeys.ts). While
+  // looking, "a" approves and the digits score; while fixing they belong to
+  // the labeling interface.
+  useHotkeyPage(deciding ? 'review' : null, fixing ? 'fixing' : armed ? 'approving' : 'viewing');
+  usePageHotkeys((action, key) => {
+    if (!deciding) return false;
+    // keys that decide wait until this submission has been on screen a moment
+    const settled = navigation.state === 'idle' && decisionsOpen(shownAt.current, Date.now());
+    // whatever else is pressed after "a" (the list of shortcuts, too) calls it off
+    if (armed && action !== 'approve') setArmed(false);
+    if (action === 'score') setScore(Number(key));
+    else if (action === 'armApprove') setArmed(settled);
+    else if (action === 'approve') {
+      setArmed(false);
+      if (settled) approveRef.current?.click();
+    } else if (action === 'disarm') {
+      setArmed(false);
+      // any other key only calls the approval off and still does what it does
+      return key === 'Escape';
+    } else if (action === 'feedback') feedbackRef.current?.focus();
+    else if (action === 'fix') startFix();
+    else if (action === 'cancelFix') setFixing(false);
+    else return false;
+    return true;
+  });
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -220,6 +268,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
             {assignment.submittedAt ? formatDateTime(assignment.submittedAt) : ''}
             {task.externalId && <span className="ml-2 font-mono">{task.externalId}</span>}
           </span>
+          <KeyboardHelp page="review" schema={schema} />
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
         {sampleNote && <p className="text-sm text-slate-500">{sampleNote}.</p>}
@@ -273,7 +322,10 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
             </p>
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
-                Quality score <span className="font-normal text-slate-400">(keys 1-5)</span>
+                Quality score{' '}
+                <span className="font-normal text-slate-400">
+                  (keys {pageShortcut('review', 'score')})
+                </span>
               </legend>
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((n) => (
@@ -301,6 +353,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
             <label className="block text-sm font-medium">
               Feedback for the annotator
               <textarea
+                ref={feedbackRef}
                 name="feedback"
                 rows={4}
                 maxLength={2000}
@@ -319,7 +372,12 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                   <Button name="intent" value="fix" disabled={navigation.state !== 'idle'}>
                     Save fix
                   </Button>
-                  <Button type="button" variant="ghost" onClick={() => setFixing(false)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    title={`Shortcut: ${pageShortcut('review', 'cancelFix')}`}
+                    onClick={() => setFixing(false)}
+                  >
                     Cancel
                   </Button>
                 </>
@@ -329,8 +387,9 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                     ref={approveRef}
                     name="intent"
                     value="approve"
-                    title="Shortcut: a"
+                    title={`Shortcut: ${pageShortcut('review', 'armApprove')}, then ${pageShortcut('review', 'approve')}`}
                     disabled={navigation.state !== 'idle'}
+                    className={cx(armed && 'ring-2 ring-indigo-600 ring-offset-2')}
                   >
                     Approve
                   </Button>
@@ -338,6 +397,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                     name="intent"
                     value="send_back"
                     variant="secondary"
+                    title={`${pageShortcut('review', 'feedback')} goes to the feedback box`}
                     disabled={navigation.state !== 'idle'}
                   >
                     Send back
@@ -345,16 +405,25 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={() => {
-                      setFixing(true);
-                      renewHold();
-                    }}
+                    title={`Shortcut: ${pageShortcut('review', 'fix')}`}
+                    onClick={startFix}
                   >
                     Fix it myself
                   </Button>
                 </>
               )}
             </div>
+            {armed && !fixing && (
+              <p
+                ref={armedHint}
+                tabIndex={-1}
+                role="status"
+                className="rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-800 outline-none"
+              >
+                Press {pageShortcut('review', 'approve')} to approve this submission. Any other key
+                calls it off.
+              </p>
+            )}
           </Form>
         )}
         {history.length > 0 && (

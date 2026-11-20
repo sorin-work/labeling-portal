@@ -2,6 +2,7 @@ import type {
   Answer,
   BboxAnswer,
   ClassificationAnswer,
+  ImageSize,
   NerAnswer,
   PairwiseAnswer,
 } from '~/domain/answers';
@@ -18,6 +19,8 @@ export type LabelingProps<S extends TaskSchema = TaskSchema, A = Answer> = {
   value: A | null;
   onChange: (value: A) => void;
   readOnly?: boolean;
+  /** Box projects: called when the image has loaded and its size is known. */
+  onImageSize?: (size: ImageSize) => void;
 };
 
 /** Picks the interface for the project's labeling kind. */

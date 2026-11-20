@@ -29,6 +29,15 @@ export function removeSpan(spans: Span[], target: Pick<Span, 'start' | 'end'>): 
   return spans.filter((s) => !(s.start === target.start && s.end === target.end));
 }
 
+/** Gives a span another entity type and leaves its boundaries alone. */
+export function relabelSpan(
+  spans: Span[],
+  target: Pick<Span, 'start' | 'end'>,
+  label: string,
+): Span[] {
+  return spans.map((s) => (s.start === target.start && s.end === target.end ? { ...s, label } : s));
+}
+
 /** Splits text into plain and highlighted pieces for rendering. */
 export function segmentText(text: string, spans: Span[]): Segment[] {
   const sorted = [...spans].sort((a, b) => a.start - b.start);
