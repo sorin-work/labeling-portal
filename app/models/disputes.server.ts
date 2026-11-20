@@ -7,7 +7,7 @@ import {
   type DisputeRefusal,
   type ResolverRefusal,
 } from '~/domain/disputes';
-import { prisma } from '~/lib/db.server';
+import { lockTaskOfAssignment, prisma } from '~/lib/db.server';
 import { can, ROLES } from '~/lib/permissions';
 
 import { refreshTaskStatus } from './tasks.server';
@@ -185,6 +185,9 @@ export async function resolveDispute(
     });
     if (settled.count === 0) return { ok: false, error: 'already_resolved' };
     if (input.outcome === 'UPHELD') return { ok: true };
+
+    // the task row before the assignment row, as everywhere (lockTaskOfAssignment)
+    await lockTaskOfAssignment(tx, dispute.assignmentId);
 
     await tx.review.update({ where: { id: dispute.reviewId }, data: { overturnedAt: now } });
     // An overturned send-back becomes payable now, so it is dated now and

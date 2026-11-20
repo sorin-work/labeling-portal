@@ -9,7 +9,7 @@ import {
 
 import { payableSince } from '~/domain/payouts';
 import { holdCutoff } from '~/domain/review-hold';
-import { prisma, utc } from '~/lib/db.server';
+import { lockTaskOfAssignment, prisma, utc } from '~/lib/db.server';
 
 import { refreshTaskStatus } from './tasks.server';
 
@@ -216,6 +216,8 @@ export async function recordReview(
   now = new Date(),
 ): Promise<RecordedReview> {
   return prisma.$transaction(async (tx) => {
+    // the task row before the assignment row, as everywhere (lockTaskOfAssignment)
+    await lockTaskOfAssignment(tx, assignmentId);
     const [assignment] = await tx.assignment.updateManyAndReturn({
       where: {
         id: assignmentId,

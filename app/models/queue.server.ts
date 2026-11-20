@@ -15,7 +15,7 @@ import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { extensionsLeft, inExtendWindow, MAX_EXTENSIONS } from '~/domain/time-limit';
-import { prisma, utc } from '~/lib/db.server';
+import { lockTaskOfAssignment, prisma, retryOnLockConflict, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
 import { scoreGoldSubmission } from './gold.server';
@@ -272,15 +272,48 @@ export async function pickNextTask(
 }
 
 /**
+ * Marks the claims of the given projects (all projects when null) that ran
+ * past their time limit as expired. The tasks of those claims are locked
+ * first, in id order, and only then are the claims written: the task row
+ * before the assignment row, as everywhere, and the same order in every
+ * statement, so two of these and a submission never wait for each other in a
+ * circle.
+ */
+async function expireClaims(projectIds: string[] | null, now: Date): Promise<number> {
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      const inProjects = projectIds
+        ? Prisma.sql`AND a."projectId" IN (${Prisma.join(projectIds)})`
+        : Prisma.empty;
+      const tasks = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT t.id FROM "Task" t
+        WHERE t.id IN (
+          SELECT a."taskId" FROM "Assignment" a
+          WHERE a.status = 'ACTIVE' AND a."expiresAt" <= ${utc(now)} ${inProjects}
+        )
+        ORDER BY t.id
+        FOR NO KEY UPDATE`;
+      if (tasks.length === 0) return 0;
+      const result = await tx.assignment.updateMany({
+        where: {
+          status: 'ACTIVE',
+          expiresAt: { lte: now },
+          taskId: { in: tasks.map((t) => t.id) },
+          ...(projectIds ? { projectId: { in: projectIds } } : {}),
+        },
+        data: { status: 'EXPIRED', ...NO_DRAFT },
+      });
+      return result.count;
+    }),
+  );
+}
+
+/**
  * Marks claims that ran past their time limit as expired so the task goes back
  * to the queue. Runs lazily whenever someone asks for work.
  */
 export async function releaseExpiredClaims(projectId?: string, now = new Date()): Promise<number> {
-  const result = await prisma.assignment.updateMany({
-    where: { status: 'ACTIVE', expiresAt: { lte: now }, ...(projectId ? { projectId } : {}) },
-    data: { status: 'EXPIRED', ...NO_DRAFT },
-  });
-  return result.count;
+  return expireClaims(projectId ? [projectId] : null, now);
 }
 
 /** How many tasks the annotator could still pick up in each project. */
@@ -291,10 +324,7 @@ export async function countAvailable(
 ): Promise<Map<string, number>> {
   if (projectIds.length === 0) return new Map();
   // the slot counter counts a claim past its limit until it is marked expired
-  await prisma.assignment.updateMany({
-    where: { status: 'ACTIVE', expiresAt: { lte: now }, projectId: { in: projectIds } },
-    data: { status: 'EXPIRED', ...NO_DRAFT },
-  });
+  await expireClaims(projectIds, now);
   const rows = await prisma.$queryRaw<Array<{ projectId: string; count: bigint }>>`
     SELECT t."projectId", count(*) AS count
     FROM "Task" t
@@ -327,30 +357,32 @@ export async function claimNextTask(
 
   const pick = { project, userId, now, secret: await queueSecretFor(prisma, project.id) };
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
-    const outcome = await prisma.$transaction(async (tx) => {
-      // The pick locks the task and passes over tasks that are being claimed
-      // by someone else right now. Only when that leaves nothing does it wait
-      // for those: a task with two slots may still have one for us.
-      const taskId =
-        (await pickNextTask(tx, pick)) ?? (await pickNextTask(tx, { ...pick, wait: true }));
-      if (!taskId) return 'empty' as const;
-      // With the row locked, look again in a statement of its own. The pick
-      // counted the task's claims in its snapshot, and a claim that was
-      // committed between that count and our lock is only visible now.
-      const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
+    const outcome = await retryOnLockConflict(() =>
+      prisma.$transaction(async (tx) => {
+        // The pick locks the task and passes over tasks that are being claimed
+        // by someone else right now. Only when that leaves nothing does it wait
+        // for those: a task with two slots may still have one for us.
+        const taskId =
+          (await pickNextTask(tx, pick)) ?? (await pickNextTask(tx, { ...pick, wait: true }));
+        if (!taskId) return 'empty' as const;
+        // With the row locked, look again in a statement of its own. The pick
+        // counted the task's claims in its snapshot, and a claim that was
+        // committed between that count and our lock is only visible now.
+        const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
         SELECT ${eligibleFor(userId, Prisma.sql`${project.overlap}`)} AS eligible
         FROM "Task" t WHERE t.id = ${taskId}`;
-      if (!check?.eligible) return null;
-      return tx.assignment.create({
-        data: {
-          projectId: project.id,
-          taskId,
-          userId,
-          claimedAt: now,
-          expiresAt: addMinutes(now, project.timeLimitMinutes),
-        },
-      });
-    });
+        if (!check?.eligible) return null;
+        return tx.assignment.create({
+          data: {
+            projectId: project.id,
+            taskId,
+            userId,
+            claimedAt: now,
+            expiresAt: addMinutes(now, project.timeLimitMinutes),
+          },
+        });
+      }),
+    );
     if (outcome === 'empty') return { ok: false, reason: 'empty' };
     if (outcome) return { ok: true, assignment: outcome, resumed: false };
   }
@@ -464,10 +496,15 @@ export async function submitAssignment(
     // only while it is still active. When the same form is posted twice
     // around the deadline, the first post may have been in time and stored,
     // and that submission must not be turned into an expired claim.
-    const expired = await prisma.assignment.updateMany({
-      where: { id: assignmentId, status: 'ACTIVE' },
-      data: { status: 'EXPIRED', ...NO_DRAFT },
-    });
+    const expired = await retryOnLockConflict(() =>
+      prisma.$transaction(async (tx) => {
+        await lockTaskOfAssignment(tx, assignmentId);
+        return tx.assignment.updateMany({
+          where: { id: assignmentId, status: 'ACTIVE' },
+          data: { status: 'EXPIRED', ...NO_DRAFT },
+        });
+      }),
+    );
     return { ok: false, error: expired.count > 0 ? 'expired' : 'not_active' };
   }
 
@@ -490,57 +527,61 @@ export async function submitAssignment(
       : { review: false, sample: null };
 
   const reviewStatus = sampling.review ? 'PENDING' : 'NOT_REQUIRED';
-  const assignment = await prisma.$transaction(async (tx) => {
-    // The person's clock first, in every transaction that credits time: the
-    // claim is credited only the minutes of its window that no other work of
-    // theirs has been credited, so the same minutes are not paid twice.
-    const clock = await lockWorkClock(tx, task.project.orgId, userId, now);
-    const credit = creditTime({
-      reported: clock ? input.activeSeconds : 0,
-      start: found.assignment.claimedAt,
-      now,
-      credited: clock?.credited ?? [],
-      // the claim plus at most one more limit, however often it was extended
-      cap: firstSubmissionCap(task.project.timeLimitMinutes),
-    });
-    // scored here, under a lock on the expected answer, so a manager's edit of
-    // it cannot fall between reading it and storing the score
-    const goldScore = task.isGold
-      ? await scoreGoldSubmission(tx, task.id, task.project.schema, input.answer)
-      : null;
-    // The rate is frozen in the write that submits the work, and it is read
-    // here, in the same transaction, holding the project row: a settings save
-    // that changes the rate either waits for this submission or is seen by it.
-    const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
+  const assignment = await retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      // The person's clock first, in every transaction that credits time: the
+      // claim is credited only the minutes of its window that no other work of
+      // theirs has been credited, so the same minutes are not paid twice.
+      const clock = await lockWorkClock(tx, task.project.orgId, userId, now);
+      // then the task row, before the assignment row (lockTaskOfAssignment)
+      await lockTaskOfAssignment(tx, assignmentId);
+      const credit = creditTime({
+        reported: clock ? input.activeSeconds : 0,
+        start: found.assignment.claimedAt,
+        now,
+        credited: clock?.credited ?? [],
+        // the claim plus at most one more limit, however often it was extended
+        cap: firstSubmissionCap(task.project.timeLimitMinutes),
+      });
+      // scored here, under a lock on the expected answer, so a manager's edit of
+      // it cannot fall between reading it and storing the score
+      const goldScore = task.isGold
+        ? await scoreGoldSubmission(tx, task.id, task.project.schema, input.answer)
+        : null;
+      // The rate is frozen in the write that submits the work, and it is read
+      // here, in the same transaction, holding the project row: a settings save
+      // that changes the rate either waits for this submission or is seen by it.
+      const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
       SELECT "rateCents", "payMode" FROM "Project"
       WHERE id = ${found.assignment.projectId} FOR SHARE`;
-    // only a claim that is still active is written, so a form posted twice
-    // cannot replace the first outcome with a second draw
-    const [submitted] = await tx.assignment.updateManyAndReturn({
-      where: { id: assignmentId, status: 'ACTIVE' },
-      data: {
-        status: 'SUBMITTED',
-        submittedAt: now,
-        rateCents: pay.rateCents,
-        payMode: pay.payMode,
-        // work that needs no review is payable from this moment
-        payableAt: payableSince(reviewStatus, now),
-        answer: input.answer,
-        goldScore,
-        reviewStatus,
-        reviewSample: sampling.sample,
-        activeSeconds: credit.seconds,
-        ...NO_DRAFT,
-      },
-    });
-    if (submitted) await recordCredit(tx, clock, credit, now);
-    // work that no reviewer will see is accepted at once and can complete the
-    // task, in the same transaction as the write that accepts it
-    if (submitted && !sampling.review && !task.isGold) {
-      await refreshTaskStatus(submitted.taskId, tx, now);
-    }
-    return submitted;
-  });
+      // only a claim that is still active is written, so a form posted twice
+      // cannot replace the first outcome with a second draw
+      const [submitted] = await tx.assignment.updateManyAndReturn({
+        where: { id: assignmentId, status: 'ACTIVE' },
+        data: {
+          status: 'SUBMITTED',
+          submittedAt: now,
+          rateCents: pay.rateCents,
+          payMode: pay.payMode,
+          // work that needs no review is payable from this moment
+          payableAt: payableSince(reviewStatus, now),
+          answer: input.answer,
+          goldScore,
+          reviewStatus,
+          reviewSample: sampling.sample,
+          activeSeconds: credit.seconds,
+          ...NO_DRAFT,
+        },
+      });
+      if (submitted) await recordCredit(tx, clock, credit, now);
+      // work that no reviewer will see is accepted at once and can complete the
+      // task, in the same transaction as the write that accepts it
+      if (submitted && !sampling.review && !task.isGold) {
+        await refreshTaskStatus(submitted.taskId, tx, now);
+      }
+      return submitted;
+    }),
+  );
   if (!assignment) return { ok: false, error: 'not_active' };
   return { ok: true, assignment };
 }
@@ -554,10 +595,15 @@ export async function skipAssignment(
   if ('error' in found) return { ok: false, error: found.error! };
   // conditional for the same reason as in submitAssignment: a second post must
   // not turn a submission that was just stored into a skip
-  const skipped = await prisma.assignment.updateMany({
-    where: { id: assignmentId, status: 'ACTIVE' },
-    data: { status: 'SKIPPED', skipReason: reason, ...NO_DRAFT },
-  });
+  const skipped = await retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      await lockTaskOfAssignment(tx, assignmentId);
+      return tx.assignment.updateMany({
+        where: { id: assignmentId, status: 'ACTIVE' },
+        data: { status: 'SKIPPED', skipReason: reason, ...NO_DRAFT },
+      });
+    }),
+  );
   return skipped.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 
@@ -596,6 +642,8 @@ export async function resubmitAssignment(
   now = new Date(),
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
   return prisma.$transaction(async (tx) => {
+    // the task row before the assignment row, as everywhere (lockTaskOfAssignment)
+    await lockTaskOfAssignment(tx, assignmentId);
     if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
     const sentBack: Prisma.AssignmentWhereInput = {
       id: assignmentId,
@@ -647,10 +695,15 @@ export async function releaseAssignment(
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
-  const released = await prisma.assignment.updateMany({
-    where: { id: assignmentId, status: 'ACTIVE' },
-    data: { status: 'RELEASED', ...NO_DRAFT },
-  });
+  const released = await retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      await lockTaskOfAssignment(tx, assignmentId);
+      return tx.assignment.updateMany({
+        where: { id: assignmentId, status: 'ACTIVE' },
+        data: { status: 'RELEASED', ...NO_DRAFT },
+      });
+    }),
+  );
   return released.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 

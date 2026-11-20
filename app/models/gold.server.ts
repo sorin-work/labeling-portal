@@ -46,9 +46,11 @@ async function lockTask(tx: Tx, projectId: string, taskId: string) {
 /**
  * Scores a submission against the expected answer of its gold task, inside
  * the transaction that stores the submission. The expected answer is read
- * under a shared lock: a manager's edit either lands first and is used here,
- * or waits until this submission is stored and is then picked up by a
- * rescore. Annotators submitting at the same time do not block each other.
+ * with the task row locked (`FOR NO KEY UPDATE`, the lock every writer of an
+ * assignment takes first): a manager's edit either lands first and is used
+ * here, or waits until this submission is stored and is then picked up by a
+ * rescore. Annotators submitting the same gold task queue on the row for the
+ * moment a submission takes.
  */
 export async function scoreGoldSubmission(
   tx: Tx,
@@ -57,7 +59,7 @@ export async function scoreGoldSubmission(
   answer: unknown,
 ): Promise<number | null> {
   const [task] = await tx.$queryRaw<Array<{ goldAnswer: unknown }>>`
-    SELECT "goldAnswer" FROM "Task" WHERE id = ${taskId} FOR SHARE`;
+    SELECT "goldAnswer" FROM "Task" WHERE id = ${taskId} FOR NO KEY UPDATE`;
   const schema = parseTaskSchema(schemaJson);
   if (!task?.goldAnswer || !schema.ok) return null;
   return scoreAgainstGold(schema.schema, answer as Answer, task.goldAnswer as Answer);
