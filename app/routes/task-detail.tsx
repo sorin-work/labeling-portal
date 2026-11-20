@@ -1,18 +1,29 @@
-import { Link } from 'react-router';
+import { data, Form, Link, useNavigation } from 'react-router';
 
 import { CopyButton } from '~/components/copy-button';
+import { GoldPanel } from '~/components/gold-panel';
 import { LabelingInterface } from '~/components/labeling';
-import { Badge, Card, EmptyState, PageHeader } from '~/components/ui';
+import { Alert, Badge, Button, Card, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
-import type { Answer } from '~/domain/answers';
+import { parseAnswerJson, type Answer } from '~/domain/answers';
+import { formatGoldScore, parseGoldReason } from '~/domain/gold';
 import { finalAnswer } from '~/domain/outcome';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, REVIEW_BADGES, titleCase } from '~/lib/format';
-import { forbidden, notFound } from '~/lib/http';
+import { redirectWithFlash } from '~/lib/flash.server';
+import { badRequest, forbidden, notFound } from '~/lib/http';
 import { can } from '~/lib/permissions';
+import {
+  applyRescore,
+  editGoldAnswer,
+  goldTaskView,
+  promoteToGold,
+  setGoldRetired,
+  type GoldRefusal,
+} from '~/models/gold.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/task-detail';
@@ -46,15 +57,28 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   });
   if (!task) throw notFound('Task not found');
   const now = new Date();
+  // the expected answer, its history and the actions are for managers only;
+  // reviewers see that a task is gold and how each answer scored, as before
+  const canManage = can(role, 'manageProjects');
+  const gold = canManage ? await goldTaskView(project, task.id) : null;
 
   return {
     projectId: project.id,
     schema: projectSchema(project),
+    gold,
+    canUseAsGold:
+      canManage &&
+      !task.isGold &&
+      !task.isQualification &&
+      task.status === 'COMPLETE' &&
+      task.consensus !== null,
     task: {
       id: task.id,
       externalId: task.externalId,
       position: task.position,
       status: task.status,
+      isGold: task.isGold,
+      goldRetired: task.goldRetiredAt !== null,
       data: task.data as Record<string, unknown>,
       consensus: task.consensus as Answer | null,
       agreement: task.agreement,
@@ -73,6 +97,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       claimedAt: a.claimedAt,
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
+      goldScore: task.isGold ? a.goldScore : null,
       skipReason: a.skipReason,
       answer: a.answer ? finalAnswer<Answer>(a.answer, a.reviews) : null,
       corrected: a.reviews.some((r) => r.decision === 'FIX' && !r.overturnedAt),
@@ -88,8 +113,92 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   };
 }
 
-export default function TaskDetail({ loaderData }: Route.ComponentProps) {
-  const { projectId, schema, task, assignments } = loaderData;
+const REFUSALS: Record<GoldRefusal['error'], string> = {
+  not_found: 'Task not found.',
+  not_gold: 'This task has no expected answer to change.',
+  unchanged: 'That is the expected answer already.',
+  already_done: 'Someone already did that.',
+  invalid: 'The expected answer is not valid.',
+};
+
+/** POST: what a manager does to a gold task. Everything here needs `manageProjects`. */
+export async function action({ request, params }: Route.ActionArgs) {
+  const current = await requireUser(request);
+  const project = await requireProject(current, params.projectId, 'manageProjects');
+  const form = await request.formData();
+  const intent = String(form.get('intent') ?? '');
+  const here = `/projects/${project.id}/tasks/${params.taskId}`;
+  const refuse = (refusal: GoldRefusal) => {
+    if (refusal.error === 'not_found') throw notFound('Task not found');
+    const message =
+      refusal.error === 'invalid'
+        ? `The expected answer is not valid: ${refusal.message}`
+        : REFUSALS[refusal.error];
+    return data({ error: message }, { status: refusal.error === 'invalid' ? 400 : 409 });
+  };
+
+  if (intent === 'gold-rescore') {
+    const result = await applyRescore(project, params.taskId, current.user.id);
+    if (!result.ok) return refuse({ error: result.error });
+    const { changes, impact } = result.plan;
+    return redirectWithFlash(
+      request,
+      here,
+      changes.length === 0
+        ? 'Every score was up to date already. Nothing changed.'
+        : `Rescored ${changes.length} answer${changes.length === 1 ? '' : 's'}. Gold accuracy changed for ${impact.moved.length} annotator${impact.moved.length === 1 ? '' : 's'}.`,
+    );
+  }
+
+  if (intent === 'gold-copy') {
+    const outcome = await promoteToGold(project, [params.taskId], current.user.id);
+    if (outcome.created.length === 0) {
+      const why = outcome.skipped[0]?.why ?? 'it cannot be used as gold';
+      return data({ error: `This task was not copied: ${why}.` }, { status: 409 });
+    }
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/tasks/${outcome.created[0]}`,
+      'Made a gold task from the consensus. This is the copy; the original is unchanged.',
+    );
+  }
+
+  const reason = parseGoldReason(form.get('reason'));
+  if (!reason.ok) return data({ error: reason.error }, { status: 400 });
+
+  if (intent === 'gold-edit') {
+    const raw = form.get('gold');
+    const result = await editGoldAnswer(project, params.taskId, current.user.id, {
+      answer: raw ? parseAnswerJson(raw) : { preference: form.get('preference') },
+      reason: reason.reason,
+    });
+    if (!result.ok) return refuse(result);
+    return redirectWithFlash(request, here, 'Saved the expected answer. Scores were not changed.');
+  }
+
+  if (intent === 'gold-retire' || intent === 'gold-restore') {
+    const retired = intent === 'gold-retire';
+    const result = await setGoldRetired(project, params.taskId, current.user.id, {
+      retired,
+      reason: reason.reason,
+    });
+    if (!result.ok) return refuse(result);
+    return redirectWithFlash(
+      request,
+      here,
+      retired
+        ? 'Retired. The task is no longer handed out and its scores do not count.'
+        : 'Brought back. The task is in the queue again and its scores count.',
+    );
+  }
+
+  throw badRequest('Unknown action');
+}
+
+export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
+  const { projectId, schema, task, assignments, gold, canUseAsGold } = loaderData;
+  const navigation = useNavigation();
+  const busy = navigation.state !== 'idle';
   const submitted = assignments.filter((a) => a.answer);
   const other = assignments.filter((a) => !a.answer);
 
@@ -119,6 +228,11 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
             <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
               {titleCase(task.status)}
             </Badge>
+            {task.isGold && (
+              <span className="ml-1">
+                <Badge tone="amber">{task.goldRetired ? 'Gold, retired' : 'Gold'}</Badge>
+              </span>
+            )}
             {task.agreement !== null && (
               <span> · agreement {Math.round(task.agreement * 100)}%</span>
             )}
@@ -126,6 +240,47 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
         }
       />
 
+      {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {gold && (gold.isGold || gold.isQualification) && (
+        <GoldPanel
+          key={task.id}
+          projectId={projectId}
+          schema={schema}
+          data={task.data}
+          gold={gold}
+          busy={busy}
+        />
+      )}
+      {canUseAsGold && gold && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <div className="text-slate-600">
+            {gold.copies.length > 0 ? (
+              <>
+                Used as gold:{' '}
+                {gold.copies.map((copy) => (
+                  <Link
+                    key={copy.id}
+                    to={`/projects/${projectId}/tasks/${copy.id}`}
+                    className="mr-2 text-indigo-700 hover:underline"
+                  >
+                    task #{copy.position}
+                    {copy.retired && ' (retired)'}
+                  </Link>
+                ))}
+              </>
+            ) : (
+              'Use this task as gold: a copy with the consensus as its expected answer goes into the queue. This task and its labels stay as they are.'
+            )}
+          </div>
+          {gold.copies.every((copy) => copy.retired) && (
+            <Form method="post">
+              <Button name="intent" value="gold-copy" variant="secondary" disabled={busy}>
+                Use as gold
+              </Button>
+            </Form>
+          )}
+        </Card>
+      )}
       {task.consensus && (
         <Card>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -155,6 +310,11 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
                 {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                 {a.corrected && <Badge tone="sky">Showing reviewer correction</Badge>}
                 {a.heldBy && <Badge tone="indigo">With {a.heldBy}</Badge>}
+                {a.goldScore !== null && (
+                  <Badge tone={a.goldScore >= 0.8 ? 'emerald' : 'rose'}>
+                    Gold {formatGoldScore(a.goldScore)}
+                  </Badge>
+                )}
                 <span className="text-slate-500">
                   {formatDuration(a.activeSeconds)} ·{' '}
                   {a.submittedAt ? formatDateTime(a.submittedAt) : ''}

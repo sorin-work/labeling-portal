@@ -34,7 +34,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     orderBy: { claimedAt: 'desc' },
     take: 50,
     include: {
-      task: { select: { id: true, externalId: true, data: true, isGold: true } },
+      task: {
+        select: { id: true, externalId: true, data: true, isGold: true, goldRetiredAt: true },
+      },
       reviews: {
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -52,6 +54,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       externalId: a.task.externalId,
       preview: taskPreview(schema, a.task.data, 60),
       isGold: a.task.isGold,
+      goldRetired: a.task.goldRetiredAt !== null,
       status: a.status,
       reviewStatus: a.reviewStatus,
       goldScore: a.goldScore,
@@ -100,8 +103,17 @@ export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
                 {w.status === 'SKIPPED' ? (
                   <Badge tone="slate">Skipped: {w.skipReason}</Badge>
                 ) : w.isGold ? (
-                  <Badge tone={w.goldScore !== null && w.goldScore >= 0.8 ? 'emerald' : 'rose'}>
+                  <Badge
+                    tone={
+                      w.goldRetired
+                        ? 'slate'
+                        : w.goldScore !== null && w.goldScore >= 0.8
+                          ? 'emerald'
+                          : 'rose'
+                    }
+                  >
                     Gold {w.goldScore === null ? '–' : `${Math.round(w.goldScore * 100)}%`}
+                    {w.goldRetired && ', retired, not counted'}
                   </Badge>
                 ) : (
                   badge && <Badge tone={badge.tone}>{badge.label}</Badge>

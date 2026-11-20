@@ -39,6 +39,22 @@ function describe(action: string, detail: Detail, names: Map<string, string>): s
       return `added ${names.get(String(d.userId)) ?? 'someone'} to the project`;
     case 'member.removed':
       return `removed ${names.get(String(d.userId)) ?? 'someone'} from the project`;
+    case 'gold.created':
+      return `made ${d.tasks} gold task${d.tasks === 1 ? '' : 's'} from completed tasks`;
+    case 'gold.edited':
+      return `changed the expected answer of gold task #${d.position} from “${d.from}” to “${d.to}”: ${d.reason}`;
+    case 'gold.retired':
+      return `retired gold task #${d.position}: ${d.reason}`;
+    case 'gold.restored':
+      return `brought gold task #${d.position} back: ${d.reason}`;
+    case 'gold.rescored': {
+      const count = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+      const flags = [
+        count(d.newlyFlagged) ? `${count(d.newlyFlagged)} newly flagged` : '',
+        count(d.noLongerFlagged) ? `${count(d.noLongerFlagged)} no longer flagged` : '',
+      ].filter(Boolean);
+      return `rescored gold task #${d.position}: ${d.scores} score${d.scores === 1 ? '' : 's'} changed for ${d.annotators} annotator${d.annotators === 1 ? '' : 's'}${flags.length ? ` (${flags.join(', ')})` : ''}`;
+    }
     default:
       return action;
   }

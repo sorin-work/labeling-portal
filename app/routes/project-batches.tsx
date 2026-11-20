@@ -68,8 +68,10 @@ export default function ProjectBatches({ loaderData }: Route.ComponentProps) {
                       <div className="h-1.5 w-24 overflow-hidden rounded bg-slate-100">
                         <div className="h-full bg-emerald-500" style={{ width: `${pct}%` }} />
                       </div>
-                      <span className="w-24 text-xs text-slate-500">
+                      <span className="w-40 text-xs text-slate-500">
                         {batch.complete}/{batch.total} done
+                        {batch.gold > 0 && `, ${batch.gold} gold`}
+                        {batch.qualification > 0 && `, ${batch.qualification} test`}
                       </span>
                     </div>
                   </td>
