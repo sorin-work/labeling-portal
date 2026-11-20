@@ -32,11 +32,18 @@ at the end. The table lists who can open each page.
 | `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators) |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
+| `/audit`                            | The organisation's audit trail           | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
 
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are
 in [architecture](architecture.md#changing-the-schema-once-work-exists).
+
+`/audit` takes `person`, `action`, `project`, `from`, `to` (days in UTC,
+both included; no dates means all of them) and `page`. Every read names the
+admin's own organisation, so a filter with another organisation's id finds
+nothing. `/projects/:id/activity` shows one project's entries in pages to the
+managers of the project.
 
 `/earnings` takes no person from the request. Whose earnings it shows comes
 from the session, so nobody can open someone else's.
@@ -59,6 +66,7 @@ These are resource routes that return files or JSON instead of pages.
 | `GET /projects/:id/example?format=csv\|jsonl`                  | Example import file for the project's schema                             |
 | `GET /projects/:id/quality.csv`                                | Annotator quality table                                                  |
 | `GET /payouts/export?from=&to=`                                | Payout CSV, one row per person, project, rate                            |
+| `GET /audit/export?person=&action=&project=&from=&to=`         | Audit CSV with the filters of `/audit`, oldest first (admins)            |
 
 Projects from another organisation answer 404, not 403, so their ids cannot
 be probed.

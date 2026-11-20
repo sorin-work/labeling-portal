@@ -32,7 +32,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `GoldRevision`         | A change to a gold task: who, when, why, the answer before and after |
 | `QueueSecret`          | The key of a project's queue hashes; no page ever gets it            |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
-| `Activity`             | What managers did to a project (settings, imports, members, status)  |
+| `Activity`             | The audit trail: changes, sign-ins and downloads, never changed      |
 
 ## Task lifecycle
 
@@ -472,10 +472,55 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 - The dashboard shows managers a **needs attention** list: submissions waiting
   for review for more than a day and annotators whose gold accuracy is below
   80% after at least three gold tasks.
-- Every project has an **activity** tab with settings changes, imports, batch
-  deletions, status changes and membership changes.
+- Every project has an **activity** tab, and admins have `/audit` for the
+  whole organisation. See "Audit trail" below.
 - Sign-in attempts are rate limited per email (ten failures per fifteen
   minutes, in memory).
+
+## Audit trail
+
+`Activity` is the audit trail. An entry has the organisation, the project if
+it is about one, the actor and their name, an action from `ACTIVITY_ACTIONS`
+in `app/domain/activity.ts` and a small `detail`. `describeActivity` there
+turns an entry into the sentence both pages show, and covers every action.
+
+- **What is recorded**: projects created, copied, launched, paused or
+  archived; settings saves with what changed; batches imported, deleted,
+  reprioritised, paused and resumed; people added to or removed from a
+  project and qualification resets; gold tasks made, edited, retired, brought
+  back and rescored; review decisions (whose work, which task, the decision
+  and the QA score); settled disputes; people added to the organisation, role
+  changes, passwords an admin set, people removed, own password changes;
+  sign-ins and lockouts; and the downloads of labels, the quality table and
+  the pay report. Adjudication (item 11) does not exist yet.
+- **A settings save** keeps `detail.changes`, a map from field name to
+  `[before, after]` (`settingsChanges`). `instructions` holds the two lengths,
+  not the text. `schema` holds the two schemas, as item 2 wrote it, and is
+  diffed again when the entry is read.
+- **No secrets and no answers.** A password event says who and whose. A
+  review entry has no feedback and no corrected answer, a dispute entry no
+  reasons, a gold edit names the task and the reason but not the answers (the
+  gold task's history has them). Review and dispute rows hold the rest.
+- **Same transaction.** `logActivity(tx, ...)` takes the transaction that
+  makes the change, so the change and its entry commit together or not at
+  all. Changes that turn out to change nothing (adding someone who is already
+  on the project, the same role again) write nothing. A download is recorded
+  before the file is sent.
+- **Append-only.** There is no code that updates or deletes an entry, and a
+  trigger (`activity_append_only`) refuses it in the database, whatever sends
+  it. The only updates it lets through clear `actorId` or `projectId`, which
+  is what deleting the account or the project does (`SET NULL`); the entry
+  keeps `actorName`. Entries go only with their organisation. Someone with
+  the database owner's rights can still drop the trigger; this protects
+  against the app, not against the database administrator.
+- **Sign-ins.** A lockout is recorded once per lock (the first refused
+  attempt), and only for an email that has an account, in the organisation it
+  signs in to. An unknown email records nothing, so the sign-in form cannot
+  be used to write to the trail.
+- **Who reads it.** `/audit` and its CSV are for admins (`viewAudit`), and the
+  project tab for the managers of the project. Every read names the
+  organisation, so no entry of another one comes back.
+- **How long**: for ever, until size is a problem.
 
 ## Backups
 
