@@ -60,6 +60,7 @@ describe('parseProjectForm', () => {
         timeLimitMinutes: 15,
         reviewRequired: true,
         reviewSamplePercent: 100,
+        disputeWindowDays: 14,
         qualificationRequired: false,
         qualificationPassPercent: 75,
         payMode: 'HOURLY',
@@ -78,6 +79,19 @@ describe('parseProjectForm', () => {
       const result = parseProjectForm(form({ ...valid, reviewSamplePercent: bad }));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(Object.keys(result.errors)).toEqual(['reviewSamplePercent']);
+    }
+  });
+
+  it('reads the dispute window, which a blank does not switch off', () => {
+    const week = parseProjectForm(form({ ...valid, disputeWindowDays: '7' }));
+    expect(week.ok && week.value.disputeWindowDays).toBe(7);
+    const off = parseProjectForm(form({ ...valid, disputeWindowDays: '0' }));
+    expect(off.ok && off.value.disputeWindowDays).toBe(0);
+
+    for (const bad of ['', '91', '-1', '1.5']) {
+      const result = parseProjectForm(form({ ...valid, disputeWindowDays: bad }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(Object.keys(result.errors)).toEqual(['disputeWindowDays']);
     }
   });
 
