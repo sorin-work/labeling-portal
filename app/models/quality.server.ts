@@ -1,4 +1,4 @@
-import type { Project } from '@prisma/client';
+import { Prisma, type Project } from '@prisma/client';
 
 import { categoricalValue, fleissKappa, pairwiseKappas } from '~/domain/agreement';
 import type { Answer } from '~/domain/answers';
@@ -38,33 +38,82 @@ function mean(values: number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
 }
 
+type QualityReview = {
+  decision: string;
+  qaScore: number | null;
+  correctedAnswer: unknown;
+  createdAt: Date;
+  overturnedAt: Date | null;
+};
+
+type QualityRow = {
+  id: string;
+  userId: string;
+  taskId: string;
+  status: 'SUBMITTED' | 'SKIPPED';
+  skipReason: string | null;
+  activeSeconds: number;
+  goldScore: number | null;
+  answer: unknown;
+  user: { id: string; name: string };
+  task: { isGold: boolean; goldRetiredAt: Date | null };
+  reviews: QualityReview[];
+};
+
+/**
+ * The submitted and skipped assignments of a project with what the quality
+ * page needs of them, in two statements: the assignments joined to their
+ * annotator and task, then the reviews of those assignments. Answers (and
+ * corrected answers) are only read for categorical projects, where kappa
+ * needs them. A project with hundreds of thousands of answers is read in a
+ * few seconds this way, where loading the same rows as nested relations took
+ * minutes.
+ */
+async function loadQualityRows(projectId: string, categorical: boolean): Promise<QualityRow[]> {
+  const answer = categorical ? Prisma.sql`a.answer` : Prisma.sql`NULL::jsonb`;
+  const corrected = categorical ? Prisma.sql`r."correctedAnswer"` : Prisma.sql`NULL::jsonb`;
+  const [rows, reviews] = await Promise.all([
+    prisma.$queryRaw<
+      Array<
+        Omit<QualityRow, 'user' | 'task' | 'reviews'> & {
+          name: string;
+          isGold: boolean;
+          goldRetiredAt: Date | null;
+        }
+      >
+    >`
+      SELECT a.id, a."userId", a."taskId", a.status::text AS status, a."skipReason",
+             a."activeSeconds", a."goldScore", ${answer} AS answer,
+             u.name, t."isGold", t."goldRetiredAt"
+      FROM "Assignment" a
+      JOIN "User" u ON u.id = a."userId"
+      JOIN "Task" t ON t.id = a."taskId"
+      WHERE a."projectId" = ${projectId} AND a.status IN ('SUBMITTED', 'SKIPPED')`,
+    prisma.$queryRaw<Array<QualityReview & { assignmentId: string }>>`
+      SELECT r."assignmentId", r.decision::text AS decision, r."qaScore",
+             ${corrected} AS "correctedAnswer", r."createdAt", r."overturnedAt"
+      FROM "Review" r
+      JOIN "Assignment" a ON a.id = r."assignmentId"
+      WHERE a."projectId" = ${projectId} AND a.status IN ('SUBMITTED', 'SKIPPED')`,
+  ]);
+  const byAssignment = new Map<string, QualityReview[]>();
+  for (const { assignmentId, ...review } of reviews) {
+    const list = byAssignment.get(assignmentId);
+    if (list) list.push(review);
+    else byAssignment.set(assignmentId, [review]);
+  }
+  return rows.map(({ name, isGold, goldRetiredAt, ...a }) => ({
+    ...a,
+    user: { id: a.userId, name },
+    task: { isGold, goldRetiredAt },
+    reviews: byAssignment.get(a.id) ?? [],
+  }));
+}
+
 export async function projectQuality(project: Project) {
   const schema = projectSchema(project);
   const categorical = schema.kind === 'text_classification' || schema.kind === 'pairwise';
-  const assignments = await prisma.assignment.findMany({
-    where: { projectId: project.id, status: { in: ['SUBMITTED', 'SKIPPED'] } },
-    select: {
-      userId: true,
-      taskId: true,
-      status: true,
-      skipReason: true,
-      activeSeconds: true,
-      goldScore: true,
-      // answers are only needed to compute kappa for categorical projects
-      answer: categorical,
-      user: { select: { id: true, name: true } },
-      reviews: {
-        select: {
-          decision: true,
-          qaScore: true,
-          correctedAnswer: categorical,
-          createdAt: true,
-          overturnedAt: true,
-        },
-      },
-      task: { select: { isGold: true, goldRetiredAt: true } },
-    },
-  });
+  const assignments = await loadQualityRows(project.id, categorical);
 
   type Acc = AnnotatorStats & { seconds: number[]; scores: number[]; gold: number[] };
   const byUser = new Map<string, Acc>();
