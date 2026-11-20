@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import { claimNextTask, submitAssignment } from '~/models/queue.server';
-import { reserveNextReview } from '~/models/reviews.server';
+import { recordReview, reserveNextReview } from '~/models/reviews.server';
 import { action as reviseAction } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as reviewAction, loader as reviewLoader } from '~/routes/review';
@@ -309,6 +309,60 @@ describe('task completion', () => {
     const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
     expect(done.status).toBe('COMPLETE');
     expect(done.completedAt).not.toBeNull();
+  });
+
+  it('completes a task whose last two submissions are approved at the same moment', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2 });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const annotators = [
+      await createMember(org.id, 'ANNOTATOR'),
+      await createMember(org.id, 'ANNOTATOR'),
+    ];
+    const approve = { decision: 'APPROVE' as const, qaScore: null, feedback: '' };
+
+    // a few rounds: without the lock on the task most of them leave it open
+    for (let round = 0; round < 3; round++) {
+      const [task] = await createTasks(project.id, [{ text: `round ${round}` }]);
+      const work = [];
+      for (const annotator of annotators) {
+        work.push(await submitWork(project, annotator.id, { labels: ['positive'] }));
+      }
+
+      const results = await Promise.all(work.map((w) => recordReview(w.id, reviewer.id, approve)));
+
+      expect(results.map((r) => r.ok)).toEqual([true, true]);
+      const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
+    }
+  });
+
+  it('completes a task that two unsampled submissions fill at the same moment', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2, reviewSamplePercent: 0 });
+    const [task] = await createTasks(project.id, [{ text: 'x' }]);
+    const claims = [];
+    for (let i = 0; i < 2; i++) {
+      const annotator = await createMember(org.id, 'ANNOTATOR');
+      await withHistory(project.id, annotator.id);
+      const claim = await claimNextTask(project, annotator.id, new Date(Date.now() - 60_000));
+      if (!claim.ok) throw new Error('nothing to claim');
+      claims.push(claim.assignment);
+    }
+    const input = {
+      answer: { labels: ['negative'] },
+      activeSeconds: 10,
+      reviewRequired: true,
+      reviewSamplePercent: 0,
+    };
+
+    const results = await Promise.all(
+      claims.map((claim) => submitAssignment(claim.id, claim.userId, input)),
+    );
+
+    expect(results.every((r) => r.ok && r.assignment.reviewStatus === 'NOT_REQUIRED')).toBe(true);
+    const done = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(done).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['negative'] } });
   });
 
   it('completes immediately when review is not required', async () => {

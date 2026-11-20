@@ -230,23 +230,29 @@ export async function submitAssignment(
         )
       : { review: false, sample: null };
 
-  // only a claim that is still active is written, so a form posted twice
-  // cannot replace the first outcome with a second draw
-  const [assignment] = await prisma.assignment.updateManyAndReturn({
-    where: { id: assignmentId, status: 'ACTIVE' },
-    data: {
-      status: 'SUBMITTED',
-      submittedAt: now,
-      answer: input.answer,
-      goldScore,
-      reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
-      reviewSample: sampling.sample,
-      activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
-    },
+  const assignment = await prisma.$transaction(async (tx) => {
+    // only a claim that is still active is written, so a form posted twice
+    // cannot replace the first outcome with a second draw
+    const [submitted] = await tx.assignment.updateManyAndReturn({
+      where: { id: assignmentId, status: 'ACTIVE' },
+      data: {
+        status: 'SUBMITTED',
+        submittedAt: now,
+        answer: input.answer,
+        goldScore,
+        reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
+        reviewSample: sampling.sample,
+        activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+      },
+    });
+    // work that no reviewer will see is accepted at once and can complete the
+    // task, in the same transaction as the write that accepts it
+    if (submitted && !sampling.review && !task.isGold) {
+      await refreshTaskStatus(submitted.taskId, tx, now);
+    }
+    return submitted;
   });
   if (!assignment) return { ok: false, error: 'not_active' };
-  // work that no reviewer will see is accepted at once and can complete the task
-  if (!sampling.review && !task.isGold) await refreshTaskStatus(assignment.taskId, prisma, now);
   return { ok: true, assignment };
 }
 
