@@ -84,7 +84,11 @@
 - Time spent revising sent-back work is added to the active time, which is
   paid on hourly projects. It is saved with the revision draft, so a reload
   does not lose it. A revision is credited at most the project's time limit,
-  and a task at most three time limits in all
+  and a task at most three time limits in all. A person's time is credited
+  once: time for any submission or revision counts from where their time was
+  last credited (`Membership.creditedUntil`), so several sent-back
+  submissions handed in together, or a revision made while a claim is held,
+  do not pay the same minutes twice
 
 **Upgrade note.** The day work became payable is stored from this version on
 (`Assignment.payableAt`). The migration sets it to the submission date for

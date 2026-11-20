@@ -198,6 +198,9 @@ time counts on from the saved value.
   while the session is still there.
 - Revising sent-back work keeps its draft in the same column. That assignment
   is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+  While the annotator disputes the decision the revise page is read-only, the
+  draft route refuses saves and the page sends none and counts no time. When
+  the dispute is withdrawn the page's data reloads and saving starts.
 - The qualification test has no row to keep a draft on. Its answers stay in
   `sessionStorage`, tagged with the attempt they belong to.
 - A reload is faster than the save the closing page sends, so the new page
@@ -383,6 +386,22 @@ same way.
   first claim gets, and never more than three time limits for an assignment
   in total, however often it is sent back. Every project has a time limit
   (1 to 480 minutes), so there is always a bound.
+- **A person's time is credited once.** Those bounds are per assignment, and
+  wall-clock time is one resource per person: three submissions sent back
+  together and handed in twenty minutes later hold twenty minutes of work
+  between them, and a revision made while a claim is held is not also time
+  on the claim. So each membership keeps `creditedUntil`, the moment up to
+  which the person's time has been credited. `creditTime` in
+  `app/domain/active-time.ts` is the one place time is credited, for first
+  submissions and revisions alike: a piece of work is credited from the later
+  of that moment and its own start (the claim, or the review that sent it
+  back), up to now, within its own cap, and the moment moves forward by what
+  was credited. Each credit is then its own interval and no two overlap. The
+  submit and resubmit transactions lock the membership row first, so two
+  submissions of one person are credited one after the other. The clock is
+  per organisation and not per project, so the same minutes cannot be paid
+  on two projects either. The revision draft only keeps a count; the
+  resubmission credits it.
 - **Money is whole cents everywhere.** Amounts are computed per block of
   work, which is one person, project, pay mode and rate, by `amountCents`.
   An hourly block is rounded once, to the nearest cent with half a cent
