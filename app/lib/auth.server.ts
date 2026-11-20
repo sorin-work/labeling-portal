@@ -24,7 +24,15 @@ export async function authenticate(email: string, password: string) {
   return { user, membership: user.memberships[0] };
 }
 
+/** Paths of the JSON API, where a session cookie never counts. */
+export function isApiPath(request: Request): boolean {
+  const { pathname } = new URL(request.url);
+  return pathname === '/api' || pathname.startsWith('/api/');
+}
+
 export async function getCurrentUser(request: Request): Promise<CurrentUser | null> {
+  // the API takes tokens only; a route there that asks for the session gets nobody
+  if (isApiPath(request)) return null;
   const session = await getSession(request);
   const userId = session.get('userId');
   const orgId = session.get('orgId');
@@ -39,6 +47,8 @@ export async function getCurrentUser(request: Request): Promise<CurrentUser | nu
 }
 
 export async function requireUser(request: Request): Promise<CurrentUser> {
+  // closed by default: an API route that forgot `apiRoute` answers 401, not a sign-in page
+  if (isApiPath(request)) throw apiError(401, 'The API takes a token, not a session.');
   const current = await getCurrentUser(request);
   if (!current) {
     const url = new URL(request.url);
@@ -78,16 +88,13 @@ const LAST_USED_EVERY_MS = 60_000;
  * The only place a token is read: pages never look at the header, and this
  * never looks at the session cookie, so the two ways in stay apart. It
  * answers JSON 401 for no token or one that is unknown, revoked or expired
- * or whose person has left the organisation, 403 when a read-only token is
- * used for `write`, and 429 past the per-token limit. The role is the
- * membership's as it is now, read on every request as for the pages, so the
- * same `requireProject` and `can` checks apply.
+ * or whose person has left the organisation, and 429 past the per-token
+ * limit. It only says who it is; what the token may do (read-only) is
+ * `apiRoute`'s to decide. The role is the membership's as it is now, read on
+ * every request as for the pages, so the same `requireProject` and `can`
+ * checks apply.
  */
-export async function requireApiUser(
-  request: Request,
-  access: ApiAccess,
-  now = new Date(),
-): Promise<ApiUser> {
+export async function requireApiUser(request: Request, now = new Date()): Promise<ApiUser> {
   const header = request.headers.get('Authorization') ?? '';
   const match = /^Bearer\s+(\S+)$/i.exec(header);
   if (!match || !match[1].startsWith(TOKEN_PREFIX)) {
@@ -112,9 +119,6 @@ export async function requireApiUser(
     throw apiError(429, 'Too many requests with this token.', {
       'Retry-After': String(limit.retryAfterSeconds),
     });
-  }
-  if (access === 'write' && token.readOnly) {
-    throw apiError(403, 'This token is read-only.');
   }
   await prisma.apiToken.updateMany({
     where: {

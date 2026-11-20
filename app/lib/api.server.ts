@@ -27,7 +27,11 @@ export function apiRoute(
       return apiError(405, `Use ${allowed[0]} here.`, { Allow: allowed.join(', ') });
     }
     try {
-      const current = await requireApiUser(args.request, access);
+      const current = await requireApiUser(args.request);
+      // the one place a read-only token is refused
+      if (access === 'write' && current.token.readOnly) {
+        return apiError(403, 'This token is read-only.');
+      }
       const result = await handler({ ...args, current });
       if (result instanceof Response) return result;
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
