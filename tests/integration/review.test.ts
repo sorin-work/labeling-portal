@@ -278,6 +278,7 @@ describe('reviewer stats', () => {
       reviews: 1,
       sentBack: 1,
       fixed: 0,
+      overturned: 0,
       avgScore: 2,
     });
   });

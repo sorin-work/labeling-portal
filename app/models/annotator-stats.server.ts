@@ -46,30 +46,37 @@ export type ReviewerStats = {
   reviews: number;
   sentBack: number;
   fixed: number;
+  /** decisions a dispute overturned in the period; they are not in the other numbers */
+  overturned: number;
   avgScore: number | null;
 };
 
-/** What a reviewer did in the last `days` days. */
+/** What a reviewer did in the last `days` days. Overturned decisions are counted apart. */
 export async function reviewerStats(
   userId: string,
   days = 7,
   now = new Date(),
 ): Promise<ReviewerStats> {
   const since = new Date(now.getTime() - days * DAY);
+  const standing = { reviewerId: userId, createdAt: { gte: since }, overturnedAt: null };
   const groups = await prisma.review.groupBy({
     by: ['decision'],
-    where: { reviewerId: userId, createdAt: { gte: since } },
+    where: standing,
     _count: { _all: true },
   });
   const scores = await prisma.review.aggregate({
-    where: { reviewerId: userId, createdAt: { gte: since }, qaScore: { not: null } },
+    where: { ...standing, qaScore: { not: null } },
     _avg: { qaScore: true },
+  });
+  const overturned = await prisma.review.count({
+    where: { reviewerId: userId, overturnedAt: { gte: since } },
   });
   const count = (d: string) => groups.find((g) => g.decision === d)?._count._all ?? 0;
   return {
     reviews: groups.reduce((s, g) => s + g._count._all, 0),
     sentBack: count('SEND_BACK'),
     fixed: count('FIX'),
+    overturned,
     avgScore: scores._avg.qaScore === null ? null : round(scores._avg.qaScore, 1),
   };
 }

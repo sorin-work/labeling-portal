@@ -2,7 +2,7 @@ import type { Prisma, Project } from '@prisma/client';
 
 import type { Answer } from '~/domain/answers';
 import type { ExportTask } from '~/domain/export';
-import { ACCEPTED_STATUSES, finalAnswer } from '~/domain/outcome';
+import { ACCEPTED_STATUSES, finalAnswer, standingReviews } from '~/domain/outcome';
 import { prisma } from '~/lib/db.server';
 
 export type ExportScope = 'complete' | 'all';
@@ -28,7 +28,10 @@ export async function loadExportTasks(
       assignments: {
         where: { status: 'SUBMITTED', reviewStatus: { in: [...ACCEPTED_STATUSES] } },
         orderBy: { submittedAt: 'asc' },
-        include: { user: { select: { email: true } }, reviews: true },
+        include: {
+          user: { select: { email: true } },
+          reviews: { orderBy: { createdAt: 'asc' } },
+        },
       },
     },
   });
@@ -41,7 +44,8 @@ export async function loadExportTasks(
     consensus: task.consensus as Answer | null,
     agreement: task.agreement,
     annotations: task.assignments.map((a) => {
-      const scored = a.reviews.filter((r) => r.qaScore !== null);
+      // the score of the last review that gave one and was not overturned
+      const scored = standingReviews(a.reviews).filter((r) => r.qaScore !== null);
       return {
         annotator: a.user.email,
         answer: finalAnswer<Answer>(a.answer, a.reviews),

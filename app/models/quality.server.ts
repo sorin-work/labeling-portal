@@ -4,7 +4,7 @@ import { categoricalValue, fleissKappa, pairwiseKappas } from '~/domain/agreemen
 import type { Answer } from '~/domain/answers';
 import { round } from '~/domain/geometry';
 import { isGoldFlagged } from '~/domain/gold';
-import { finalAnswer } from '~/domain/outcome';
+import { finalAnswer, standingReviews } from '~/domain/outcome';
 import { prisma } from '~/lib/db.server';
 
 import { projectSchema } from './projects.server';
@@ -54,7 +54,13 @@ export async function projectQuality(project: Project) {
       answer: categorical,
       user: { select: { id: true, name: true } },
       reviews: {
-        select: { decision: true, qaScore: true, correctedAnswer: categorical, createdAt: true },
+        select: {
+          decision: true,
+          qaScore: true,
+          correctedAnswer: categorical,
+          createdAt: true,
+          overturnedAt: true,
+        },
       },
       task: { select: { isGold: true } },
     },
@@ -106,9 +112,11 @@ export async function projectQuality(project: Project) {
       if (a.goldScore !== null) stats.gold.push(a.goldScore);
       continue;
     }
+    // a decision that a dispute overturned no longer counts for or against anyone
+    const standing = standingReviews(a.reviews);
     stats.reviewable += 1;
-    if (a.reviews.length > 0) stats.reviewedSubmissions += 1;
-    for (const review of a.reviews) {
+    if (standing.length > 0) stats.reviewedSubmissions += 1;
+    for (const review of standing) {
       stats.reviewed += 1;
       if (review.decision === 'APPROVE') stats.approved += 1;
       if (review.decision === 'SEND_BACK') stats.sentBack += 1;
