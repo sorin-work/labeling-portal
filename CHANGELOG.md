@@ -166,7 +166,7 @@ the period of its approval.
 
 - Audit trail: every change managers, reviewers and admins make to projects,
   settings, pay, schema, batches, members, qualification, gold tasks,
-  reviews, disputes and people is recorded in the same transaction as the
+  reviews, disputes, adjudication and people is recorded in the same transaction as the
   change, and so are sign-ins, lockouts of known accounts and the three
   downloads. A settings entry says which fields changed, from what to what;
   the instructions as two lengths. Entries hold no passwords and no answers

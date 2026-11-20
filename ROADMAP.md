@@ -610,6 +610,6 @@ the QA score or the outcome) although their rows exist, because they change
 pay and quality and the trail should show them in one place; a gold edit no
 longer stores the old and new answer, and old entries lost that text in the
 migration; only admins see `/audit`, project managers see their projects'
-tabs. Still open: adjudication (item 11) has nothing to record yet, entries
-are kept for ever, and someone with the database owner's rights can still
-drop the trigger.
+tabs. Tasks settled in adjudication and sent there by hand (item 11) are
+recorded as well. Still open: entries are kept for ever, and someone with the
+database owner's rights can still drop the trigger.

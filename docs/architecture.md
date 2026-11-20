@@ -496,7 +496,8 @@ turns an entry into the sentence both pages show, and covers every action.
   and the QA score); settled disputes; people added to the organisation, role
   changes, passwords an admin set, people removed, own password changes;
   sign-ins and lockouts; and the downloads of labels, the quality table and
-  the pay report. Adjudication (item 11) does not exist yet.
+  the pay report. Tasks settled in adjudication or sent there by hand are
+  recorded too (item 11).
 - **A settings save** keeps `detail.changes`, a map from field name to
   `[before, after]` (`settingsChanges`). `instructions` holds the two lengths,
   not the text. `schema` holds the two schemas, as item 2 wrote it, and is
