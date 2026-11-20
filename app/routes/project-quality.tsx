@@ -182,7 +182,12 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                     title={`${a.goldAttempts} gold task${a.goldAttempts === 1 ? '' : 's'}`}
                   >
                     {pct(a.goldAccuracy)}
-                    {a.flagged && ' ⚑'}
+                    {a.flagged && (
+                      <>
+                        <span aria-hidden> ⚑</span>
+                        <span className="sr-only"> (flagged for low gold accuracy)</span>
+                      </>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-right">
                     {a.avgSeconds === null ? '–' : formatDuration(a.avgSeconds)}
