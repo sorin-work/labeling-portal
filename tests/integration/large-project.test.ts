@@ -13,6 +13,7 @@ import {
   skipAssignment,
   submitAssignment,
 } from '~/models/queue.server';
+import { openDispute, resolveDispute } from '~/models/disputes.server';
 import { recordReview } from '~/models/reviews.server';
 
 import {
@@ -72,27 +73,51 @@ function seeded(seed: number) {
 describe('the slot counter', () => {
   beforeEach(resetDb);
 
-  it('matches a fresh count after a random series of claims, skips, releases, expiries and reviews', async () => {
+  it('matches a fresh count after a random series of everything that writes assignments', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id, { overlap: 2, reviewRequired: true });
+    // splits get an extra annotator, so extra slots are in play
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { agreementThreshold: 0.9, maxExtraAnnotators: 1, disputeWindowDays: 30 },
+    });
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
     const tasks = await createTasks(
       project.id,
       Array.from({ length: 12 }, (_, i) => ({ text: `item ${i}` })),
     );
+    // two of them gold, outside the slot count
+    await prisma.task.updateMany({
+      where: { id: { in: [tasks[3].id, tasks[8].id] } },
+      data: { isGold: true, goldAnswer: { labels: ['positive'] } },
+    });
+    // a second batch that is deleted at the end, assignments and all
+    const doomed = await createTasks(project.id, [{ text: 'gone 1' }, { text: 'gone 2' }]);
     const people = [];
     for (let i = 0; i < 6; i++) people.push(await createMember(org.id, 'ANNOTATOR'));
     await addToProject(project.id, ...people);
     const reviewer = await createMember(org.id, 'REVIEWER');
+    const arbiter = await createMember(org.id, 'PROJECT_MANAGER');
     const random = seeded(17);
     let now = new Date(Date.now() - 24 * 3600_000);
+    const label = () => ({ labels: [random() < 0.5 ? 'positive' : 'negative'] });
+    const submit = (id: string, userId: string, at: Date) =>
+      submitAssignment(
+        id,
+        userId,
+        { answer: label(), activeSeconds: 1, reviewRequired: true },
+        new Date(at.getTime() + 60_000),
+      );
+    const seen = new Set<string>();
 
-    for (let step = 0; step < 300; step++) {
+    for (let step = 0; step < 400; step++) {
       now = new Date(now.getTime() + Math.floor(random() * 20) * 60_000);
       const user = people[Math.floor(random() * people.length)];
       const roll = random();
-      if (roll < 0.1) {
+      if (roll < 0.08) {
         // the clock jumps past every time limit; expired claims are marked at the next claim
         now = new Date(now.getTime() + 2 * 3600_000);
+        seen.add('expiry');
         continue;
       }
       if (roll < 0.2) {
@@ -104,40 +129,99 @@ describe('the slot counter', () => {
           await recordReview(
             pending.id,
             reviewer.id,
-            { decision: random() < 0.7 ? 'APPROVE' : 'SEND_BACK', qaScore: null, feedback: 'ok' },
+            { decision: random() < 0.6 ? 'APPROVE' : 'SEND_BACK', qaScore: null, feedback: 'ok' },
             now,
           );
+          seen.add('review');
         }
         continue;
       }
-      const claim = await claimNextTask(project, user.id, now);
+      if (roll < 0.26) {
+        // a send-back is disputed and overturned
+        const sent = await prisma.assignment.findFirst({
+          where: { projectId: project.id, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+        });
+        if (sent) {
+          const opened = await openDispute(sent.id, sent.userId, 'It was right', now);
+          if (opened.ok) {
+            const settled = await resolveDispute(
+              opened.dispute.id,
+              arbiter.id,
+              { outcome: 'OVERTURNED', resolution: 'Agreed' },
+              now,
+            );
+            if (settled.ok) seen.add('overturn');
+          }
+        }
+        continue;
+      }
+      if (roll < 0.3) {
+        // a row removed outright, as a cascade or a cleanup would
+        const victim = await prisma.assignment.findFirst({
+          where: { projectId: project.id, status: { in: ['ACTIVE', 'SKIPPED'] } },
+          orderBy: { claimedAt: 'desc' },
+        });
+        if (victim) {
+          await prisma.assignment.delete({ where: { id: victim.id } });
+          seen.add('delete');
+        }
+        continue;
+      }
+      if (roll < 0.38) {
+        // two at once: two people claim, then one skips while the clock runs out
+        const other = people[(people.indexOf(user) + 1) % people.length];
+        const [a, b] = await Promise.all([
+          claimNextTask(fresh, user.id, now),
+          claimNextTask(fresh, other.id, now),
+        ]);
+        const later = new Date(now.getTime() + 3 * 3600_000);
+        await Promise.all([
+          a.ok ? skipAssignment(a.assignment.id, user.id, 'Other: test') : null,
+          b.ok ? releaseExpiredClaims(project.id, later) : null,
+        ]);
+        seen.add('concurrent');
+        continue;
+      }
+      const claim = await claimNextTask(fresh, user.id, now);
       if (!claim.ok) continue;
       const what = random();
       const id = claim.assignment.id;
-      if (what < 0.25) await skipAssignment(id, user.id, 'Other: test');
-      else if (what < 0.45) await releaseAssignment(id, user.id);
-      else if (what < 0.6)
+      if (what < 0.2) await skipAssignment(id, user.id, 'Other: test');
+      else if (what < 0.35) await releaseAssignment(id, user.id);
+      else if (what < 0.5)
         continue; // left open; it runs out or is handed back later
       else {
-        await submitAssignment(
-          id,
-          user.id,
-          { answer: { labels: ['positive'] }, activeSeconds: 1, reviewRequired: true },
-          new Date(now.getTime() + 60_000),
-        );
+        await submit(id, user.id, now);
+        seen.add('submit');
       }
     }
     await releaseExpiredClaims(project.id, new Date(now.getTime() + 24 * 3600_000));
 
-    const counted = await prisma.$queryRaw<Array<{ id: string; taken: number; fresh: number }>>`
-      SELECT t.id, t."takenSlots" AS taken,
-             (SELECT count(*)::int FROM "Assignment" a
-              WHERE a."taskId" = t.id AND a.status IN ('ACTIVE', 'SUBMITTED')) AS fresh
-      FROM "Task" t WHERE t."projectId" = ${project.id}`;
-    expect(counted).toHaveLength(tasks.length);
-    for (const row of counted) expect(row.taken).toBe(row.fresh);
-    // and the series did exercise the counter
-    expect(counted.some((row) => row.taken > 0)).toBe(true);
+    const counted = () =>
+      prisma.$queryRaw<Array<{ id: string; taken: number; fresh: number; extra: number }>>`
+        SELECT t.id, t."takenSlots" AS taken, t."extraSlots" AS extra,
+               (SELECT count(*)::int FROM "Assignment" a
+                WHERE a."taskId" = t.id AND a.status IN ('ACTIVE', 'SUBMITTED')) AS fresh
+        FROM "Task" t WHERE t."projectId" = ${project.id}`;
+    const before = await counted();
+    expect(before).toHaveLength(tasks.length + doomed.length);
+    for (const row of before) expect(row.taken).toBe(row.fresh);
+
+    // deleting a batch removes its assignments through the cascade without an error
+    await prisma.task.deleteMany({ where: { batchId: doomed[0].batchId } });
+    const after = await counted();
+    expect(after).toHaveLength(tasks.length);
+    for (const row of after) expect(row.taken).toBe(row.fresh);
+
+    // and the series did exercise what it claims to
+    expect(after.some((row) => row.taken > 0)).toBe(true);
+    expect(after.some((row) => row.extra > 0)).toBe(true);
+    expect([...seen].sort()).toEqual(
+      ['concurrent', 'delete', 'expiry', 'overturn', 'review', 'submit'].sort(),
+    );
+    expect(
+      await prisma.assignment.count({ where: { task: { isGold: true }, status: 'SUBMITTED' } }),
+    ).toBeGreaterThan(0);
   });
 
   it('counts a claim past its limit as free in the dashboard count and in the claim', async () => {
