@@ -7,6 +7,7 @@ import { KeyboardHelp } from '~/components/keyboard-help';
 import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration, useLastInput } from '~/components/use-active-time';
+import { useRestoreFocus } from '~/components/use-dialog-focus';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { decisionsOpen, pageShortcut } from '~/domain/hotkeys';
 import { parseReviewForm } from '~/domain/review-form';
@@ -206,6 +207,8 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
   // down when the next submission appears.
   const [armed, setArmed] = useState(false);
   const armedHint = useRef<HTMLParagraphElement>(null);
+  // the hint takes focus while armed, and gives it back when that ends
+  useRestoreFocus(armed);
   const shownAt = useRef(0);
   useEffect(() => {
     shownAt.current = Date.now();
@@ -328,23 +331,32 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                   (keys {pageShortcut('review', 'score')})
                 </span>
               </legend>
+              {/* a real radio group: one tab stop, the arrow keys choose */}
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setScore(n)}
-                    aria-pressed={score === n}
-                    className={cx(
-                      'h-8 w-8 rounded text-sm ring-1',
-                      score === n ? 'bg-indigo-600 text-white ring-indigo-600' : 'ring-slate-300',
-                    )}
-                  >
-                    {n}
-                  </button>
+                  <label key={n} className="relative">
+                    <input
+                      type="radio"
+                      name="qaScore"
+                      value={n}
+                      checked={score === n}
+                      onChange={() => setScore(n)}
+                      className="peer sr-only"
+                    />
+                    <span
+                      className={cx(
+                        'grid h-8 w-8 cursor-pointer place-items-center rounded text-sm ring-1',
+                        'peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-indigo-600',
+                        score === n
+                          ? 'bg-indigo-600 text-white ring-indigo-600'
+                          : 'ring-slate-300 hover:bg-slate-50',
+                      )}
+                    >
+                      {n}
+                    </span>
+                  </label>
                 ))}
               </div>
-              <input type="hidden" name="qaScore" value={score ?? ''} />
               <input
                 type="hidden"
                 name="corrected"

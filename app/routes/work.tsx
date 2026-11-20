@@ -9,6 +9,7 @@ import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
+import { useRestoreFocus } from '~/components/use-dialog-focus';
 import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
@@ -208,6 +209,9 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
+  // closing the skip form puts the cursor back where it was (before the
+  // effect below moves it into the form)
+  useRestoreFocus(skipping);
   useEffect(() => {
     if (skipping) skipForm.current?.querySelector<HTMLInputElement>('input[type=radio]')?.focus();
   }, [skipping]);
@@ -364,6 +368,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             </fieldset>
             <textarea
               name="detail"
+              aria-label="Details"
               rows={2}
               placeholder="Details (required for Other)"
               className="block w-full rounded-md px-3 py-2 text-sm ring-1 ring-slate-300"
