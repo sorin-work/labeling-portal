@@ -196,6 +196,10 @@ model Assignment {
   /// set when the annotator asked for more time (allowed once per claim)
   extendedAt    DateTime?
   submittedAt   DateTime?
+  /// the project's rate and pay mode when the work was first submitted;
+  /// payouts and earnings read these, never the project's current values
+  rateCents     Int?
+  payMode       PayMode?
   skipReason    String?
   answer        Json?
   activeSeconds Int              @default(0)
@@ -214,6 +218,8 @@ model Assignment {
   @@index([projectId, reviewStatus])
   @@index([userId, submittedAt])
   @@index([projectId, submittedAt])
+  @@index([userId, reviewedAt])
+  @@index([projectId, reviewedAt])
 }
 
 model Review {

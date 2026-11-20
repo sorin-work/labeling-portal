@@ -39,8 +39,15 @@ async function submit(
     seconds: number;
     reviewStatus: ReviewStatus;
     goldScore?: number | null;
+    /** the rate at the time, when the project paid something else back then */
+    rateCents?: number;
   },
 ) {
+  // a submission keeps the rate and pay mode its project had when it was made
+  const project = await prisma.project.findUniqueOrThrow({
+    where: { id: input.projectId },
+    select: { rateCents: true, payMode: true },
+  });
   return prisma.assignment.create({
     data: {
       projectId: input.projectId,
@@ -50,11 +57,25 @@ async function submit(
       claimedAt: new Date(input.submittedAt.getTime() - input.seconds * 1000 - 20_000),
       expiresAt: new Date(input.submittedAt.getTime() + 10 * 60_000),
       submittedAt: input.submittedAt,
+      rateCents: input.rateCents ?? project.rateCents,
+      payMode: project.payMode,
       activeSeconds: input.seconds,
       answer: input.answer as Prisma.InputJsonValue,
       reviewStatus: input.reviewStatus,
       goldScore: input.goldScore ?? null,
     },
+  });
+}
+
+/** A reviewer's decision. The submission gets the date of the review, as in the app. */
+async function review(
+  prisma: PrismaClient,
+  data: Prisma.ReviewUncheckedCreateInput & { createdAt: Date },
+) {
+  await prisma.review.create({ data });
+  await prisma.assignment.update({
+    where: { id: data.assignmentId },
+    data: { reviewedAt: data.createdAt },
   });
 }
 
@@ -117,17 +138,17 @@ export async function seedSentimentActivity(prisma: PrismaClient, projectId: str
         submittedAt: at(20 - i, 18 + (userId === ben ? 1 : 3)),
         seconds: 25 + Math.floor(rand() * 50),
         reviewStatus: status,
+        // the project paid 6 cents a task at first, so earnings show both rates
+        ...(i < 5 ? { rateCents: 6 } : {}),
       });
       if (!pendingReview) {
-        await prisma.review.create({
-          data: {
-            assignmentId: assignment.id,
-            reviewerId: ids.reviewer,
-            decision: sendBack ? 'SEND_BACK' : 'APPROVE',
-            qaScore: right ? 4 + Math.round(rand()) : 2,
-            feedback: sendBack ? 'Read the whole review: the complaint is the main point.' : '',
-            createdAt: at(19 - i, 21),
-          },
+        await review(prisma, {
+          assignmentId: assignment.id,
+          reviewerId: ids.reviewer,
+          decision: sendBack ? 'SEND_BACK' : 'APPROVE',
+          qaScore: right ? 4 + Math.round(rand()) : 2,
+          feedback: sendBack ? 'Read the whole review: the complaint is the main point.' : '',
+          createdAt: at(19 - i, 21),
         });
       }
       if (status === 'APPROVED') {
@@ -252,14 +273,12 @@ export async function seedPairwiseActivity(
       });
       if (i < 3) {
         answers.push(answer);
-        await prisma.review.create({
-          data: {
-            assignmentId: a.id,
-            reviewerId: ids.reviewer,
-            decision: 'APPROVE',
-            qaScore: 5,
-            createdAt: at(11 - i * 2, 21),
-          },
+        await review(prisma, {
+          assignmentId: a.id,
+          reviewerId: ids.reviewer,
+          decision: 'APPROVE',
+          qaScore: 5,
+          createdAt: at(11 - i * 2, 21),
         });
       }
     }
@@ -305,14 +324,12 @@ export async function seedNerActivity(prisma: PrismaClient, projectId: string, i
       seconds: 60 + Math.floor(rand() * 60),
       reviewStatus: 'APPROVED',
     });
-    await prisma.review.create({
-      data: {
-        assignmentId: a.id,
-        reviewerId: ids.reviewer,
-        decision: 'APPROVE',
-        qaScore: 5,
-        createdAt: at(8 - i, 20),
-      },
+    await review(prisma, {
+      assignmentId: a.id,
+      reviewerId: ids.reviewer,
+      decision: 'APPROVE',
+      qaScore: 5,
+      createdAt: at(8 - i, 20),
     });
     await prisma.task.update({
       where: { id: task.id },
