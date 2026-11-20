@@ -9,12 +9,13 @@ another project or organisation.
 A project's schema is JSON and decides the labeling interface and which fields
 of an imported row it reads.
 
-| `kind`                | Fields it reads                                   | Other settings                                                      |
-| --------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| `text_classification` | `textField`                                       | `labels` (2-30), `multiple`                                         |
-| `ner`                 | `textField`                                       | `entities` (`name`, optional `color`)                               |
-| `pairwise`            | `promptField`, `responseAField`, `responseBField` | `dimensions` (rubric, scored 1-5), `allowTie`, `minRationaleLength` |
-| `bbox`                | `imageField` (http(s) URL or `/path`)             | `labels`, `minBoxSize` (pixels)                                     |
+| `kind`                 | Fields it reads                                   | Other settings                                                      |
+| ---------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
+| `text_classification`  | `textField`                                       | `labels` (2-30), `multiple`                                         |
+| `image_classification` | `imageField` (http(s) URL or `/path`)             | `labels` (2-30), `multiple`                                         |
+| `ner`                  | `textField`                                       | `entities` (`name`, optional `color`)                               |
+| `pairwise`             | `promptField`, `responseAField`, `responseBField` | `dimensions` (rubric, scored 1-5), `allowTie`, `minRationaleLength` |
+| `bbox`                 | `imageField` (http(s) URL or `/path`)             | `labels`, `minBoxSize` (pixels)                                     |
 
 ## Import files
 
@@ -67,7 +68,7 @@ Nothing from an import is ever shown as HTML. Text, context columns and
 labels are stored as they were written and shown as plain text. Only a
 project's instructions, which a manager writes, are rendered as Markdown.
 
-For box projects the image address has to be an absolute `http://` or
+For image classification and box projects the image address has to be an absolute `http://` or
 `https://` URL, or a path on the portal itself that starts with one `/`.
 Anything else is refused: `javascript:`, `data:` and `file:` addresses, and
 `//host/...` addresses that borrow the page's scheme. The server never

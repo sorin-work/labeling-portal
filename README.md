@@ -12,7 +12,7 @@ or fix the work.
   sampled share or of nothing, pay rate. The schema can still be edited once
   work exists: edits that would break stored answers are refused, and the
   form says why before the save
-- **Four labeling interfaces**: text classification (single or multi-label),
+- **Five labeling interfaces**: text and image classification (single or multi-label),
   named-entity span highlighting, pairwise response comparison with a rubric
   (A vs B preference, 1-5 scores per dimension for both sides, written
   rationale) and bounding boxes on images
@@ -87,7 +87,7 @@ docker compose up --build
 ```
 
 Open http://localhost:4421. On first start the database is migrated and a demo
-organisation, _Harbor Data Labs_, is created with four projects (one per
+organisation, _Harbor Data Labs_, is created with five projects (one per
 labeling kind), a few weeks of reviewed work, gold tasks and a qualification
 test. Every demo account uses the password `labeling-demo`:
 
@@ -231,8 +231,9 @@ Good to know:
   every dump and every failure, and a failed dump is tried again a minute
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
-- The images of box projects are not in the database. A task only holds
-  their URL, so the files stay wherever that points.
+- The images of image classification and box projects are not in the
+  database. A task only holds their URL, so the files stay wherever that
+  points.
 - With `SEED_DEMO` left on, the app adds the demo organisation on start when
   the restored data does not have it.
 - `docker-compose.dev.yml` is only a database for local development and has

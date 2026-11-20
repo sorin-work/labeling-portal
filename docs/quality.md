@@ -172,8 +172,11 @@ page shows:
 They are described with the usual Landis and Koch bands (slight, fair,
 moderate, substantial, almost perfect).
 
-Entity and box projects use F1 between annotators instead; the page shows the
-mean agreement of completed tasks.
+Image classification counts as categorical, like text classification: its
+label sets get kappa. Entity and box projects use F1 between annotators
+instead; the page shows the mean agreement of completed tasks. Which kinds
+are categorical is decided in one place, `isCategorical` and
+`categoricalValue` in `app/domain/agreement.ts`, which name every kind.
 
 ## Consensus
 

@@ -18,6 +18,17 @@
 
 ### Importing and labeling
 
+- A fifth labeling kind, image classification (`image_classification`, with
+  `imageField`, `labels` and `multiple`): the image, then the same label
+  buttons and keys as text classification. Answers, consensus, gold scoring,
+  agreement (kappa on the quality page) and export are those of text
+  classification. Image addresses follow the rule of box projects, and the
+  server never fetches them. The demo has a fifth project, _Street scene
+  check_
+- An image that does not load, on an image classification or a box task,
+  says so with its address and points to Skip ("Content is broken or
+  unreadable") instead of showing a broken picture
+
 - Drafts: the work page saves the answer in progress and the working time to
   the server a moment after each change and when the tab is hidden or closed,
   and a reload continues from there. Revising sent-back work keeps a draft the

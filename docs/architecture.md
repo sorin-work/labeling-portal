@@ -783,7 +783,24 @@ schema union:
 6. `app/components/labeling/`: the interface, wired up in `index.tsx`.
 7. `app/domain/hotkeys.ts`: its keys in `INTERFACE_KEYS`, and how many label
    keys it needs.
-8. A `TaskKind` enum value and a migration.
+8. A `TaskKind` enum value and a migration, and its name in `KIND_NAMES`
+   (`app/lib/format.ts`), which is keyed by that enum.
+
+TypeScript finds the places above. It does not find these, which compare
+the kind with `===` or ask for one field and have to be checked by hand:
+
+- `mainField` and `isImageKind` in `app/domain/task-schema.ts`: which field
+  stands for a task in lists, the preview and the batch search, and whether
+  the import checks it as an image address (`parseImport`).
+- `TaskContext` hides `width` and `height` only for box tasks, which read
+  them themselves.
+- `tests/integration/helpers.ts` creates projects with the app's own
+  `KIND_TO_ENUM`, and `tests/dom/fixtures.ts` has one project of each kind
+  that the page tests go through.
+
+`categoricalValue` and `isCategorical` in `app/domain/agreement.ts` name
+every kind and have no default, so a new kind does not compile until it is
+decided whether it gets kappa; the quality page asks `isCategorical`.
 
 ## Conventions
 
