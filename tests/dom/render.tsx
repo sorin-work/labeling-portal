@@ -3,6 +3,14 @@ import type { ReactNode } from 'react';
 import { createRoutesStub } from 'react-router';
 
 import AppLayout from '~/routes/app-layout';
+import ProjectLayout from '~/routes/project-layout';
+
+const projectData = {
+  pendingReviews: 2,
+  openDisputes: 0,
+  project: { id: 'p1', name: 'Reviews', status: 'ACTIVE', kind: 'NER' },
+  can: { manage: true, review: true, quality: true, export: true },
+};
 
 const layoutData = {
   user: { id: 'u1', email: 'ada@example.test', name: 'Ada Admin' },
@@ -23,6 +31,7 @@ export function renderPage({
   loaderData,
   action,
   more = [],
+  inProject = false,
 }: {
   path: string;
   url: string;
@@ -33,6 +42,8 @@ export function renderPage({
   action?: () => unknown;
   /** further pages next to it, to navigate to */
   more?: Array<{ path: string; Component: () => ReactNode }>;
+  /** inside the project layout (its heading and tabs), as `/projects/:projectId/...` pages are */
+  inProject?: boolean;
 }) {
   const loader =
     typeof loaderData === 'function'
@@ -44,7 +55,16 @@ export function renderPage({
       Component: AppLayout as never,
       loader: () => layoutData,
       HydrateFallback: () => null,
-      children: [{ path, Component: Component as never, loader, action }, ...more],
+      children: inProject
+        ? [
+            {
+              path: '/projects/:projectId',
+              Component: ProjectLayout as never,
+              loader: () => projectData,
+              children: [{ path, Component: Component as never, loader, action }],
+            },
+          ]
+        : [{ path, Component: Component as never, loader, action }, ...more],
     },
   ]);
   return render(<Stub initialEntries={[url]} />);
