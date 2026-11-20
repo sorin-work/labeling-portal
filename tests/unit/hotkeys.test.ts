@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   activeInterface,
+  ANY_OTHER_KEY,
+  DECISION_PAUSE_MS,
+  decisionsOpen,
   helpSections,
   INTERFACE_KEYS,
   interfaceAction,
@@ -77,6 +80,7 @@ describe('the key map', () => {
     ['the work page', editing(at('work', 'labeling'))],
     ['the work page with the skip form open', editing(at('work', 'skipping'))],
     ['the review page, looking', { ...at('review', 'viewing'), readOnly: true }],
+    ['the review page, about to approve', { ...at('review', 'approving'), readOnly: true }],
     ['the review page, fixing', editing(at('review', 'fixing'))],
     ['the open cheat sheet', editing(at('work', 'labeling', { dialog: true }))],
   ];
@@ -96,7 +100,7 @@ describe('the key map', () => {
       const actions = liveKeys(schema, viewing).map((k) => k.action);
       expect(actions).not.toContain('label');
       expect(actions).not.toContain('remove');
-      expect(actions).toContain('approve');
+      expect(actions).toContain('armApprove');
     }
     expect(
       Object.values(INTERFACE_KEYS)
@@ -108,7 +112,7 @@ describe('the key map', () => {
   it('names a mode that exists for every limited page key', () => {
     const modes: Record<Page, string[]> = {
       work: ['labeling', 'skipping'],
-      review: ['viewing', 'fixing'],
+      review: ['viewing', 'approving', 'fixing'],
     };
     for (const page of Object.keys(PAGES) as Page[]) {
       expect(modes[page]).toContain(PAGES[page].labeling);
@@ -136,11 +140,75 @@ describe('the key map', () => {
   });
 });
 
+describe('keys that commit', () => {
+  const pages = Object.keys(PAGES) as Page[];
+  const committing = pages.flatMap((page) =>
+    PAGES[page].keys.filter((b) => b.commits).map((b) => ({ page, ...b })),
+  );
+
+  it('always name the one mode they belong to', () => {
+    expect(committing.map((b) => b.action).sort()).toEqual(['approve', 'confirmSkip', 'submit']);
+    for (const binding of committing) expect(binding.when, binding.action).toBeTruthy();
+    // and a key that commits in two modes of a page commits something else in each
+    for (const page of pages) {
+      const seen = new Map<string, string>();
+      for (const binding of committing.filter((b) => b.page === page)) {
+        for (const key of binding.keys) {
+          expect(seen.get(`${key}@${binding.when}`), `${key} twice in ${binding.when}`).toBe(
+            undefined,
+          );
+          seen.set(`${key}@${binding.when}`, binding.action);
+        }
+      }
+    }
+  });
+
+  it('make Ctrl+Enter hand in what the mode is about, never the task from the skip form', () => {
+    for (const typing of [false, true]) {
+      expect(pageAction('Mod+Enter', at('work', 'labeling', { typing }))).toBe('submit');
+      expect(pageAction('Mod+Enter', at('work', 'skipping', { typing }))).toBe('confirmSkip');
+    }
+    // no mode of any page lets a key reach the task's submit except labeling
+    for (const key of ['Mod+Enter', 'Enter', 'a', 's', '1', 'Escape', ' ']) {
+      expect(pageAction(key, at('work', 'skipping')), key).not.toBe('submit');
+    }
+  });
+
+  it('take two keys for a review decision: "a" arms, Enter approves', () => {
+    const viewing = at('review', 'viewing');
+    const approving = at('review', 'approving');
+    expect(pageAction('a', viewing)).toBe('armApprove');
+    expect(pageAction('Enter', viewing)).toBeNull();
+    expect(pageAction('Enter', approving)).toBe('approve');
+    expect(pageAction('Enter', at('review', 'fixing'))).toBeNull();
+  });
+
+  it('call the approval off on Escape and on any other key', () => {
+    const approving = at('review', 'approving');
+    for (const key of ['Escape', 'a', 's', 'e', '4', ' ', 'Tab', 'x', 'Mod+Enter']) {
+      expect(pageAction(key, approving), key).toBe('disarm');
+    }
+    // also from a text box, where Enter is a new line and nothing more
+    const typing = at('review', 'approving', { typing: true });
+    expect(pageAction('x', typing)).toBe('disarm');
+    expect(pageAction('Enter', typing)).toBe('disarm');
+    // "?" still opens the list, and the page hears about it to call the approval off
+    expect(pageAction('?', approving)).toBe('help');
+    expect(ANY_OTHER_KEY).toBe('*');
+  });
+
+  it('wait until a new submission has been on screen before deciding by key', () => {
+    expect(decisionsOpen(1_000, 1_000)).toBe(false);
+    expect(decisionsOpen(1_000, 1_000 + DECISION_PAUSE_MS - 1)).toBe(false);
+    expect(decisionsOpen(1_000, 1_000 + DECISION_PAUSE_MS)).toBe(true);
+  });
+});
+
 describe('page keys', () => {
-  it('lets "a" approve while looking and pick response A while fixing', () => {
+  it('lets "a" arm the approval while looking and pick response A while fixing', () => {
     const viewing = at('review', 'viewing');
     const fixing = at('review', 'fixing');
-    expect(pageAction('a', viewing)).toBe('approve');
+    expect(pageAction('a', viewing)).toBe('armApprove');
     expect(interfaceAction(pairwise, 'a', { ...viewing, readOnly: true })).toBeNull();
     expect(pageAction('a', fixing)).toBeNull();
     expect(interfaceAction(pairwise, 'a', editing(fixing))).toEqual({
@@ -200,6 +268,14 @@ describe('page keys', () => {
     expect(interfaceAction(classification, '1', editing(open))).toBeNull();
   });
 
+  it('leaves "?" and Escape to the text box while the cheat sheet is open', () => {
+    const typing = at('review', 'viewing', { dialog: true, typing: true });
+    expect(pageAction('?', typing)).toBeNull();
+    expect(pageAction('Escape', typing)).toBeNull();
+    expect(pageAction('?', at('work', 'skipping', { dialog: true, typing: true }))).toBeNull();
+    expect(pageAction('?', at(null, '', { typing: true }))).toBeNull();
+  });
+
   it('has no tie key where ties are not allowed', () => {
     const noTie = { ...SCHEMA_TEMPLATES.pairwise, allowTie: false };
     expect(interfaceAction(noTie, 't', editing(at(null)))).toBeNull();
@@ -210,11 +286,14 @@ describe('page keys', () => {
 describe('keyName', () => {
   const press = (key: string, code: string, more = {}) => ({ key, code, ...more });
 
-  it('reads digits from the physical key, whatever the layout prints', () => {
+  it('takes a typed digit as it is, and reads the physical key when none was typed', () => {
     expect(keyName(press('1', 'Digit1'))).toBe('1');
     expect(keyName(press('&', 'Digit1'))).toBe('1'); // AZERTY without Shift
     expect(keyName(press('!', 'Digit1'))).toBe('1');
     expect(keyName(press('à', 'Digit0'))).toBe('0');
+    // a layout with the digits in another order: the label the key shows wins
+    expect(keyName(press('7', 'Digit1'))).toBe('7');
+    expect(keyName(press('0', 'Digit9'))).toBe('0');
   });
 
   it('takes the number pad while Num Lock is on', () => {
@@ -242,6 +321,15 @@ describe('keyName', () => {
     expect(keyName(press('Enter', 'Enter', { metaKey: true }))).toBe('Mod+Enter');
     expect(keyName(press('Enter', 'Enter', { ctrlKey: true, altKey: true }))).toBeNull();
     expect(keyName(press('Enter', 'Enter'))).toBe('Enter');
+    expect(keyName(press('z', 'KeyZ', { ctrlKey: true }))).toBe('Mod+z');
+    expect(keyName(press('z', 'KeyZ', { metaKey: true }))).toBe('Mod+z');
+    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBeNull();
+  });
+
+  it('does not take a modifier pressed on its own for a key', () => {
+    for (const key of ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'AltGraph']) {
+      expect(keyName(press(key, `${key}Left`))).toBeNull();
+    }
   });
 
   it('ignores a key that is held down and text being composed', () => {
@@ -315,11 +403,31 @@ describe('typing a pairwise rubric', () => {
 });
 
 describe('several interfaces on one page', () => {
-  it('sends keys to the one used last, or to the first', () => {
-    expect(activeInterface(['q1', 'q2', 'q3'], null)).toBe('q1');
-    expect(activeInterface(['q1', 'q2', 'q3'], 'q2')).toBe('q2');
-    expect(activeInterface(['q1', 'q3'], 'q2')).toBe('q1');
+  it('gives the keys to the only interface without asking', () => {
+    expect(activeInterface(['q1'], null)).toBe('q1');
+    expect(activeInterface(['q1'], 'gone')).toBe('q1');
     expect(activeInterface([], 'q2')).toBeNull();
+  });
+
+  it('gives them to the card that was used last, and to none before that', () => {
+    expect(activeInterface(['q1', 'q2', 'q3'], null)).toBeNull();
+    expect(activeInterface(['q1', 'q2', 'q3'], 'q2')).toBe('q2');
+    // the card that was in use is gone: nobody has the keys until one is clicked
+    expect(activeInterface(['q1', 'q3'], 'q2')).toBeNull();
+  });
+});
+
+describe('entity spans', () => {
+  const ner = SCHEMAS[1];
+
+  it('are removed with Delete only, never with Backspace', () => {
+    expect(interfaceAction(ner, 'Delete', editing(at(null)))?.action).toBe('remove');
+    expect(interfaceAction(ner, 'Backspace', editing(at(null)))).toBeNull();
+  });
+
+  it('can be put back with the undo key, which a text box keeps for itself', () => {
+    expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undoRemove');
+    expect(interfaceAction(ner, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
   });
 });
 
@@ -338,7 +446,10 @@ describe('the cheat sheet', () => {
   it('gives buttons the hint of their own row', () => {
     expect(pageShortcut('work', 'submit')).toBe('Ctrl + Enter');
     expect(pageShortcut('review', 'score')).toBe('1 - 5');
-    expect(pageShortcut('review', 'approve')).toBe('a');
+    expect(pageShortcut('review', 'armApprove')).toBe('a');
+    expect(pageShortcut('review', 'approve')).toBe('Enter');
+    expect(pageShortcut('review', 'disarm')).toBe('Esc / any other key');
+    expect(pageShortcut('work', 'confirmSkip')).toBe('Ctrl + Enter');
     expect(interfaceShortcut(pairwise, ['preferA', 'preferB', 'preferTie'])).toBe('a, b, t');
     const noTie = { ...SCHEMA_TEMPLATES.pairwise, allowTie: false };
     expect(interfaceShortcut(noTie, ['preferA', 'preferB', 'preferTie'])).toBe('a, b');
@@ -356,7 +467,9 @@ describe('the cheat sheet', () => {
 
   it('separates looking from fixing on the review page', () => {
     const [review, fixing] = helpSections('review', pairwise);
-    expect(review.rows.map((r) => r.label)).toContain('Approve');
+    expect(review.rows.map((r) => r.label)).toEqual(
+      expect.arrayContaining(['Get ready to approve: Enter then approves', 'After a: approve']),
+    );
     expect(review.rows.map((r) => r.label)).not.toContain('A is better');
     expect(fixing.rows.map((r) => r.label)).toEqual(
       expect.arrayContaining(['Cancel the fix', 'A is better']),
