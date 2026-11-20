@@ -97,8 +97,13 @@ them what comes next. The order:
    streak from running away: with 10 gold tasks among the last 5N submissions
    (fewer for N below 3) the next claim is regular. The wanted kind is tried
    first and the other kind second, so the queue serves what is left when
-   only gold or no gold remains. Without spacing, gold tasks stay where their
-   position puts them, as before.
+   only gold or no gold remains. The pick passes over tasks that other claims
+   hold locked at that moment, so finding only the other kind can also mean
+   that the wanted ones are being claimed: then `claimNextTask` lets go of
+   that task and picks again in a new transaction, waiting for those locks.
+   Without that, annotators claiming at the same time could get gold as their
+   first task and leave a regular slot unused. Without spacing, gold tasks
+   stay where their position puts them, as before.
 2. **Batches**: not paused (`Batch.pausedAt`), the highest `Batch.priority`
    first, then in import order (the batch's first position).
 3. **Inside a batch**: by position, or with `Project.queueOrder = SHUFFLED`

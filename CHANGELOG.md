@@ -276,6 +276,10 @@ the period of its approval.
 
 ### Fixes
 
+- With gold spacing on, annotators claiming at the same moment could get a
+  gold task as their first task of a session, while a regular task they could
+  have had stayed one answer short, because the regular tasks being claimed
+  by others were passed over. A claim now waits for those instead
 - `aria-sort` on the quality table sits on the column header, not on its
   button
 - A page with two pairwise interfaces had the `rationale` id twice
