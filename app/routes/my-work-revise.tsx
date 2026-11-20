@@ -2,12 +2,15 @@ import type { Prisma } from '@prisma/client';
 import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
+import { DisputePanel } from '~/components/dispute-panel';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { annotatorDisputeState, DISPUTE_REFUSALS, parseDisputeReason } from '~/domain/disputes';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
+import { openDispute } from '~/models/disputes.server';
 import { projectSchema } from '~/models/projects.server';
 import { resubmitAssignment } from '~/models/queue.server';
 
@@ -23,7 +26,11 @@ async function loadReturned(assignmentId: string, userId: string) {
     include: {
       project: true,
       task: true,
-      reviews: { orderBy: { createdAt: 'desc' }, take: 1 },
+      reviews: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: { dispute: { include: { resolvedBy: { select: { name: true } } } } },
+      },
     },
   });
   if (!assignment) throw notFound('Submission not found');
@@ -46,6 +53,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
     feedback: assignment.reviews[0]?.feedback ?? '',
+    ...annotatorDisputeState(
+      {
+        reviewStatus: assignment.reviewStatus,
+        annotatorId: user.id,
+        review: assignment.reviews.at(0) ?? null,
+        windowDays: assignment.project.disputeWindowDays,
+      },
+      new Date(),
+    ),
   };
 }
 
@@ -53,6 +69,17 @@ export async function action({ request, params }: Route.ActionArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadReturned(params.assignmentId, user.id);
   const form = await request.formData();
+  if (form.get('intent') === 'dispute') {
+    const reason = parseDisputeReason(form);
+    if (!reason.ok) return data({ error: reason.error }, { status: 400 });
+    const opened = await openDispute(assignment.id, user.id, reason.text);
+    if (!opened.ok) {
+      if (opened.error === 'not_found') throw notFound('Submission not found');
+      return data({ error: DISPUTE_REFUSALS[opened.error] }, { status: 409 });
+    }
+    return redirect(`/my-work/${assignment.id}`);
+  }
+
   const checked = validateAnswer(
     projectSchema(assignment.project),
     assignment.task.data,
@@ -64,8 +91,13 @@ export async function action({ request, params }: Route.ActionArgs) {
     user.id,
     checked.answer as Prisma.InputJsonValue,
   );
-  if (!result.ok)
-    return data({ error: 'This submission is not waiting for changes.' }, { status: 409 });
+  if (!result.ok) {
+    const error =
+      result.error === 'disputed'
+        ? 'You disputed this decision. Wait for the outcome before you revise the work.'
+        : 'This submission is not waiting for changes.';
+    return data({ error }, { status: 409 });
+  }
   return redirect('/my-work?filter=returned');
 }
 
@@ -73,6 +105,15 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(answer);
   const navigation = useNavigation();
+  const disputeOpen = loaderData.dispute?.status === 'OPEN';
+  const disputePanel = (
+    <DisputePanel
+      dispute={loaderData.dispute}
+      until={loaderData.disputeUntil}
+      closed={loaderData.disputeClosed}
+      busy={navigation.state !== 'idle'}
+    />
+  );
 
   if (mode === 'compare') {
     return (
@@ -86,6 +127,8 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
             {feedback}
           </p>
         )}
+        {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {disputePanel}
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -129,15 +172,24 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
         </div>
       )}
       {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {disputePanel}
       <Card>
-        <LabelingInterface schema={schema} data={taskData} value={value} onChange={setValue} />
+        <LabelingInterface
+          schema={schema}
+          data={taskData}
+          value={value}
+          onChange={setValue}
+          readOnly={disputeOpen}
+        />
       </Card>
-      <Form method="post">
-        <input type="hidden" name="answer" value={JSON.stringify(value)} />
-        <Button type="submit" disabled={navigation.state !== 'idle'}>
-          Resubmit for review
-        </Button>
-      </Form>
+      {!disputeOpen && (
+        <Form method="post">
+          <input type="hidden" name="answer" value={JSON.stringify(value)} />
+          <Button type="submit" disabled={navigation.state !== 'idle'}>
+            Resubmit for review
+          </Button>
+        </Form>
+      )}
     </div>
   );
 }

@@ -1,4 +1,10 @@
-import type { ProjectStatus, ReviewStatus, TaskKind } from '@prisma/client';
+import type {
+  DisputeStatus,
+  ProjectStatus,
+  ReviewDecision,
+  ReviewStatus,
+  TaskKind,
+} from '@prisma/client';
 
 export const KIND_NAMES: Record<TaskKind, string> = {
   TEXT_CLASSIFICATION: 'Text classification',
@@ -50,6 +56,22 @@ export const REVIEW_BADGES: Record<
   SENT_BACK: { label: 'Needs changes', tone: 'amber' },
   FIXED: { label: 'Corrected by reviewer', tone: 'sky' },
   NOT_REQUIRED: { label: 'Accepted', tone: 'emerald' },
+};
+
+/** What a reviewer did to the work, for sentences like "work sent back by Rafael". */
+export const DECISION_WORDS: Record<ReviewDecision, string> = {
+  APPROVE: 'approved',
+  SEND_BACK: 'sent back',
+  FIX: 'corrected',
+};
+
+export const DISPUTE_BADGES: Record<
+  DisputeStatus,
+  { label: string; tone: 'slate' | 'emerald' | 'amber' }
+> = {
+  OPEN: { label: 'Dispute open', tone: 'amber' },
+  UPHELD: { label: 'Decision upheld', tone: 'slate' },
+  OVERTURNED: { label: 'Decision overturned', tone: 'emerald' },
 };
 
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
