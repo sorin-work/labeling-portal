@@ -7,6 +7,7 @@ import {
   NO_USAGE,
   refusalMessage,
   REDESIGN_HINT,
+  type AnswerCounts,
   type SchemaUsage,
 } from '~/domain/schema-diff';
 import {
@@ -22,17 +23,35 @@ const ner = SCHEMA_TEMPLATES.ner;
 const pairwise = SCHEMA_TEMPLATES.pairwise;
 const bbox = SCHEMA_TEMPLATES.bbox;
 
+/** A plain number stands for that many submissions, the most common place. */
+type Count = number | AnswerCounts;
+
+function counts(value: Count = 0): AnswerCounts {
+  if (typeof value !== 'number') return value;
+  return value > 0 ? { submission: value } : {};
+}
+
 function usage(
-  parts: Partial<Omit<SchemaUsage, 'names' | 'dimensions'>> & {
-    names?: Record<string, number>;
-    dimensions?: Record<string, number>;
+  parts: {
+    tasks?: number;
+    answers?: Count;
+    names?: Record<string, Count>;
+    multiLabel?: Count;
+    ties?: Count;
+    scored?: Count;
+    dimensions?: Record<string, Count>;
   } = {},
 ): SchemaUsage {
+  const byName = (record: Record<string, Count> = {}) =>
+    new Map(Object.entries(record).map(([name, value]) => [name, counts(value)]));
   return {
-    ...NO_USAGE,
-    ...parts,
-    names: new Map(Object.entries(parts.names ?? {})),
-    dimensions: new Map(Object.entries(parts.dimensions ?? {})),
+    tasks: parts.tasks ?? 0,
+    answers: counts(parts.answers),
+    names: byName(parts.names),
+    multiLabel: counts(parts.multiLabel),
+    ties: counts(parts.ties),
+    scored: counts(parts.scored),
+    dimensions: byName(parts.dimensions),
   };
 }
 
@@ -106,11 +125,13 @@ describe('diffSchema', () => {
       });
     });
 
-    it('is breaking when only answers are left, such as old test attempts', () => {
-      const [change] = diffSchema(pairwise, bbox, usage({ answers: 4 }));
+    it('is breaking when answers are stored, even if no task is counted', () => {
+      const stored = { submission: 3, consensus: 1 };
+      const [change] = diffSchema(pairwise, bbox, usage({ answers: stored }));
       expect(change).toMatchObject({
         impact: 'breaking',
-        reason: 'the kind cannot change once the project has 4 stored answers',
+        reason:
+          'the kind cannot change once the project has 4 stored answers (3 submissions, 1 consensus answer)',
         affected: 4,
       });
     });
@@ -182,9 +203,29 @@ describe('diffSchema', () => {
         field: 'labels',
         impact: 'breaking',
         summary: 'removed the label “neutral”',
-        reason: 'the label “neutral” cannot be removed or renamed while 12 stored answers use it',
+        reason:
+          'the label “neutral” cannot be removed or renamed while 12 stored answers use it (12 submissions)',
         affected: 12,
       });
+    });
+
+    it('says in which places the answers are stored', () => {
+      const after = { ...classification, labels: ['positive', 'negative'] };
+      const where = {
+        qualification: 1,
+        dispute: 1,
+        consensus: 3,
+        gold: 1,
+        correction: 1,
+        submission: 2,
+      };
+      const [change] = diffSchema(classification, after, usage({ names: { neutral: where } }));
+      expect(change.reason).toBe(
+        'the label “neutral” cannot be removed or renamed while 9 stored answers use it ' +
+          '(2 submissions, 1 reviewer correction, 1 gold answer, 3 consensus answers, ' +
+          '1 disputed answer, 1 qualification answer)',
+      );
+      expect(change.affected).toBe(9);
     });
 
     it('sees a rename as a removal and an addition', () => {
@@ -195,7 +236,7 @@ describe('diffSchema', () => {
         ['safe', 'added the label “mixed”'],
       ]);
       expect(diffSchema(classification, after, used)[0].reason).toBe(
-        'the label “neutral” cannot be removed or renamed while 1 stored answer uses it',
+        'the label “neutral” cannot be removed or renamed while 1 stored answer uses it (1 submission)',
       );
     });
 
@@ -212,7 +253,7 @@ describe('diffSchema', () => {
       const before = { ...classification, labels: ['constructor', '__proto__', 'ok'] };
       const after = { ...classification, labels: ['ok', 'fine'] };
       // a Map, because `{ __proto__: 1 }` would not make a property at all
-      const used = { ...NO_USAGE, names: new Map([['__proto__', 1]]) };
+      const used = { ...NO_USAGE, names: new Map([['__proto__', { gold: 1 }]]) };
       expect(impacts(diffSchema(before, after, used))).toEqual([
         ['safe', 'removed the label “constructor”'],
         ['breaking', 'removed the label “__proto__”'],
@@ -234,7 +275,8 @@ describe('diffSchema', () => {
       expect(change).toMatchObject({
         field: 'multiple',
         impact: 'breaking',
-        reason: '“multiple” cannot be turned off while 2 stored answers have more than one label',
+        reason:
+          '“multiple” cannot be turned off while 2 stored answers have more than one label (2 submissions)',
         affected: 2,
       });
     });
@@ -267,7 +309,7 @@ describe('diffSchema', () => {
           impact: 'breaking',
           summary: 'removed the entity type “ORG”',
           reason:
-            'the entity type “ORG” cannot be removed or renamed while 5 stored answers use it',
+            'the entity type “ORG” cannot be removed or renamed while 5 stored answers use it (5 submissions)',
           affected: 5,
         },
       ]);
@@ -294,8 +336,21 @@ describe('diffSchema', () => {
         impact: 'breaking',
         summary: 'added the rubric dimension “tone”',
         reason:
-          'the rubric dimension “tone” cannot be added while 14 stored answers have no score for it',
+          'the rubric dimension “tone” cannot be added while 14 stored answers have no score for it (14 submissions)',
         affected: 14,
+      });
+    });
+
+    it('names only the places whose answers lack the new dimension', () => {
+      const used = usage({
+        scored: { submission: 3, consensus: 2 },
+        dimensions: { tone: { submission: 3 } },
+      });
+      expect(diffSchema(pairwise, withTone, used)[0]).toMatchObject({
+        impact: 'breaking',
+        reason:
+          'the rubric dimension “tone” cannot be added while 2 stored answers have no score for it (2 consensus answers)',
+        affected: 2,
       });
     });
 
@@ -309,7 +364,7 @@ describe('diffSchema', () => {
       expect(diffSchema(without, pairwise, later)[0]).toMatchObject({
         impact: 'breaking',
         reason:
-          'the rubric dimension “safety” cannot be added while 1 stored answer has no score for it',
+          'the rubric dimension “safety” cannot be added while 1 stored answer has no score for it (1 submission)',
         affected: 1,
       });
     });
@@ -371,7 +426,7 @@ describe('diffSchema', () => {
           field: 'allowTie',
           impact: 'breaking',
           summary: 'turned off “allowTie”',
-          reason: '“allowTie” cannot be turned off while 1 stored answer is a tie',
+          reason: '“allowTie” cannot be turned off while 1 stored answer is a tie (1 submission)',
           affected: 1,
         },
       ]);
@@ -409,7 +464,7 @@ describe('diffSchema', () => {
           impact: 'breaking',
           summary: 'removed the box label “bicycle”',
           reason:
-            'the box label “bicycle” cannot be removed or renamed while 1 stored answer uses it',
+            'the box label “bicycle” cannot be removed or renamed while 1 stored answer uses it (1 submission)',
           affected: 1,
         },
       ]);
@@ -426,8 +481,8 @@ describe('refusalMessage', () => {
     );
     expect(refusalMessage(breaking)).toBe(
       'Not saved. This would break work that already exists: ' +
-        'the label “neutral” cannot be removed or renamed while 12 stored answers use it; ' +
-        '“multiple” cannot be turned off while 3 stored answers have more than one label. ' +
+        'the label “neutral” cannot be removed or renamed while 12 stored answers use it (12 submissions); ' +
+        '“multiple” cannot be turned off while 3 stored answers have more than one label (3 submissions). ' +
         REDESIGN_HINT,
     );
     expect(REDESIGN_HINT).toContain('Duplicate project');

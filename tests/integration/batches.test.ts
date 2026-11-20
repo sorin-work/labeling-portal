@@ -1,8 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
+import { ZipWriter } from '~/domain/zip';
+import { createBatch } from '~/models/batches.server';
+import { projectSchema, schemaUsage } from '~/models/projects.server';
 import { action as importAction } from '~/routes/batch-new';
 import { action as batchAction, loader as batchLoader } from '~/routes/batch-detail';
 import { loader as batchesLoader } from '~/routes/project-batches';
+import { action as settingsAction } from '~/routes/project-settings';
 
 import {
   cookieFor,
@@ -29,6 +38,17 @@ async function setup() {
 function upload(name: string, text: string) {
   return new File([text], name, { type: 'text/plain' });
 }
+
+const fixture = (name: string) =>
+  readFileSync(join(process.cwd(), 'tests', 'fixtures', 'import', name));
+
+type Refusal = {
+  error: string;
+  errors: Array<{ line: number; message: string }>;
+  more: number;
+  unit: string;
+  validRows: number;
+};
 
 describe('batch import', () => {
   beforeEach(resetDb);
@@ -94,7 +114,7 @@ describe('batch import', () => {
     expect(positions).toEqual([1, 2, 3]);
   });
 
-  it('rejects a file with invalid rows unless asked to skip them', async () => {
+  it('imports a file completely or not at all', async () => {
     const { project, cookie } = await setup();
     const path = `/projects/${project.id}/batches/new`;
     const text = 'id,text\n1,ok\n2,\n';
@@ -107,18 +127,325 @@ describe('batch import', () => {
       },
     );
     expect(statusOf(rejected)).toBe(400);
-    expect(payload<{ errors: unknown[]; validRows: number }>(rejected)).toMatchObject({
+    expect(payload<Refusal>(rejected)).toMatchObject({
       errors: [{ line: 3, message: 'Missing text' }],
+      more: 0,
+      unit: 'line',
       validRows: 1,
     });
     expect(await prisma.task.count()).toBe(0);
 
-    await run(
+    // there is no way to ask for the good rows only
+    const again = await run(
       importAction,
       makeRequest(path, { cookie, form: { file: upload('t.csv', text), skipInvalid: 'on' } }),
       { projectId: project.id },
     );
+    expect(statusOf(again)).toBe(400);
+    expect(await prisma.task.count()).toBe(0);
+    expect(await prisma.batch.count()).toBe(0);
+  });
+
+  it('lists the first lines that failed and says how many more did', async () => {
+    const { project, cookie } = await setup();
+    const lines = ['id,text'];
+    for (let i = 1; i <= 35; i++) lines.push(`row${i},`);
+    lines.push('fine,this one has text');
+
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: upload('many.csv', lines.join('\n')) },
+      }),
+      { projectId: project.id },
+    );
+
+    expect(statusOf(result)).toBe(400);
+    const refusal = payload<Refusal>(result);
+    expect(refusal.errors).toHaveLength(20);
+    expect(refusal.errors[0]).toEqual({ line: 2, message: 'Missing text' });
+    expect(refusal.errors[19]).toEqual({ line: 21, message: 'Missing text' });
+    expect(refusal).toMatchObject({ more: 15, validRows: 1 });
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('reads tab-separated, semicolon and json array files and records what they were', async () => {
+    const { project, cookie } = await setup();
+    const path = `/projects/${project.id}/batches/new`;
+    for (const name of ['reviews.tsv', 'reviews-semicolon.csv', 'reviews.json', 'reviews.jsonl']) {
+      const result = await run(
+        importAction,
+        makeRequest(path, { cookie, form: { file: new File([fixture(name)], name) } }),
+        { projectId: project.id },
+      );
+      expect(statusOf(result), name).toBe(302);
+    }
+
+    const batches = await prisma.batch.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: { tasks: { orderBy: { position: 'asc' } } },
+    });
+    expect(batches.map((b) => [b.name, b.format, b.tasks.length])).toEqual([
+      ['reviews', 'TSV', 3],
+      ['reviews-semicolon', 'CSV', 3],
+      ['reviews', 'JSON', 3],
+      ['reviews', 'JSONL', 3],
+    ]);
+    expect(batches[1].tasks[1].data).toEqual({
+      id: 'r2',
+      text: 'Semicolons; inside quotes',
+      price: '3,99',
+    });
+    // the json array and the json lines file hold the same tasks
+    expect(batches[2].tasks.map((t) => t.data)).toEqual(batches[3].tasks.map((t) => t.data));
+    expect(batches[2].tasks[1].data).toMatchObject({ meta: { stars: 1, verified: true } });
+  });
+
+  it('refuses archives and compressed files without unpacking them', async () => {
+    const { project, cookie } = await setup();
+    const zip = new ZipWriter();
+    const archive = Buffer.concat([zip.add('tasks.csv', 'text\nhello\n'), zip.finish()]);
+    for (const file of [
+      new File([archive], 'tasks.zip'),
+      new File([archive], 'tasks.csv'),
+      new File([gzipSync('text\nhello\n')], 'tasks.csv.gz'),
+    ]) {
+      const result = await run(
+        importAction,
+        makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file } }),
+        { projectId: project.id },
+      );
+      expect(statusOf(result), file.name).toBe(400);
+      expect(payload<Refusal>(result).error).toMatch(/Zip and gzip files are not read/);
+    }
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('stops reading an upload that is larger than the limit', async () => {
+    const { project, cookie } = await setup();
+    // one valid line, repeated until the file is over 5 MB
+    const line = `${'x'.repeat(1000)}\n`;
+    const big = upload('big.csv', `text\n${line.repeat(5400)}`);
+    expect(big.size).toBeGreaterThan(5 * 1024 * 1024);
+
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, { cookie, form: { file: big } }),
+      { projectId: project.id },
+    );
+
+    expect(statusOf(result)).toBe(413);
+    expect(payload<Refusal>(result).error).toBe('Files can be at most 5 MB.');
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('stores image addresses as text, refuses the unsafe kinds and fetches nothing', async () => {
+    const { org, cookie } = await setup();
+    const boxes = await createTestProject(org.id, { schema: SCHEMA_TEMPLATES.bbox });
+    const path = `/projects/${boxes.id}/batches/new`;
+    const fetched = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no requests'));
+    try {
+      const refused = await run(
+        importAction,
+        makeRequest(path, {
+          cookie,
+          form: { file: new File([fixture('images-refused.jsonl')], 'images-refused.jsonl') },
+        }),
+        { projectId: boxes.id },
+      );
+      expect(statusOf(refused)).toBe(400);
+      expect(payload<Refusal>(refused).errors).toHaveLength(8);
+      expect(await prisma.task.count()).toBe(0);
+
+      const imported = await run(
+        importAction,
+        makeRequest(path, {
+          cookie,
+          form: { file: new File([fixture('images.csv')], 'images.csv') },
+        }),
+        { projectId: boxes.id },
+      );
+      expect(statusOf(imported)).toBe(302);
+      const tasks = await prisma.task.findMany({ orderBy: { position: 'asc' } });
+      expect(tasks.map((t) => (t.data as { image_url: string }).image_url)).toEqual([
+        'http://images.example.test/a.jpg',
+        'https://images.example.test/b.jpg',
+        '/demo/street-1.svg',
+      ]);
+      // the server never asked for any of them
+      expect(fetched).not.toHaveBeenCalled();
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+
+  it('refuses an internal image host unless the installation lists it', async () => {
+    const { org, cookie } = await setup();
+    const boxes = await createTestProject(org.id, { schema: SCHEMA_TEMPLATES.bbox });
+    const upload = () =>
+      run(
+        importAction,
+        makeRequest(`/projects/${boxes.id}/batches/new`, {
+          cookie,
+          form: {
+            file: new File(
+              [
+                '{"image_url":"http://169.254.169.254/a.jpg"}\n{"image_url":"http://intranet/b.jpg"}\n',
+              ],
+              'internal.jsonl',
+            ),
+          },
+        }),
+        { projectId: boxes.id },
+      );
+    const before = process.env.INTERNAL_IMAGE_HOSTS;
+    try {
+      delete process.env.INTERNAL_IMAGE_HOSTS;
+      const refused = await upload();
+      expect(statusOf(refused)).toBe(400);
+      expect(payload<Refusal>(refused).errors.map((e) => e.line)).toEqual([1, 2]);
+
+      process.env.INTERNAL_IMAGE_HOSTS = ' Intranet , 169.254.169.254';
+      expect(statusOf(await upload())).toBe(302);
+      expect(await prisma.task.count()).toBe(2);
+    } finally {
+      if (before === undefined) delete process.env.INTERNAL_IMAGE_HOSTS;
+      else process.env.INTERNAL_IMAGE_HOSTS = before;
+    }
+  });
+
+  it('checks gold answers like any answer, and a schema edit counts them', async () => {
+    const { org, cookie } = await setup();
+    const project = await createTestProject(org.id, {
+      schema: SCHEMA_TEMPLATES.text_classification,
+    });
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: new File([fixture('gold.csv')], 'gold.csv') },
+      }),
+      { projectId: project.id },
+    );
+    expect(statusOf(result)).toBe(302);
+    const tasks = await prisma.task.findMany({ orderBy: { position: 'asc' } });
+    expect(tasks.map((t) => [t.externalId, t.isGold, t.goldAnswer])).toEqual([
+      ['g1', true, { labels: ['positive'] }],
+      ['g2', true, { labels: ['neutral'] }],
+      ['t1', false, null],
+    ]);
+
+    // the imported label is stored work: the schema cannot drop it now
+    const usage = await schemaUsage(project.id);
+    expect(usage.names.get('neutral')).toEqual({ gold: 1 });
+    const saved = await run(
+      settingsAction,
+      makeRequest(`/projects/${project.id}/settings`, {
+        cookie,
+        form: {
+          name: project.name,
+          description: '',
+          instructions: '',
+          overlap: '1',
+          timeLimitMinutes: '30',
+          schema: JSON.stringify({
+            ...SCHEMA_TEMPLATES.text_classification,
+            labels: ['positive', 'negative'],
+          }),
+        },
+      }),
+      { projectId: project.id },
+    );
+    expect(statusOf(saved)).toBe(400);
+    expect(payload<{ errors: { schema: string } }>(saved).errors.schema).toContain(
+      'the label “neutral” cannot be removed or renamed while 1 stored answer uses it (1 gold answer)',
+    );
+  });
+
+  it('refuses a batch whose rows were checked against a schema that has changed since', async () => {
+    const { project } = await setup();
+    const rows = [
+      { line: 2, externalId: 'a', data: { text: 'x' }, gold: { labels: ['negative'] } },
+    ];
+    const read = projectSchema(project);
+    const input = { name: 'b', format: 'CSV' as const, rows, schema: read };
+
+    // a settings save that drops the label is about to commit
+    let commit = () => {};
+    const waiting = new Promise<void>((resolve) => (commit = resolve));
+    let locked = () => {};
+    const saveHasTheRow = new Promise<void>((resolve) => (locked = resolve));
+    const narrower = { ...read, labels: ['positive', 'other'] };
+    const saving = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${project.id} FOR NO KEY UPDATE`;
+      await tx.project.update({ where: { id: project.id }, data: { schema: narrower } });
+      locked();
+      await waiting;
+    });
+    await saveHasTheRow;
+
+    const importing = createBatch(project.id, input);
+    // the import waits for the save instead of writing a label the save removes
+    const first = await Promise.race([
+      importing.then(() => 'imported'),
+      new Promise((resolve) => setTimeout(() => resolve('waiting'), 300)),
+    ]);
+    expect(first).toBe('waiting');
+    commit();
+    await saving;
+
+    expect(await importing).toEqual({ ok: false, error: 'schema_changed' });
+    expect(await prisma.batch.count()).toBe(0);
+    expect(await prisma.task.count()).toBe(0);
+    // rows that were read against the schema as it is now go in
+    const reread = [{ line: 2, externalId: 'a', data: { text: 'x' }, gold: { labels: ['other'] } }];
+    expect(
+      await createBatch(project.id, { ...input, rows: reread, schema: narrower }),
+    ).toMatchObject({ ok: true });
     expect(await prisma.task.count()).toBe(1);
+  });
+
+  it('needs a gold answer on every row of a qualification test', async () => {
+    const { project, cookie } = await setup();
+    const result = await run(
+      importAction,
+      makeRequest(`/projects/${project.id}/batches/new`, {
+        cookie,
+        form: { file: new File([fixture('gold.csv')], 'gold.csv'), qualification: 'on' },
+      }),
+      { projectId: project.id },
+    );
+    // the fixture's labels need a schema with "neutral"; this project has none
+    expect(statusOf(result)).toBe(400);
+    expect(payload<Refusal>(result).errors).toEqual([
+      { line: 3, message: 'Gold answer: Unknown label: neutral' },
+      { line: 4, message: 'Qualification questions need a _gold answer' },
+    ]);
+    expect(await prisma.task.count()).toBe(0);
+  });
+
+  it('is for managers of the project\u2019s own organisation only', async () => {
+    const { org, project } = await setup();
+    const post = async (cookie: string) =>
+      statusOf(
+        await run(
+          importAction,
+          makeRequest(`/projects/${project.id}/batches/new`, {
+            cookie,
+            form: { file: upload('t.csv', 'text\nx\n') },
+          }),
+          { projectId: project.id },
+        ),
+      );
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: reviewer.id } });
+    expect(await post(await cookieFor(reviewer, org.id))).toBe(403);
+
+    const elsewhere = await createOrg('Elsewhere');
+    const outsider = await createMember(elsewhere.id, 'ADMIN');
+    expect(await post(await cookieFor(outsider, elsewhere.id))).toBe(404);
+    expect(await prisma.task.count()).toBe(0);
   });
 
   it('deletes an untouched batch but not one with work on it', async () => {

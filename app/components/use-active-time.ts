@@ -27,19 +27,22 @@ export function useLastInput() {
  * minutes. The server still caps the value at the time since the claim.
  * `startAt` is the time already saved with a draft, so the count goes on after
  * a reload. The second value raises the count to a later saved value.
+ * Nothing is counted while `counting` is false, as on a page that is
+ * read-only for now.
  */
-export function useActiveTime(startAt = 0): [number, (atLeast: number) => void] {
+export function useActiveTime(startAt = 0, counting = true): [number, (atLeast: number) => void] {
   const [seconds, setSeconds] = useState(startAt);
   const lastInput = useLastInput();
 
   useEffect(() => {
+    if (!counting) return;
     const timer = window.setInterval(() => {
       const visible = document.visibilityState === 'visible';
       const idle = Date.now() - lastInput.current > IDLE_AFTER_MS;
       if (visible && !idle) setSeconds((s) => s + 1);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [lastInput]);
+  }, [lastInput, counting]);
 
   const raise = useCallback((atLeast: number) => setSeconds((s) => Math.max(s, atLeast)), []);
   return [seconds, raise];

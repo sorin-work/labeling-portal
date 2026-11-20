@@ -26,6 +26,12 @@ type Options = {
    * it. Other form posts (the sign-out in the layout) do not count.
    */
   handingIn: boolean;
+  /**
+   * Nothing may be saved for now, as on a revision while its decision is
+   * disputed: the page is read-only then and the server refuses the save.
+   * Saving starts when this turns false again, on the same page.
+   */
+  paused?: boolean;
   /** called once after a reload with what the closed page could not save in time */
   onRecover: (unsaved: UnsavedCopy) => void;
 };
@@ -85,11 +91,11 @@ export function beforeSignOut() {
  * for a new task would store the previous task's answer.
  */
 export function useDraftSave(options: Options): DraftState {
-  const { url, user, answer, seconds = 0, restored, handingIn } = options;
+  const { url, user, answer, seconds = 0, restored, handingIn, paused = false } = options;
   const json = useMemo(() => (answer ? JSON.stringify(answer) : ''), [answer]);
   const [state, setState] = useState<DraftState>(restored ? 'restored' : 'idle');
   // what the page holds now, and what the server has
-  const page = useRef({ json, seconds, handingIn, onRecover: options.onRecover });
+  const page = useRef({ json, seconds, handingIn, paused, onRecover: options.onRecover });
   const server = useRef({ json, seconds });
   const unsaved = useRef<{
     changedAt: number | null;
@@ -101,8 +107,17 @@ export function useDraftSave(options: Options): DraftState {
   const localKey = unsavedKey(user, url);
 
   useEffect(() => {
-    page.current = { json, seconds, handingIn, onRecover: options.onRecover };
+    page.current = { json, seconds, handingIn, paused, onRecover: options.onRecover };
   });
+
+  // A save the server refused stops saving, as when a dispute was opened in
+  // another tab. Once the page has paused for it and the pause ends (the
+  // dispute is withdrawn), saving starts over.
+  useEffect(() => {
+    if (paused || !stopped.current) return;
+    stopped.current = false;
+    setState('idle');
+  }, [paused]);
 
   useEffect(() => {
     let local: UnsavedCopy | null = null;
@@ -119,7 +134,7 @@ export function useDraftSave(options: Options): DraftState {
 
   const save = useCallback(
     async (leavingPage: boolean) => {
-      if (sending.current || stopped.current) return;
+      if (sending.current || stopped.current || page.current.paused) return;
       const next = { json: page.current.json, seconds: page.current.seconds };
       const changed = next.json !== server.current.json;
       if (!changed && next.seconds <= server.current.seconds) return;
@@ -168,7 +183,7 @@ export function useDraftSave(options: Options): DraftState {
   useEffect(() => {
     // while the hand-in is on its way a save would only race it; when it
     // comes back with an error this runs again and saving goes on
-    if (handingIn || state === 'saving' || state === 'stopped') return;
+    if (paused || handingIn || state === 'saving' || state === 'stopped') return;
     const wait = saveDelay(
       { ...unsaved.current, unsavedSeconds: seconds - server.current.seconds },
       Date.now(),
@@ -176,7 +191,7 @@ export function useDraftSave(options: Options): DraftState {
     if (wait === null) return;
     const timer = window.setTimeout(() => void save(false), wait);
     return () => window.clearTimeout(timer);
-  }, [json, seconds, handingIn, state, save]);
+  }, [json, seconds, handingIn, paused, state, save]);
 
   useEffect(() => {
     const path = window.location.pathname;
@@ -186,7 +201,7 @@ export function useDraftSave(options: Options): DraftState {
     // what a reload reads; it is written even during a hand-in, in case that
     // request does not get through.
     const onHide = () => {
-      if (stopped.current) return;
+      if (stopped.current || page.current.paused) return;
       keepLocal();
       if (!page.current.handingIn) void save(true);
     };
@@ -203,7 +218,7 @@ export function useDraftSave(options: Options): DraftState {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onHide);
       savers.delete(saveNow);
-      if (stopped.current) return;
+      if (stopped.current || page.current.paused) return;
       const handedIn = page.current.handingIn && window.location.pathname !== path;
       if (handedIn) {
         // the claim is over, and so is its draft

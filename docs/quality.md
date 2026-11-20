@@ -181,7 +181,8 @@ When a task has as many accepted answers as the project's overlap, they are
 merged:
 
 - Classification and pairwise: majority vote (no answer on a tie); rubric
-  scores are averaged, for the dimensions the rubric has now.
+  scores are averaged, for the dimensions the rubric has now and over the
+  answers that have a score for them.
 - Entities: spans marked by a majority of annotators.
 - Boxes: boxes clustered by label and overlap; clusters drawn by a majority are
   averaged.
@@ -212,14 +213,19 @@ behind each chosen label for multi-label projects, and span or box F1 averaged
 over every pair of annotators. With an overlap of 1 the setting does nothing.
 
 Tasks waiting for adjudication are listed on the **Adjudication** tab, the
-longest waiting first. On the task page a reviewer or manager who has not
-labeled the task settles it: with one of the accepted answers, with the
-consensus when a majority made one, or with an answer of their own, checked
-like a labeling answer. A reason is required. The chosen answer becomes the
-task's consensus, in the export as well, and who settled it, when and why are
-kept on the task. A later review of one of the answers does not change it. A
-task that waits for an extra annotator nobody is left to give can be sent to
-adjudication from its page by a manager.
+longest waiting first. A task there has no consensus: what a majority of its
+answers says, if anything, is kept apart (`Task.majority`) for the task page,
+and exports show the task without a result. On the task page a reviewer or
+manager settles it: with one of the accepted answers, with the majority's
+answer when there is one, or with an answer of their own, checked like a
+labeling answer. A reason is required. Nobody settles a task they had a hand
+in: who submitted an answer, holds a claim, or corrected an answer in a review
+(a fix) on the task or on a task of its gold group may not. The chosen answer
+becomes the task's consensus, in the export as well, and who settled it, when
+and why are kept on the task. A later review of one of the answers does not
+change it. A task that waits for an extra annotator nobody is left to give can
+be sent to adjudication from its page by a manager; the majority is worked
+out then too.
 
 Extra answers are paid like any accepted work, once each; adjudication does
 not touch submissions, reviews or pay, and does not feed back into the

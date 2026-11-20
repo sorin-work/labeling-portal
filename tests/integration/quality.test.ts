@@ -48,11 +48,15 @@ describe('quality stats', () => {
     const annLabels = ['a', 'b', 'c', 'a'];
     const benLabels = ['a', 'b', 'c', 'b'];
     const annWork = [];
+    // one claim after another: a person's time is credited once, so four
+    // claims made at the same moment could not each get two minutes
+    const start = Date.now() - 60 * 60_000;
     for (let i = 0; i < 4; i++) {
+      const now = new Date(start + i * 10 * 60_000);
       annWork.push(
-        await submitWork(project, ann.id, { labels: [annLabels[i]] }, { activeSeconds: 60 }),
+        await submitWork(project, ann.id, { labels: [annLabels[i]] }, { activeSeconds: 60, now }),
       );
-      await submitWork(project, ben.id, { labels: [benLabels[i]] }, { activeSeconds: 120 });
+      await submitWork(project, ben.id, { labels: [benLabels[i]] }, { activeSeconds: 120, now });
     }
     await recordReview(annWork[0].id, reviewer.id, {
       decision: 'APPROVE',

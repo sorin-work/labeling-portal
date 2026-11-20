@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { SchemaUsage } from '~/domain/schema-diff';
 import { myStats } from '~/models/annotator-stats.server';
 import { listBatches } from '~/models/batches.server';
 import { applyRescore, previewRescore, promoteToGold, setGoldRetired } from '~/models/gold.server';
@@ -33,6 +34,11 @@ import {
   statusOf,
   submitWork,
 } from './helpers';
+
+/** Stored answers that use a name, wherever they are stored. */
+function used(usage: SchemaUsage, name: string): number {
+  return Object.values(usage.names.get(name) ?? {}).reduce((sum, n) => sum + n, 0);
+}
 
 async function setup() {
   const org = await createOrg();
@@ -488,20 +494,20 @@ describe('changing a gold answer', () => {
       where: { id: wrong.id },
       data: { goldAnswer: { labels: ['neutral'] } },
     });
-    expect((await schemaUsage(s.project.id)).names.get('neutral')).toBe(1);
+    expect((await schemaUsage(s.project.id)).names.get('neutral')).toEqual({ gold: 1 });
 
     await s.post(wrong.id, editForm('negative'));
 
     // "neutral" is no gold answer any more, but the history still shows it
     const usage = await schemaUsage(s.project.id);
-    expect(usage.names.get('neutral')).toBe(1);
-    expect(usage.names.get('negative')).toBe(2);
+    expect(usage.names.get('neutral')).toEqual({ goldHistory: 1 });
+    expect(used(usage, 'negative')).toBe(2);
     // changed back and forth, every answer the task ever had still counts once
     await s.post(wrong.id, editForm('neutral', 'Back again.'));
     await s.post(wrong.id, editForm('negative', 'And once more.'));
     const later = await schemaUsage(s.project.id);
-    expect(later.names.get('neutral')).toBe(1);
-    expect(later.names.get('negative')).toBe(2);
+    expect(used(later, 'neutral')).toBe(1);
+    expect(used(later, 'negative')).toBe(2);
     const refused = await run(
       settingsAction,
       makeRequest(`/projects/${s.project.id}/settings`, {
@@ -520,7 +526,7 @@ describe('changing a gold answer', () => {
     expect(statusOf(refused)).toBe(400);
     // the refusal says what holds the label: the history, which never goes away
     expect(payload<{ errors: { schema: string } }>(refused).errors.schema).toMatch(
-      /“neutral” cannot be removed or renamed while 1 stored answer uses it, which is in the history of a gold task/,
+      /“neutral” cannot be removed or renamed while 1 stored answer uses it \(1 earlier gold answer\), which is in the history of a gold task/,
     );
   });
 });
@@ -810,6 +816,10 @@ describe('making gold tasks from completed tasks', () => {
         answer: { labels: ['positive'] },
         reviewStatus: 'NOT_REQUIRED',
         goldScore: 1,
+        // a submitted row carries its frozen rate, and accepted work its payable day
+        rateCents: 0,
+        payMode: 'PER_TASK',
+        payableAt: new Date(),
       },
     });
     expect(cyClaim.taskId).toBe(first);

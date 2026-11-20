@@ -40,41 +40,30 @@ export async function refreshTaskStatus(
   // settled by a person: their answer is the result, later reviews or not
   if (task.adjudicatedAt) return task;
 
-  const accepted = await db.assignment.findMany({
-    where: { taskId, status: 'SUBMITTED', reviewStatus: { in: [...ACCEPTED_STATUSES] } },
-    include: { reviews: true },
-  });
-  const merge = () => {
-    const schema = parseTaskSchema(task.project.schema);
-    const merged = schema.ok
-      ? consensus(
-          schema.schema,
-          accepted.map((a) => finalAnswer<Answer>(a.answer, a.reviews)),
-        )
-      : null;
-    return {
-      consensus: merged?.answer ? (merged.answer as Prisma.InputJsonValue) : Prisma.DbNull,
-      agreement: merged?.agreement ?? null,
-    };
-  };
+  const { count: acceptedCount, merge } = await acceptedAnswers(db, taskId, task.project.schema);
   const needed = task.project.overlap + task.extraSlots;
 
   if (task.status === 'ADJUDICATION') {
-    // waits for a person; what they are shown follows the accepted answers
-    return db.task.update({ where: { id: taskId }, data: merge() });
+    // waits for a person; what they are shown follows the accepted answers,
+    // and it is no result until they settle it
+    const merged = merge();
+    return db.task.update({
+      where: { id: taskId },
+      data: { majority: merged.consensus, agreement: merged.agreement },
+    });
   }
   if (task.status === 'COMPLETE') {
-    if (accepted.length >= needed) return db.task.update({ where: { id: taskId }, data: merge() });
+    if (acceptedCount >= needed) return db.task.update({ where: { id: taskId }, data: merge() });
     return db.task.update({
       where: { id: taskId },
       data: { status: 'OPEN', completedAt: null, consensus: Prisma.DbNull, agreement: null },
     });
   }
 
-  if (accepted.length < needed) return task;
+  if (acceptedCount < needed) return task;
   const merged = merge();
   const decision = decideCompletion({
-    accepted: accepted.length,
+    accepted: acceptedCount,
     overlap: task.project.overlap,
     extraSlots: task.extraSlots,
     threshold: task.project.agreementThreshold,
@@ -91,7 +80,13 @@ export async function refreshTaskStatus(
     case 'adjudicate':
       return db.task.update({
         where: { id: taskId },
-        data: { status: 'ADJUDICATION', escalatedAt: now, ...merged },
+        data: {
+          status: 'ADJUDICATION',
+          escalatedAt: now,
+          majority: merged.consensus,
+          agreement: merged.agreement,
+          consensus: Prisma.DbNull,
+        },
       });
     default:
       return db.task.update({
@@ -99,4 +94,33 @@ export async function refreshTaskStatus(
         data: { status: 'COMPLETE', completedAt: task.completedAt ?? now, ...merged },
       });
   }
+}
+
+/**
+ * The accepted answers of a task, counted and merged. `merge` gives the
+ * consensus (null when there is no majority) and the agreement, as columns.
+ */
+export async function acceptedAnswers(
+  db: Prisma.TransactionClient,
+  taskId: string,
+  projectSchema: Prisma.JsonValue,
+) {
+  const accepted = await db.assignment.findMany({
+    where: { taskId, status: 'SUBMITTED', reviewStatus: { in: [...ACCEPTED_STATUSES] } },
+    include: { reviews: true },
+  });
+  const merge = () => {
+    const schema = parseTaskSchema(projectSchema);
+    const merged = schema.ok
+      ? consensus(
+          schema.schema,
+          accepted.map((a) => finalAnswer<Answer>(a.answer, a.reviews)),
+        )
+      : null;
+    return {
+      consensus: merged?.answer ? (merged.answer as Prisma.InputJsonValue) : Prisma.DbNull,
+      agreement: merged?.agreement ?? null,
+    };
+  };
+  return { count: accepted.length, merge };
 }

@@ -1,5 +1,16 @@
-import { Prisma, type Assignment, type Project } from '@prisma/client';
+import { Prisma, type Assignment, type PayMode, type Project } from '@prisma/client';
 
+import {
+  clampActiveSeconds,
+  creditHorizon,
+  creditTime,
+  mergeIntervals,
+  revisionCap,
+  revisionSeconds,
+  type Credit,
+  type Interval,
+} from '~/domain/active-time';
+import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { prisma, utc } from '~/lib/db.server';
@@ -344,11 +355,56 @@ async function ownActive(assignmentId: string, userId: string) {
   return { assignment };
 }
 
-/** Time is reported by the browser; never credit more than has actually passed. */
-export function clampActiveSeconds(reported: number, claimedAt: Date, now: Date): number {
-  const elapsed = Math.max(0, Math.floor((now.getTime() - claimedAt.getTime()) / 1000));
-  if (!Number.isFinite(reported) || reported < 0) return 0;
-  return Math.min(Math.floor(reported), elapsed);
+export { clampActiveSeconds };
+
+/**
+ * A person's working clock in an organisation: the stretches of their time
+ * already credited, read after a lock on their membership that lasts until
+ * the transaction ends. Every credit goes through here, so two submissions of
+ * one person are credited one after the other and the second sees what the
+ * first took. The stretches are kept by organisation and user, so removing
+ * and adding someone again keeps them. Null when the person has no
+ * membership: then nothing is credited.
+ */
+async function lockWorkClock(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  userId: string,
+  now: Date,
+): Promise<WorkClock> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "Membership"
+    WHERE "orgId" = ${orgId} AND "userId" = ${userId} FOR NO KEY UPDATE`;
+  if (rows.length === 0) return null;
+  const credited = await tx.creditedInterval.findMany({
+    where: { orgId, userId, end: { gt: creditHorizon(now) } },
+    select: { start: true, end: true },
+  });
+  return { orgId, userId, credited };
+}
+
+type WorkClock = { orgId: string; userId: string; credited: Interval[] } | null;
+
+/**
+ * Stores what a credit took. The person's stretches are written back merged,
+ * and those that end before the horizon, which no credit can reach any more,
+ * are removed, so the table holds a few rows per person.
+ */
+async function recordCredit(
+  tx: Prisma.TransactionClient,
+  clock: WorkClock,
+  credit: Credit,
+  now: Date,
+) {
+  if (!clock || credit.pieces.length === 0) return;
+  const { orgId, userId } = clock;
+  const merged = mergeIntervals([...clock.credited, ...credit.pieces]);
+  await tx.creditedInterval.deleteMany({ where: { orgId, userId } });
+  await tx.creditedInterval.createMany({
+    data: merged
+      .filter((interval) => interval.end > creditHorizon(now))
+      .map((interval) => ({ orgId, userId, ...interval })),
+  });
 }
 
 /**
@@ -407,7 +463,7 @@ export async function submitAssignment(
   // gold tasks are scored against their known answer instead of being reviewed
   const task = await prisma.task.findUniqueOrThrow({
     where: { id: found.assignment.taskId },
-    include: { project: { select: { schema: true } } },
+    include: { project: { select: { schema: true, orgId: true } } },
   });
 
   // The sample is drawn here, once, and the outcome is stored. Nothing that
@@ -422,12 +478,29 @@ export async function submitAssignment(
         )
       : { review: false, sample: null };
 
+  const reviewStatus = sampling.review ? 'PENDING' : 'NOT_REQUIRED';
   const assignment = await prisma.$transaction(async (tx) => {
+    // The person's clock first, in every transaction that credits time: the
+    // claim is credited only the minutes of its window that no other work of
+    // theirs has been credited, so the same minutes are not paid twice.
+    const clock = await lockWorkClock(tx, task.project.orgId, userId, now);
+    const credit = creditTime({
+      reported: clock ? input.activeSeconds : 0,
+      start: found.assignment.claimedAt,
+      now,
+      credited: clock?.credited ?? [],
+    });
     // scored here, under a lock on the expected answer, so a manager's edit of
     // it cannot fall between reading it and storing the score
     const goldScore = task.isGold
       ? await scoreGoldSubmission(tx, task.id, task.project.schema, input.answer)
       : null;
+    // The rate is frozen in the write that submits the work, and it is read
+    // here, in the same transaction, holding the project row: a settings save
+    // that changes the rate either waits for this submission or is seen by it.
+    const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
+      SELECT "rateCents", "payMode" FROM "Project"
+      WHERE id = ${found.assignment.projectId} FOR SHARE`;
     // only a claim that is still active is written, so a form posted twice
     // cannot replace the first outcome with a second draw
     const [submitted] = await tx.assignment.updateManyAndReturn({
@@ -435,14 +508,19 @@ export async function submitAssignment(
       data: {
         status: 'SUBMITTED',
         submittedAt: now,
+        rateCents: pay.rateCents,
+        payMode: pay.payMode,
+        // work that needs no review is payable from this moment
+        payableAt: payableSince(reviewStatus, now),
         answer: input.answer,
         goldScore,
-        reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
+        reviewStatus,
         reviewSample: sampling.sample,
-        activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+        activeSeconds: credit.seconds,
         ...NO_DRAFT,
       },
     });
+    if (submitted) await recordCredit(tx, clock, credit, now);
     // work that no reviewer will see is accepted at once and can complete the
     // task, in the same transaction as the write that accepts it
     if (submitted && !sampling.review && !task.isGold) {
@@ -470,29 +548,77 @@ export async function skipAssignment(
   return skipped.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
 }
 
+/** What crediting a revision needs to know about the submission. */
+const REVISION_FIELDS = {
+  reviewedAt: true,
+  submittedAt: true,
+  activeSeconds: true,
+  draftSeconds: true,
+  project: { select: { timeLimitMinutes: true, orgId: true } },
+} satisfies Prisma.AssignmentSelect;
+
+type Revised = Prisma.AssignmentGetPayload<{ select: typeof REVISION_FIELDS }>;
+
+/** Revising starts when the reviewer sends the work back. */
+function revisingSince(assignment: Revised, now: Date): Date {
+  return assignment.reviewedAt ?? assignment.submittedAt ?? now;
+}
+
+/** The project's time limit as seconds, which is what a revision is held to. */
+function limitSeconds(assignment: Revised): number {
+  return assignment.project.timeLimitMinutes * 60;
+}
+
 /**
  * Replaces the answer on a submission a reviewer sent back and puts it in the
  * review queue again. Only the annotator who made it can do this, and not
- * while they dispute the decision: it is revise or dispute, never both.
+ * while they dispute the decision: it is revise or dispute, never both. The
+ * time spent revising is added to the active time through `creditTime`, held
+ * to `revisionCap`. The rate stays the one frozen at the first submission.
  */
 export async function resubmitAssignment(
   assignmentId: string,
   userId: string,
-  answer: Prisma.InputJsonValue,
+  input: { answer: Prisma.InputJsonValue; activeSeconds: number },
   now = new Date(),
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
   return prisma.$transaction(async (tx) => {
     if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
+    const sentBack: Prisma.AssignmentWhereInput = {
+      id: assignmentId,
+      userId,
+      status: 'SUBMITTED',
+      reviewStatus: 'SENT_BACK',
+    };
+    const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
+    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId, now) : null;
+    // the page counts on from the time saved with the draft, so the form has
+    // at least that much; the larger one counts if it does not
+    const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
+    const credit =
+      current && clock
+        ? creditTime({
+            reported: Math.max(reported, current.draftSeconds),
+            start: revisingSince(current, now),
+            now,
+            credited: clock.credited,
+            cap: revisionCap(limitSeconds(current), current.activeSeconds),
+          })
+        : { seconds: 0, pieces: [] };
     const result = await tx.assignment.updateMany({
-      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+      // still sent back: a form posted twice adds its time only once
+      where: sentBack,
       data: {
-        answer,
+        answer: input.answer,
         reviewStatus: 'PENDING',
         submittedAt: now,
         reviewedAt: null,
-        draft: Prisma.DbNull,
+        payableAt: null,
+        activeSeconds: { increment: credit.seconds },
+        ...NO_DRAFT,
       },
     });
+    if (result.count > 0) await recordCredit(tx, clock, credit, now);
     if (result.count === 0) {
       const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
       return { ok: false, error: exists ? 'not_active' : 'not_found' };
@@ -551,24 +677,46 @@ export async function saveDraft(
  * The same for the revise page. That assignment is submitted, not active, so
  * the guard is the one `resubmitAssignment` uses: the annotator's own
  * submission, while it is sent back and not under dispute. Work that is
- * disputed cannot be revised, so no revision of it is saved either.
+ * disputed cannot be revised, so no revision of it is saved either. The time
+ * spent revising is kept with the draft, within the same bounds as a
+ * resubmission credits it, and never goes down.
  */
 export async function saveRevisionDraft(
   assignmentId: string,
   userId: string,
-  draft: Prisma.InputJsonValue,
-): Promise<{ ok: true } | { ok: false; error: AssignmentError | 'disputed' }> {
+  input: { draft?: Prisma.InputJsonValue; activeSeconds: number },
+  now = new Date(),
+): Promise<
+  { ok: true; draftSeconds: number } | { ok: false; error: AssignmentError | 'disputed' }
+> {
   return prisma.$transaction(async (tx) => {
     if (await blockedByDispute(tx, assignmentId)) return { ok: false, error: 'disputed' };
-    const saved = await tx.assignment.updateMany({
-      where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-      data: { draft },
+    const current = await tx.assignment.findFirst({
+      where: { id: assignmentId, userId },
+      select: REVISION_FIELDS,
     });
-    if (saved.count === 0) {
-      const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
-      return { ok: false, error: exists ? 'not_active' : 'not_found' };
-    }
-    return { ok: true };
+    if (!current) return { ok: false, error: 'not_found' };
+    // what the draft keeps is a count, not a credit: the resubmission credits it
+    const seconds = revisionSeconds({
+      reported: input.activeSeconds,
+      reviewedAt: revisingSince(current, now),
+      now,
+      limitSeconds: limitSeconds(current),
+      credited: current.activeSeconds,
+    });
+    const draft =
+      input.draft === undefined
+        ? Prisma.empty
+        : Prisma.sql`, "draft" = ${JSON.stringify(input.draft)}::jsonb`;
+    // one statement, for the same reasons as in saveDraft
+    const saved = await tx.$queryRaw<Array<{ draftSeconds: number }>>`
+      UPDATE "Assignment"
+      SET "draftSeconds" = GREATEST("draftSeconds", ${seconds}::int)${draft}
+      WHERE id = ${assignmentId} AND "userId" = ${userId}
+        AND status = 'SUBMITTED' AND "reviewStatus" = 'SENT_BACK'
+      RETURNING "draftSeconds"`;
+    if (saved.length === 0) return { ok: false, error: 'not_active' };
+    return { ok: true, draftSeconds: saved[0].draftSeconds };
   });
 }
 

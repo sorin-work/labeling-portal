@@ -8,6 +8,22 @@ import {
   type TextClassificationSchema,
 } from './task-schema';
 
+/** The seven places an answer is stored, in the order errors list them. */
+export const ANSWER_SOURCES = [
+  'submission',
+  'correction',
+  'gold',
+  // the expected answers a gold task had before it was edited, kept for good
+  'goldHistory',
+  'consensus',
+  'dispute',
+  'qualification',
+] as const;
+export type AnswerSource = (typeof ANSWER_SOURCES)[number];
+
+/** Stored answers by where they are stored. A source without any is left out. */
+export type AnswerCounts = Partial<Record<AnswerSource, number>>;
+
 /**
  * What the stored work of a project uses from its schema. `diffSchema` needs
  * these counts to tell a harmless edit from one that would orphan answers.
@@ -15,38 +31,35 @@ import {
  * "Stored answers" are submissions, reviewer corrections, gold answers,
  * consensus answers, the answer a dispute was about (once the submission has
  * moved on from it), the expected answers a gold task had before it was
- * edited, and the answers of qualification attempts.
+ * edited, and the answers of qualification attempts. Every count says how
+ * many are in each of those places, so that an error can tell the manager
+ * where to look.
  */
 export type SchemaUsage = {
   /** Imported tasks, gold and qualification tasks included. */
   tasks: number;
   /** Stored answers of any shape. */
-  answers: number;
+  answers: AnswerCounts;
   /** Label, entity type or box label -> stored answers that use it. */
-  names: ReadonlyMap<string, number>;
-  /**
-   * Of those, the ones that are an earlier expected answer in the history of
-   * a gold task. They are kept for good, so they hold their names for good.
-   */
-  goldHistory?: ReadonlyMap<string, number>;
+  names: ReadonlyMap<string, AnswerCounts>;
   /** Classification answers with two or more labels. */
-  multiLabel: number;
+  multiLabel: AnswerCounts;
   /** Pairwise answers whose preference is a tie. */
-  ties: number;
+  ties: AnswerCounts;
   /** Pairwise answers that carry rubric scores. Gold answers only hold a preference. */
-  scored: number;
+  scored: AnswerCounts;
   /** Rubric dimension key -> scored answers with a score for it on both sides. */
-  dimensions: ReadonlyMap<string, number>;
+  dimensions: ReadonlyMap<string, AnswerCounts>;
 };
 
 /** A project without tasks or answers: every edit is safe. */
 export const NO_USAGE: SchemaUsage = {
   tasks: 0,
-  answers: 0,
+  answers: {},
   names: new Map(),
-  multiLabel: 0,
-  ties: 0,
-  scored: 0,
+  multiLabel: {},
+  ties: {},
+  scored: {},
   dimensions: new Map(),
 };
 
@@ -78,6 +91,30 @@ function answers(n: number): string {
   return n === 1 ? '1 stored answer' : `${n} stored answers`;
 }
 
+function total(counts: AnswerCounts): number {
+  return ANSWER_SOURCES.reduce((sum, source) => sum + (counts[source] ?? 0), 0);
+}
+
+const SOURCE_NAMES: Record<AnswerSource, [one: string, many: string]> = {
+  submission: ['submission', 'submissions'],
+  correction: ['reviewer correction', 'reviewer corrections'],
+  gold: ['gold answer', 'gold answers'],
+  goldHistory: ['earlier gold answer', 'earlier gold answers'],
+  consensus: ['consensus answer', 'consensus answers'],
+  dispute: ['disputed answer', 'disputed answers'],
+  qualification: ['qualification answer', 'qualification answers'],
+};
+
+/** Where the counted answers are stored: `2 submissions, 1 gold answer`. */
+function places(counts: AnswerCounts): string {
+  return ANSWER_SOURCES.filter((source) => (counts[source] ?? 0) > 0)
+    .map((source) => {
+      const n = counts[source] ?? 0;
+      return `${n} ${SOURCE_NAMES[source][n === 1 ? 0 : 1]}`;
+    })
+    .join(', ');
+}
+
 function kindChange(before: TaskSchema, after: TaskSchema, usage: SchemaUsage): SchemaChange {
   const name = (schema: TaskSchema) => KIND_LABELS[schema.kind].toLowerCase();
   const summary = `changed the kind from ${name(before)} to ${name(after)}`;
@@ -90,13 +127,14 @@ function kindChange(before: TaskSchema, after: TaskSchema, usage: SchemaUsage): 
       affected: usage.tasks,
     };
   }
-  if (usage.answers > 0) {
+  const stored = total(usage.answers);
+  if (stored > 0) {
     return {
       field: 'kind',
       impact: 'breaking',
       summary,
-      reason: `the kind cannot change once the project has ${answers(usage.answers)}`,
-      affected: usage.answers,
+      reason: `the kind cannot change once the project has ${answers(stored)} (${places(usage.answers)})`,
+      affected: stored,
     };
   }
   return safe('kind', summary);
@@ -146,7 +184,8 @@ function nameChanges(
   const changes: SchemaChange[] = [];
   for (const name of before) {
     if (after.includes(name)) continue;
-    const used = usage.names.get(name) ?? 0;
+    const where = usage.names.get(name) ?? {};
+    const used = total(where);
     const summary = `removed the ${one} “${name}”`;
     if (used === 0) {
       changes.push(safe(field, summary));
@@ -154,7 +193,7 @@ function nameChanges(
     }
     // Say when it is the history of a gold task that holds the name: that
     // never goes away, so waiting or relabeling will not free it.
-    const kept = usage.goldHistory?.get(name) ?? 0;
+    const kept = where.goldHistory ?? 0;
     const history =
       kept === 0
         ? ''
@@ -165,7 +204,7 @@ function nameChanges(
       field,
       impact: 'breaking',
       summary,
-      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it${history}`,
+      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it (${places(where)})${history}`,
       affected: used,
     });
   }
@@ -192,15 +231,16 @@ function classificationChanges(
   ];
   if (before.multiple && !after.multiple) {
     const summary = 'turned off “multiple”';
+    const multi = total(usage.multiLabel);
     changes.push(
-      usage.multiLabel === 0
+      multi === 0
         ? safe('multiple', summary)
         : {
             field: 'multiple',
             impact: 'breaking',
             summary,
-            reason: `“multiple” cannot be turned off while ${answers(usage.multiLabel)} ${usage.multiLabel === 1 ? 'has' : 'have'} more than one label`,
-            affected: usage.multiLabel,
+            reason: `“multiple” cannot be turned off while ${answers(multi)} ${multi === 1 ? 'has' : 'have'} more than one label (${places(usage.multiLabel)})`,
+            affected: multi,
           },
     );
   }
@@ -243,7 +283,7 @@ function dimensionChanges(
   const changes: SchemaChange[] = [];
   for (const key of beforeKeys) {
     if (afterKeys.includes(key)) continue;
-    const kept = usage.dimensions.get(key) ?? 0;
+    const kept = total(usage.dimensions.get(key) ?? {});
     const summary = `removed the rubric dimension “${key}”`;
     if (kept === 0) {
       changes.push(safe(field, summary));
@@ -259,7 +299,13 @@ function dimensionChanges(
   }
   for (const key of afterKeys) {
     if (beforeKeys.includes(key)) continue;
-    const missing = Math.max(0, usage.scored - (usage.dimensions.get(key) ?? 0));
+    const have = usage.dimensions.get(key) ?? {};
+    const without: AnswerCounts = {};
+    for (const source of ANSWER_SOURCES) {
+      const n = (usage.scored[source] ?? 0) - (have[source] ?? 0);
+      if (n > 0) without[source] = n;
+    }
+    const missing = total(without);
     const summary = `added the rubric dimension “${key}”`;
     if (missing === 0) {
       changes.push(safe(field, summary));
@@ -269,7 +315,7 @@ function dimensionChanges(
       field,
       impact: 'breaking',
       summary,
-      reason: `the rubric dimension “${key}” cannot be added while ${answers(missing)} ${missing === 1 ? 'has' : 'have'} no score for it`,
+      reason: `the rubric dimension “${key}” cannot be added while ${answers(missing)} ${missing === 1 ? 'has' : 'have'} no score for it (${places(without)})`,
       affected: missing,
     });
   }
@@ -297,15 +343,16 @@ function pairwiseChanges(
   ];
   if (before.allowTie && !after.allowTie) {
     const summary = 'turned off “allowTie”';
+    const ties = total(usage.ties);
     changes.push(
-      usage.ties === 0
+      ties === 0
         ? safe('allowTie', summary)
         : {
             field: 'allowTie',
             impact: 'breaking',
             summary,
-            reason: `“allowTie” cannot be turned off while ${answers(usage.ties)} ${usage.ties === 1 ? 'is a tie' : 'are ties'}`,
-            affected: usage.ties,
+            reason: `“allowTie” cannot be turned off while ${answers(ties)} ${ties === 1 ? 'is a tie' : 'are ties'} (${places(usage.ties)})`,
+            affected: ties,
           },
     );
   }

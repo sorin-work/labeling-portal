@@ -8,21 +8,22 @@ import { saveRevisionDraft } from '~/models/queue.server';
 
 import type { Route } from './+types/my-work-draft';
 
-/** POST: the revise page saves the changes in progress to sent-back work here. */
+/**
+ * POST: the revise page saves the changes in progress to sent-back work and
+ * the time spent on them here.
+ */
 export async function action({ request, params }: Route.ActionArgs) {
   requireSameOrigin(request);
   const { user } = await requireUser(request);
   const form = await request.formData();
   const parsed = parseDraft(form.get('draft'));
   if (!parsed.ok) return jsonError(parsed.reason, parsed.reason === 'too_large' ? 413 : 400);
-  if (!parsed.draft) return jsonError('malformed', 400);
-  const result = await saveRevisionDraft(
-    params.assignmentId,
-    user.id,
-    parsed.draft as Prisma.InputJsonObject,
-  );
+  const result = await saveRevisionDraft(params.assignmentId, user.id, {
+    draft: (parsed.draft ?? undefined) as Prisma.InputJsonObject | undefined,
+    activeSeconds: Number(form.get('activeSeconds') ?? 0),
+  });
   if (!result.ok) return jsonError(result.error, result.error === 'not_found' ? 404 : 409);
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, draftSeconds: result.draftSeconds });
 }
 
 export async function loader({ params }: Route.LoaderArgs) {

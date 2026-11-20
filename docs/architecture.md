@@ -211,11 +211,12 @@ be disputed.
     overturned corrections) and the task may complete;
   - an overturned send-back gets `reviewedAt` set to the time of the overturn,
     which is the day the work became payable. An overturned fix was accepted
-    and payable since the review, so its `reviewedAt` stays. That is as far
-    as it goes today: the payouts report still selects by `submittedAt`, so
-    overturned work shows in the period it was submitted in. It will show in
-    the period of the overturn, and never in one that was already paid, once
-    the report goes by the day work became payable (roadmap item 5);
+    and payable since the review, so its `reviewedAt` stays. The pay reports
+    go by that date (`payableAt`, see "Pay"), so an overturned send-back shows
+    in the period of the overturn, once, and never in the period it was
+    submitted in, which may be paid already. A dispute that is upheld or
+    withdrawn leaves the work as the review left it and changes nothing that
+    is payable;
   - a draft of a revision that was started before the dispute is dropped, so
     approved work never carries one;
   - if the submission is not in the state the decision left it in, the
@@ -308,6 +309,9 @@ time counts on from the saved value.
   while the session is still there.
 - Revising sent-back work keeps its draft in the same column. That assignment
   is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
+  While the annotator disputes the decision the revise page is read-only, the
+  draft route refuses saves and the page sends none and counts no time. When
+  the dispute is withdrawn the page's data reloads and saving starts.
 - The qualification test has no row to keep a draft on. Its answers stay in
   `sessionStorage`, tagged with the attempt they belong to.
 - A reload is faster than the save the closing page sends, so the new page
@@ -494,7 +498,11 @@ breaking one of them loses backups:
   does not count towards `BACKUP_KEEP`. Sorted by name such dumps would pass
   for the newest ones and push the real dumps out. Every start and every dump
   logs a warning that names them. If every dump is dated in the future the
-  loop waits a full interval before its first dump.
+  loop waits a full interval before its first dump. The date is checked by
+  writing it back as a name: busybox `date` in the postgres image turns
+  `2026-02-31` into 3 March instead of refusing it, so a dump whose date does
+  not come back as the same name counts as one with a date that does not
+  exist.
 - After every attempt, whether it worked or not, the loop pauses before the
   next one, and it waits in steps of a minute with a look at the clock after
   each, so a suspended machine still gets its daily dump.
@@ -523,7 +531,86 @@ always has rows). CI runs it after the tests, once the demo data is in.
 Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
 at the time since the claim. It is saved with the draft, so a reload does not
-start the count again.
+start the count again. Time spent revising work that was sent back is added
+to it, within the bounds below, and is kept with the revision draft in the
+same way.
+
+- **The rate is frozen at submission.** `submitAssignment` copies the
+  project's `rateCents` and `payMode` onto the assignment in the same write
+  that stores the answer, and reads them in that transaction while holding
+  the project row, so a rate change that commits at the same moment is either
+  waited for or seen. Payouts, the earnings page and the payout CSV read
+  that copy and never the project, so changing a project's rate changes
+  nothing that is already submitted. A revision after a send-back keeps the
+  rate of the first submission. A check constraint
+  (`Assignment_submitted_has_rate`) refuses a submitted row without the
+  copy, so code that writes submissions directly, such as a seed or a test,
+  has to set both columns.
+- **Work counts on the day it became payable**, and that day is stored:
+  `Assignment.payableAt`. The write that accepts the work sets it
+  (`payableSince` in `app/domain/payouts.ts` is the rule): the review for work
+  a reviewer approved or fixed, the submission for work that needed no review
+  (review off, gold tasks, and work the review sample did not draw), and the
+  overturn for a send-back that a dispute overturned. Work submitted in March
+  and approved in April belongs to April. A check constraint
+  (`Assignment_accepted_has_payable_date`) refuses accepted work without the
+  date and any other work with one, so no write can accept work and leave it
+  out of every period. Work that is waiting for review or was sent back has
+  no date: the payouts page counts it as pending by its submission date, and
+  the earnings page lists all of it whatever the range.
+- **The cutover.** Before the date was stored, the reports counted accepted
+  work on the day it was submitted. The migration gives every piece of work
+  that is already accepted its submission date, so every period of every past
+  report is what it was, and nothing that was paid from an old report is owed
+  again. Only work accepted after the upgrade follows the rule above.
+- **Revising has no deadline, so its time is bounded by hand**
+  (`revisionSeconds` in `app/domain/active-time.ts`, used by the resubmission
+  and by the revision draft): never more than the time since the review,
+  never more than the project's time limit for one revision, which is what a
+  first claim gets, and never more than three time limits for an assignment
+  in total, however often it is sent back. Every project has a time limit
+  (1 to 480 minutes), so there is always a bound.
+- **A person's time is credited once.** Those bounds are per assignment, and
+  wall-clock time is one resource per person: three submissions sent back
+  together and handed in twenty minutes later hold twenty minutes of work
+  between them, and a revision made while a claim is held is not also time
+  on the claim. So the stretches of a person's time that have been credited
+  are stored (`CreditedInterval`, by organisation and user). `creditTime` in
+  `app/domain/active-time.ts` is the one place time is credited, for first
+  submissions and revisions alike: a piece of work is credited from its own
+  window, its start (the claim, or the review that sent it back) to now,
+  minus the stretches already credited, within its own cap. It takes the
+  earliest free time of the window, which later-started work could not use,
+  so a claim from 09:00 handed in at 09:30 still gets its 25 minutes after a
+  revision of 09:10 to 09:15 was handed in first. What it takes is stored,
+  and no two credits overlap.
+- The submit and resubmit transactions lock the person's membership row
+  first, so two submissions of one person are credited one after the other.
+  The stretches are written back merged. A credit reaches back at most 24
+  hours (`CREDIT_WINDOW_MS`): a claim lives at most two time limits of at
+  most 480 minutes each, and a revision, which has no deadline, is credited
+  only in the last day before it is handed in. Stretches that end before
+  that are removed, so the table holds a few rows per person.
+- The clock is per organisation and not per project, so the same minutes
+  cannot be paid on two projects. A person in two organisations has two
+  clocks, and that is intended: the organisations do not see each other's
+  work, and each pays for its own. The stretches are kept by organisation
+  and user and not on the membership, so removing someone and adding them
+  again does not forget what was credited. The revision draft only keeps a
+  count; the resubmission credits it.
+- **Money is whole cents everywhere.** Amounts are computed per block of
+  work, which is one person, project, pay mode and rate, by `amountCents`.
+  An hourly block is rounded once, to the nearest cent with half a cent
+  going up, in `divideRounded`, which is the only place anything is rounded
+  and works on integers. A project whose rate changed shows as two blocks,
+  on the pages and in the CSV, and because each block is rounded by itself a
+  total can differ by a cent from one computed another way.
+- **Who sees what.** `/payouts` is for managers and shows the organisation.
+  `/earnings` shows a person their own blocks, computed by the same code as
+  their line on `/payouts`. Gold tasks are paid like other tasks, the
+  qualification test is not. The portal does not record payments, and the
+  earnings page says so: it separates what is payable for the period from
+  what is waiting for review and what was sent back.
 
 ## Changing the schema once work exists
 
@@ -544,8 +631,12 @@ was edited (`GoldRevision.previousAnswer`, which its history still shows),
 consensus answers (`Task.consensus`), the answer a dispute was about
 (`Dispute.answer`, counted only once the submission has been revised and says
 something else) and qualification attempts (`QualificationAttempt.answers`).
-No answer is counted twice. A correction that a
-dispute overturned still counts: the review row is kept and shown.
+No answer is counted twice. A correction that a dispute overturned still
+counts: the review row is kept and shown. The error names the places, for
+example "2 stored answers use it (1 submission, 1 gold answer)", so the
+manager knows where to look. An attempt keeps the posted map of answers as it
+came, and only the entries of the project's test questions were validated, so
+only those count.
 
 | Edit                                               | Outcome                                                   |
 | -------------------------------------------------- | --------------------------------------------------------- |
@@ -583,10 +674,21 @@ dispute overturned still counts: the review row is kept and shown.
 - A saved schema edit is written to the activity log as
   `detail.changes.schema = [before, after]`. The list of changes is not
   stored: the activity tab runs the diff on the pair again to word the entry.
-- The check covers what is stored when the save runs. An answer that was
-  validated against the old schema a moment before the save and written a
-  moment after it is not caught. Closing that needs every place that stores
-  an answer to hold the project row while it validates and writes.
+- The check is not atomic with the code that stores answers. The usage
+  count sees what was committed when its statement started. An answer that
+  is committed between that snapshot and the commit of the save is not
+  counted, and neither is one whose request read the old schema before the
+  save committed and stores its answer after it. So the open window is as
+  long as the usage statement and the save take together, plus the time a
+  submit, review, import or test request needs between reading the project
+  and writing. The usage statement unnests every stored answer of the
+  project, which is about two seconds at 200,000 tasks. Closing the window
+  needs every place that stores an answer to hold the project row while it
+  validates and writes.
+- The save holds the project row with `FOR NO KEY UPDATE`, the lock an
+  `UPDATE` takes anyway. Two saves of one project run one after the other,
+  and claims, imports and activity entries, which only point at the row, do
+  not wait for a save.
 
 ## Adding a labeling kind
 
@@ -600,6 +702,8 @@ schema union:
 3. `app/domain/consensus.ts`, `gold.ts`, `agreement.ts`: how answers merge,
    how they are scored against gold, and whether they are categorical.
 4. `app/domain/export.ts` and `template.ts`: export columns and example rows.
+   A format of its own for the kind is one more row in `EXPORT_FORMATS`; the
+   download route and the export page read that table.
 5. `app/domain/schema-diff.ts`: which edits of the new schema are safe. If its
    answers name labels in a new place, `schemaUsage` in
    `app/models/projects.server.ts` has to count them.

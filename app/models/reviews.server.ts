@@ -7,6 +7,7 @@ import {
   type ReviewStatus,
 } from '@prisma/client';
 
+import { payableSince } from '~/domain/payouts';
 import { holdCutoff } from '~/domain/review-hold';
 import { prisma, utc } from '~/lib/db.server';
 
@@ -225,6 +226,8 @@ export async function recordReview(
       data: {
         reviewStatus: STATUS_AFTER[input.decision],
         reviewedAt: now,
+        // approved or fixed work is payable from the review, sent-back work is not
+        payableAt: payableSince(STATUS_AFTER[input.decision], now),
         reviewHeldById: null,
         reviewHeldAt: null,
       },

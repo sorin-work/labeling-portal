@@ -21,6 +21,7 @@ import { badRequest, forbidden, notFound } from '~/lib/http';
 import { can } from '~/lib/permissions';
 import {
   adjudicateTask,
+  labeledBy,
   sendToAdjudication,
   type AdjudicationChoice,
   type AdjudicationRefusal,
@@ -72,10 +73,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // reviewers see that a task is gold and how each answer scored, as before
   const canManage = can(role, 'manageProjects');
   const gold = canManage ? await goldTaskView(project, task.id) : null;
-  // who labeled the task (a submission or a claim being worked on) cannot settle it
-  const labeled = task.assignments.some(
-    (a) => a.userId === current.user.id && (a.status === 'SUBMITTED' || a.status === 'ACTIVE'),
-  );
+  // who had a hand in the answers (or in those of the same item's gold copies) cannot settle it
+  const labeled =
+    task.status === 'ADJUDICATION' ? await labeledBy(prisma, task.id, current.user.id) : false;
   const adjudication =
     task.status === 'ADJUDICATION'
       ? {
@@ -84,11 +84,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           choices: task.assignments
             .filter((a) => a.status === 'SUBMITTED' && isAccepted(a.reviewStatus))
             .map((a) => ({ assignmentId: a.id, annotator: a.user.name })),
-          hasConsensus: task.consensus !== null,
+          hasConsensus: task.majority !== null,
           refusal: !can(role, 'review')
             ? 'Reviewers settle tasks in adjudication.'
             : labeled
-              ? 'You labeled this task, so someone else has to settle it.'
+              ? 'You labeled or corrected an answer of this task, so someone else has to settle it.'
               : null,
         }
       : null;
@@ -117,6 +117,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       goldRetired: task.goldRetiredAt !== null,
       data: task.data as Record<string, unknown>,
       consensus: task.consensus as Answer | null,
+      // while it waits for adjudication: what the majority says, not a result
+      majority: task.majority as Answer | null,
       agreement: task.agreement,
       extraSlots: task.extraSlots,
       source: consensusSource(task),
@@ -173,7 +175,7 @@ const REFUSALS: Record<GoldRefusal['error'], string> = {
 const ADJUDICATION_REFUSALS: Record<Exclude<AdjudicationRefusal['error'], 'invalid'>, string> = {
   not_found: 'Task not found.',
   not_waiting: 'This task is not waiting for adjudication any more.',
-  own_work: 'You labeled this task, so someone else has to settle it.',
+  own_work: 'You labeled or corrected an answer of this task, so someone else has to settle it.',
   no_consensus: 'The answers have no consensus to keep.',
   no_submission: 'That answer is not one of the accepted answers of this task.',
 };
@@ -464,10 +466,10 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
             ))}
         </Card>
       )}
-      {task.consensus && (
+      {(task.consensus ?? task.majority) && (
         <Card>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            {task.status === 'ADJUDICATION' ? 'Consensus so far' : 'Consensus'}
+            {task.consensus ? 'Consensus' : 'What the majority says (not a result yet)'}
           </h2>
           {task.adjudicated && (
             <p className="mb-3 text-sm text-slate-600">
@@ -478,7 +480,7 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
           <LabelingInterface
             schema={schema}
             data={task.data}
-            value={task.consensus}
+            value={task.consensus ?? task.majority}
             onChange={() => {}}
             readOnly
             viewKey={`${task.id}:consensus`}
