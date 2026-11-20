@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { toJsonl } from '~/domain/export';
+import { toCsvExport, toJsonl } from '~/domain/export';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { adjudicateTask, sendToAdjudication } from '~/models/adjudication.server';
 import { loadExportTasks } from '~/models/export.server';
@@ -106,8 +106,9 @@ describe('low agreement: extras and adjudication', () => {
     const t = await state(task.id);
     expect(t.status).toBe('ADJUDICATION');
     expect(t.escalatedAt).not.toBeNull();
-    // what the majority says is kept for the adjudicator to choose
-    expect(t.consensus).toEqual(answer('positive'));
+    // what the majority says is kept for the adjudicator to choose, and is no result
+    expect(t.majority).toEqual(answer('positive'));
+    expect(t.consensus).toBeNull();
     expect(await claimNextTask(project, people[3].id)).toEqual({ ok: false, reason: 'empty' });
 
     await resetDb();
@@ -286,6 +287,112 @@ describe('low agreement: extras and adjudication', () => {
     });
     await prisma.$transaction((tx) => refreshTaskStatus(task.id, tx));
     expect(await state(task.id)).toMatchObject({ status: 'COMPLETE', extraSlots: 0 });
+  });
+
+  it('refuses a reviewer whose fix is one of the answers, and anyone who labeled a gold copy', async () => {
+    const { org, project, task, people, reviewer } = await setup({ maxExtra: 0, threshold: 0.75 });
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const first = await submitWork(fresh, people[0].id, answer('positive'));
+    await submitWork(fresh, people[1].id, answer('positive'));
+    // the reviewer accepts one and turns the other into a different answer
+    await prisma.$transaction(async (tx) => {
+      await tx.assignment.update({ where: { id: first.id }, data: { reviewStatus: 'FIXED' } });
+      await tx.review.create({
+        data: {
+          assignmentId: first.id,
+          reviewerId: reviewer.id,
+          decision: 'FIX',
+          correctedAnswer: answer('negative'),
+        },
+      });
+      await tx.assignment.updateMany({
+        where: { taskId: task.id, id: { not: first.id } },
+        data: { reviewStatus: 'APPROVED' },
+      });
+      await refreshTaskStatus(task.id, tx);
+    });
+    expect((await state(task.id)).status).toBe('ADJUDICATION');
+    expect(
+      await adjudicateTask(
+        fresh,
+        task.id,
+        reviewer.id,
+        { kind: 'own', answer: answer('negative') },
+        'x',
+      ),
+    ).toEqual({ ok: false, error: 'own_work' });
+
+    // someone who labeled a gold copy of the same item had a hand in it too
+    const [copy] = await createTasks(project.id, [{ text: 'hard to say' }]);
+    await prisma.task.update({
+      where: { id: copy.id },
+      data: { isGold: true, goldAnswer: answer('positive'), goldSourceId: task.id },
+    });
+    const goldLabeler = await createMember(org.id, 'REVIEWER');
+    await prisma.assignment.create({
+      data: {
+        projectId: project.id,
+        taskId: copy.id,
+        userId: goldLabeler.id,
+        status: 'SUBMITTED',
+        expiresAt: new Date(),
+        submittedAt: new Date(),
+        answer: answer('positive'),
+        reviewStatus: 'NOT_REQUIRED',
+      },
+    });
+    expect(
+      await adjudicateTask(fresh, task.id, goldLabeler.id, { kind: 'consensus' }, 'x'),
+    ).toEqual({ ok: false, error: 'own_work' });
+    const outsider = await createMember(org.id, 'REVIEWER');
+    expect(
+      await adjudicateTask(
+        fresh,
+        task.id,
+        outsider.id,
+        { kind: 'own', answer: answer('positive') },
+        'y',
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it('exports a task in adjudication without a result', async () => {
+    const { project, task, people } = await setup({ maxExtra: 0 });
+    await label(project.id, people, ['positive', 'negative']);
+    const schema = parseTaskSchema(project.schema);
+    if (!schema.ok) throw new Error('schema');
+    const tasks = await loadExportTasks(project, 'all');
+    const [line] = toJsonl(schema.schema, tasks).trim().split('\n');
+    expect(JSON.parse(line)).toMatchObject({
+      status: 'adjudication',
+      consensus: null,
+      consensus_source: null,
+    });
+    const rows = toCsvExport(schema.schema, tasks).trim().split('\r\n').slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.startsWith(`${task.id},t1,batch,adjudication,`))).toBe(true);
+    expect(rows.some((r) => r.includes(',consensus,'))).toBe(false);
+  });
+
+  it('keeps the majority when a manager sends a waiting task to adjudication', async () => {
+    const { project, task, people, reviewer, pm } = await setup({
+      overlap: 3,
+      threshold: 0.8,
+      maxExtra: 2,
+    });
+    await label(project.id, people, ['positive', 'positive', 'negative']);
+    expect(await state(task.id)).toMatchObject({ status: 'OPEN', extraSlots: 1 });
+    expect(await sendToAdjudication(project, task.id, pm.id)).toEqual({ ok: true });
+    expect(await state(task.id)).toMatchObject({
+      status: 'ADJUDICATION',
+      majority: answer('positive'),
+      consensus: null,
+    });
+    expect(
+      await adjudicateTask(project, task.id, reviewer.id, { kind: 'consensus' }, 'two of three'),
+    ).toEqual({ ok: true });
+    expect(await state(task.id)).toMatchObject({ consensus: answer('positive'), majority: null });
   });
 
   it('lets a manager send a task that waits for an extra annotator to adjudication', async () => {
