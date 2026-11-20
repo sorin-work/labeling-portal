@@ -9,11 +9,15 @@ import {
   DRAFT_SAVE_SECONDS,
   droppedNote,
   fitDraft,
+  LOCAL_PREFIX,
+  packTestAnswers,
   packUnsaved,
   parseDraft,
   readUnsaved,
   restoreTestAnswers,
   saveDelay,
+  testAnswersKey,
+  unsavedKey,
 } from '~/domain/drafts';
 import { SCHEMA_TEMPLATES, type TextClassificationSchema } from '~/domain/task-schema';
 
@@ -190,23 +194,37 @@ describe('restoreTestAnswers', () => {
     { id: 'q1', data: { text: 'one' } },
     { id: 'q2', data: { text: 'two' } },
   ];
+  const ana = { user: 'ana', attempt: 1 };
   const stored = JSON.stringify({
-    attempt: 1,
+    ...ana,
     answers: { q1: { labels: ['positive'] }, q2: { spans: [] }, old: { labels: ['negative'] } },
   });
 
   it('brings back the answers of the same attempt for questions still in the test', () => {
-    expect(restoreTestAnswers(single, tasks, 1, stored)).toEqual({ q1: { labels: ['positive'] } });
+    expect(restoreTestAnswers(single, tasks, ana, stored)).toEqual({
+      q1: { labels: ['positive'] },
+    });
+    expect(
+      restoreTestAnswers(single, tasks, ana, packTestAnswers(ana, { q2: { labels: [] } })),
+    ).toEqual({ q2: { labels: [] } });
   });
 
   it('ignores answers from an attempt that was already handed in', () => {
-    expect(restoreTestAnswers(single, tasks, 2, stored)).toEqual({});
+    expect(restoreTestAnswers(single, tasks, { ...ana, attempt: 2 }, stored)).toEqual({});
+  });
+
+  it('never hands one person the answers of another', () => {
+    expect(restoreTestAnswers(single, tasks, { user: 'ben', attempt: 1 }, stored)).toEqual({});
+    const unsigned = JSON.stringify({ attempt: 1, answers: { q1: { labels: ['positive'] } } });
+    expect(restoreTestAnswers(single, tasks, ana, unsigned)).toEqual({});
   });
 
   it('ignores a missing or broken value', () => {
-    expect(restoreTestAnswers(single, tasks, 0, null)).toEqual({});
-    expect(restoreTestAnswers(single, tasks, 0, '{"attempt":0,')).toEqual({});
-    expect(restoreTestAnswers(single, tasks, 0, '{"attempt":0,"answers":[]}')).toEqual({});
+    expect(restoreTestAnswers(single, tasks, ana, null)).toEqual({});
+    expect(restoreTestAnswers(single, tasks, ana, '{"attempt":1,')).toEqual({});
+    expect(
+      restoreTestAnswers(single, tasks, ana, '{"user":"ana","attempt":1,"answers":[]}'),
+    ).toEqual({});
   });
 });
 
@@ -214,25 +232,43 @@ describe('unsaved work of a closing page', () => {
   const server = { json: '{"labels":["positive"]}', seconds: 40 };
 
   it('is nothing when the server has it all', () => {
-    expect(packUnsaved(server, server)).toBeNull();
-    expect(packUnsaved({ json: '', seconds: 0 }, { json: '', seconds: 0 })).toBeNull();
-    expect(readUnsaved(null)).toBeNull();
+    expect(packUnsaved(server, server, 'ana')).toBeNull();
+    expect(packUnsaved({ json: '', seconds: 0 }, { json: '', seconds: 0 }, 'ana')).toBeNull();
+    expect(readUnsaved(null, 'ana')).toBeNull();
   });
 
   it('carries a changed answer and the working time to the next page', () => {
-    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server);
-    expect(readUnsaved(packed)).toEqual({ draft: { labels: ['negative'] }, seconds: 47 });
+    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server, 'ana');
+    expect(readUnsaved(packed, 'ana')).toEqual({ draft: { labels: ['negative'] }, seconds: 47 });
   });
 
   it('carries the time alone when the answer did not change', () => {
-    const packed = packUnsaved({ ...server, seconds: 55 }, server);
-    expect(readUnsaved(packed)).toEqual({ draft: null, seconds: 55 });
+    const packed = packUnsaved({ ...server, seconds: 55 }, server, 'ana');
+    expect(readUnsaved(packed, 'ana')).toEqual({ draft: null, seconds: 55 });
+  });
+
+  it('is not read by anyone but the user who left it', () => {
+    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server, 'ana');
+    expect(readUnsaved(packed, 'ben')).toBeNull();
+    expect(readUnsaved('{"draft":"{\\"labels\\":[]}","seconds":5}', 'ana')).toBeNull();
+  });
+
+  it('files every copy under its user and under the prefix that sign-out clears', () => {
+    expect(unsavedKey('ana', '/work/a1/draft')).toBe('labeling-portal:unsaved:ana:/work/a1/draft');
+    expect(unsavedKey('ben', '/work/a1/draft')).not.toBe(unsavedKey('ana', '/work/a1/draft'));
+    expect(testAnswersKey('ana', 'p1')).toBe('labeling-portal:qualification:ana:p1');
+    for (const key of [unsavedKey('ana', '/x'), testAnswersKey('ana', 'p1')]) {
+      expect(key.startsWith(LOCAL_PREFIX)).toBe(true);
+    }
   });
 
   it('reads nothing from a broken value', () => {
-    expect(readUnsaved('{"draft":')).toBeNull();
-    expect(readUnsaved('[]')).toBeNull();
-    expect(readUnsaved('{"draft":"[1]","seconds":"x"}')).toEqual({ draft: null, seconds: 0 });
+    expect(readUnsaved('{"draft":', 'ana')).toBeNull();
+    expect(readUnsaved('[]', 'ana')).toBeNull();
+    expect(readUnsaved('{"user":"ana","draft":"[1]","seconds":"x"}', 'ana')).toEqual({
+      draft: null,
+      seconds: 0,
+    });
   });
 });
 

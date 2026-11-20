@@ -76,6 +76,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project.instructionsUpdatedAt > lastSubmission.submittedAt,
   );
   return {
+    userId: user.id,
     instructionsChanged,
     assignment: {
       id: assignment.id,
@@ -202,6 +203,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const [activeSeconds, raiseActiveSeconds] = useActiveTime(assignment.draftSeconds);
   const draftState = useDraftSave({
     url: `/work/${assignment.id}/draft`,
+    user: loaderData.userId,
     answer,
     seconds: activeSeconds,
     restored: assignment.draft !== null,

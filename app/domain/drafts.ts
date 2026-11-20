@@ -185,14 +185,38 @@ export function droppedNote(schema: TaskSchema, dropped: number): string | null 
 }
 
 /**
- * Answers of an unfinished qualification test. The test page keeps them in
- * sessionStorage as `{ attempt, answers }`; they only count for the attempt
- * they were written in and for questions that are still part of the test.
+ * Everything the app keeps in sessionStorage starts with this, and signing
+ * out removes all of it. Each copy of unfinished work is filed under the user
+ * it belongs to and names that user again inside, so the next person at the
+ * same browser tab never gets it.
+ */
+export const LOCAL_PREFIX = 'labeling-portal:';
+
+export function unsavedKey(user: string, url: string): string {
+  return `${LOCAL_PREFIX}unsaved:${user}:${url}`;
+}
+
+export function testAnswersKey(user: string, projectId: string): string {
+  return `${LOCAL_PREFIX}qualification:${user}:${projectId}`;
+}
+
+/** What the test page writes under `testAnswersKey`. */
+export function packTestAnswers(
+  owner: { user: string; attempt: number },
+  answers: Record<string, Answer>,
+): string {
+  return JSON.stringify({ ...owner, answers });
+}
+
+/**
+ * Answers of an unfinished qualification test, from sessionStorage. They only
+ * count for the user and the attempt they were written in, and for questions
+ * that are still part of the test.
  */
 export function restoreTestAnswers(
   schema: TaskSchema,
   tasks: Array<{ id: string; data: unknown }>,
-  attempt: number,
+  owner: { user: string; attempt: number },
   raw: string | null,
 ): Record<string, Answer> {
   let stored: unknown = null;
@@ -201,7 +225,8 @@ export function restoreTestAnswers(
   } catch {
     return {};
   }
-  if (!isRecord(stored) || stored.attempt !== attempt || !isRecord(stored.answers)) return {};
+  if (!isRecord(stored) || !isRecord(stored.answers)) return {};
+  if (stored.user !== owner.user || stored.attempt !== owner.attempt) return {};
   const answers: Record<string, Answer> = {};
   for (const task of tasks) {
     const fitted = fitDraft(schema, task.data, stored.answers[task.id]).answer;
@@ -219,20 +244,25 @@ export type UnsavedCopy = { draft: Record<string, unknown> | null; seconds: numb
  * what the server has not confirmed in sessionStorage, and the next page
  * picks it up. Returns null when the server already has everything.
  */
-export function packUnsaved(page: PageWork, server: PageWork): string | null {
+export function packUnsaved(page: PageWork, server: PageWork, user: string): string | null {
   const changed = page.json !== '' && page.json !== server.json;
   if (!changed && page.seconds <= server.seconds) return null;
-  return JSON.stringify({ ...(changed ? { draft: page.json } : {}), seconds: page.seconds });
+  return JSON.stringify({
+    user,
+    ...(changed ? { draft: page.json } : {}),
+    seconds: page.seconds,
+  });
 }
 
-export function readUnsaved(raw: string | null): UnsavedCopy | null {
+/** Reads such a copy back. A copy that another user left behind is not read. */
+export function readUnsaved(raw: string | null, user: string): UnsavedCopy | null {
   let stored: unknown = null;
   try {
     stored = JSON.parse(raw ?? 'null');
   } catch {
     return null;
   }
-  if (!isRecord(stored)) return null;
+  if (!isRecord(stored) || stored.user !== user) return null;
   const { seconds } = stored;
   const draft = parseDraft(typeof stored.draft === 'string' ? stored.draft : null);
   return {

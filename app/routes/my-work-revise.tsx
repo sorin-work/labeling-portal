@@ -44,6 +44,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   return {
+    userId: user.id,
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
@@ -93,6 +94,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   // nothing is saved in compare mode: the answer there cannot change
   const draftState = useDraftSave({
     url: `/my-work/${loaderData.id}/draft`,
+    user: loaderData.userId,
     answer: value,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,

@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { packUnsaved, readUnsaved, saveDelay, type UnsavedCopy } from '~/domain/drafts';
+import {
+  LOCAL_PREFIX,
+  packUnsaved,
+  readUnsaved,
+  saveDelay,
+  unsavedKey,
+  type UnsavedCopy,
+} from '~/domain/drafts';
 
 export type DraftState = 'idle' | 'restored' | 'saving' | 'saved' | 'failed' | 'stopped';
 
 type Options = {
   /** the resource route that stores the draft */
   url: string;
+  /** the signed-in user; local copies are kept per user */
+  user: string;
   answer: object | null;
   /** working time to store with the draft, on pages that count it */
   seconds?: number;
@@ -47,10 +56,18 @@ const savers = new Set<() => void>();
 
 /**
  * For the sign-out button, before its request leaves: saves what the open
- * task has not saved yet, while the session is still there.
+ * task has not saved yet, while the session is still there, and then removes
+ * everything the app keeps in this browser tab.
  */
 export function beforeSignOut() {
   for (const saveNow of savers) saveNow();
+  try {
+    const storage = window.sessionStorage;
+    const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i));
+    for (const key of keys) if (key?.startsWith(LOCAL_PREFIX)) storage.removeItem(key);
+  } catch {
+    // storage can be disabled
+  }
 }
 
 /**
@@ -61,14 +78,14 @@ export function beforeSignOut() {
  * the error page in place of the task and the unsaved answer with it.
  *
  * A reload is faster than the save a closing page sends, so the closing page
- * also leaves its unsaved work in sessionStorage and the next one takes it
- * from there (`onRecover`).
+ * also leaves its unsaved work in sessionStorage, under the user's id, and
+ * the next one takes it from there (`onRecover`).
  *
  * The caller must be mounted once per assignment (`key`), or the first save
  * for a new task would store the previous task's answer.
  */
 export function useDraftSave(options: Options): DraftState {
-  const { url, answer, seconds = 0, restored, handingIn } = options;
+  const { url, user, answer, seconds = 0, restored, handingIn } = options;
   const json = useMemo(() => (answer ? JSON.stringify(answer) : ''), [answer]);
   const [state, setState] = useState<DraftState>(restored ? 'restored' : 'idle');
   // what the page holds now, and what the server has
@@ -81,7 +98,7 @@ export function useDraftSave(options: Options): DraftState {
   }>({ changedAt: null, dirtySince: null, failedAt: null });
   const sending = useRef(false);
   const stopped = useRef(false);
-  const localKey = `labeling-portal:unsaved:${url}`;
+  const localKey = unsavedKey(user, url);
 
   useEffect(() => {
     page.current = { json, seconds, handingIn, onRecover: options.onRecover };
@@ -90,7 +107,7 @@ export function useDraftSave(options: Options): DraftState {
   useEffect(() => {
     let local: UnsavedCopy | null = null;
     try {
-      local = readUnsaved(window.sessionStorage.getItem(localKey));
+      local = readUnsaved(window.sessionStorage.getItem(localKey), user);
     } catch {
       // storage can be disabled
     }
@@ -98,7 +115,7 @@ export function useDraftSave(options: Options): DraftState {
     setLocal(localKey, null);
     page.current.onRecover(local);
     if (local.draft) setState('restored');
-  }, [localKey]);
+  }, [localKey, user]);
 
   const save = useCallback(
     async (leavingPage: boolean) => {
@@ -163,7 +180,7 @@ export function useDraftSave(options: Options): DraftState {
 
   useEffect(() => {
     const path = window.location.pathname;
-    const keepLocal = () => setLocal(localKey, packUnsaved(page.current, server.current));
+    const keepLocal = () => setLocal(localKey, packUnsaved(page.current, server.current, user));
 
     // The tab is hidden or the page is closed or reloaded. The local copy is
     // what a reload reads; it is written even during a hand-in, in case that
@@ -198,7 +215,7 @@ export function useDraftSave(options: Options): DraftState {
         void save(true);
       }
     };
-  }, [save, localKey]);
+  }, [save, localKey, user]);
 
   return state;
 }

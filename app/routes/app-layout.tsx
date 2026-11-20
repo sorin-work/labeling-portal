@@ -89,7 +89,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             <div className="text-sm font-medium">{user.name}</div>
             <div className="text-xs text-slate-500">{ROLE_LABELS[role]}</div>
           </Link>
-          {/* saves the open task while the session is still there */}
+          {/* saves the open task, then empties what this tab keeps for it */}
           <Form method="post" action="/logout" onSubmit={beforeSignOut}>
             <button className="text-sm text-slate-500 hover:text-slate-800">Sign out</button>
           </Form>
