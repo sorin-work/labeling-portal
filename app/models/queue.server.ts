@@ -1,5 +1,6 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
+import { goldGapRange, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { prisma, utc } from '~/lib/db.server';
 
@@ -31,18 +32,24 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
 
 /**
  * SQL condition on task `t`: open, not part of the qualification test, not a
- * retired gold task, not already claimed, done or skipped by this annotator,
- * and (unless it is a gold task) with fewer live claims and submissions than
- * `overlap`. A completed task and the gold tasks copied from it are one
- * group: someone who has labeled, skipped or holds any task of the group gets
- * none of the others, because seeing the same item twice would tell them it
- * is gold.
+ * retired gold task, not in a paused batch, not already claimed, done or
+ * skipped by this annotator, and (unless it is a gold task) with fewer live
+ * claims and submissions than `overlap`. A completed task and the gold tasks
+ * copied from it are one group: someone who has labeled, skipped or holds any
+ * task of the group gets none of the others, because seeing the same item
+ * twice would tell them it is gold.
+ *
+ * This is the whole rule for "may this annotator be given this task". The
+ * pick, the check under the lock and the count on the dashboard all use it.
  */
 function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     t.status = 'OPEN'
     AND NOT t."isQualification"
     AND t."goldRetiredAt" IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM "Batch" held WHERE held.id = t."batchId" AND held."pausedAt" IS NOT NULL
+    )
     AND NOT EXISTS (
       SELECT 1 FROM "Assignment" mine
       WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
@@ -66,15 +73,156 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
   )`;
 }
 
-/** Next task the annotator may work on, in import order. */
-async function nextCandidate(project: Project, userId: string, now: Date) {
-  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-    SELECT t.id
-    FROM "Task" t
-    WHERE t."projectId" = ${project.id}
-      AND ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)}
-    ORDER BY t.position
+export type PickOptions = {
+  project: Project;
+  userId: string;
+  now: Date;
+  /**
+   * What the shuffled order and the jitter of the gold spacing are derived
+   * from, together with the annotator's id. The project's id unless a test
+   * passes its own, so the order is the annotator's for good: a reload or a
+   * second tab gets the same task.
+   */
+  seed?: string;
+  /** wait for tasks another annotator is claiming right now instead of passing over them */
+  wait?: boolean;
+};
+
+/**
+ * "Is a gold task due for this annotator?", as CTEs. It looks at their latest
+ * submissions in the project, newest first, no further back than can matter:
+ * gold is due once they have submitted as many regular tasks since their last
+ * gold task as the gap for this round, which is drawn from `goldGapRange`
+ * with the seed, the annotator and that last gold task. It is never due for
+ * the first task of a session.
+ */
+function goldDueCtes(options: Required<Omit<PickOptions, 'wait'>>, goldEvery: number): Prisma.Sql {
+  const { project, userId, now, seed } = options;
+  const { lo, hi } = goldGapRange(goldEvery);
+  const sessionStart = addMinutes(now, -SESSION_GAP_MINUTES);
+  return Prisma.sql`
+    WITH recent AS (
+      SELECT a.id, a."submittedAt", g."isGold",
+             row_number() OVER (ORDER BY a."submittedAt" DESC, a.id DESC) AS rn
+      FROM "Assignment" a
+      JOIN "Task" g ON g.id = a."taskId"
+      WHERE a."userId" = ${userId} AND a."projectId" = ${project.id}
+        AND a.status = 'SUBMITTED' AND a."submittedAt" IS NOT NULL
+      ORDER BY a."submittedAt" DESC, a.id DESC
+      LIMIT ${hi + 1}
+    ),
+    spacing AS (
+      SELECT (since >= gap AND NOT fresh) AS due
+      FROM (
+        SELECT
+          COALESCE(
+            (SELECT min(r.rn) - 1 FROM recent r WHERE r."isGold"),
+            (SELECT count(*) FROM recent)
+          ) AS since,
+          ${lo}::bigint + (
+            ('x' || substr(md5(${seed} || ':' || ${userId} || ':' || COALESCE(
+              (SELECT r.id FROM recent r WHERE r."isGold" ORDER BY r.rn LIMIT 1), ''
+            )), 1, 8))::bit(32)::bigint % ${hi - lo + 1}::bigint
+          ) AS gap,
+          COALESCE((SELECT max(r."submittedAt") FROM recent r) <= ${utc(sessionStart)}, true) AS fresh
+      ) numbers
+    )`;
+}
+
+/**
+ * The statement that decides which task an annotator gets next, and locks it.
+ * Everything about the order is in here, in one statement:
+ *
+ * 1. With gold spacing on, the kind of task that is wanted now (gold when one
+ *    is due, a regular task otherwise) comes first and the other kind second,
+ *    so the queue never runs dry while something eligible is left.
+ * 2. Batches that are not paused, the highest priority first, then in import
+ *    order (by their first position).
+ * 3. Inside a batch, by position or, in a shuffled project, by a hash of the
+ *    seed, the annotator and the task: an order of their own for everyone,
+ *    and always the same one for the same person.
+ *
+ * The three levels are nested lateral joins with `LIMIT 1`. PostgreSQL runs
+ * them as nested loops and stops at the first row, so only the batches up to
+ * the one that has an eligible task are looked at, and only the task that is
+ * picked gets locked. The statement has no `ORDER BY` at the top on purpose:
+ * that would sort the output and so visit, and lock, a task in every batch.
+ *
+ * `FOR UPDATE SKIP LOCKED` passes over tasks another annotator is claiming at
+ * this very moment. The caller still checks the task again before it claims
+ * it: whether a slot is free is a count over other people's claims, and this
+ * statement may have counted before one of them was committed.
+ */
+export function nextTaskSql(options: PickOptions): Prisma.Sql {
+  const { project, userId, now, seed = project.id, wait = false } = options;
+  const lock = wait ? Prisma.sql`FOR UPDATE OF t` : Prisma.sql`FOR UPDATE OF t SKIP LOCKED`;
+  const eligible = eligibleFor(userId, now, Prisma.sql`${project.overlap}`);
+  const spaced = project.goldEvery !== null;
+
+  // the first eligible task of batch `b` (of kind `c` when gold is spaced)
+  const inBatch =
+    project.queueOrder === 'SHUFFLED'
+      ? Prisma.sql`
+          SELECT t.id
+          FROM (
+            SELECT s.id, md5(${seed} || ':' || ${userId} || ':' || s.id) AS shuffled
+            FROM "Task" s
+            WHERE s."batchId" = b.id AND s.status = 'OPEN'
+              ${spaced ? Prisma.sql`AND s."isGold" = c.gold` : Prisma.empty}
+            ORDER BY shuffled
+          ) s
+          JOIN "Task" t ON t.id = s.id
+          WHERE ${eligible}
+          ORDER BY s.shuffled
+          LIMIT 1
+          ${lock}`
+      : Prisma.sql`
+          SELECT t.id
+          FROM "Task" t
+          WHERE t."batchId" = b.id
+            ${spaced ? Prisma.sql`AND t."isGold" = c.gold` : Prisma.empty}
+            AND ${eligible}
+          ORDER BY t.position, t.id
+          LIMIT 1
+          ${lock}`;
+
+  const inProject = Prisma.sql`
+    SELECT task.id
+    FROM (
+      SELECT b.id
+      FROM "Batch" b
+      WHERE b."projectId" = ${project.id} AND b."pausedAt" IS NULL
+      ORDER BY
+        b.priority DESC,
+        (SELECT min(f.position) FROM "Task" f WHERE f."batchId" = b.id) NULLS LAST,
+        b.id
+    ) b
+    CROSS JOIN LATERAL (${inBatch}) task
     LIMIT 1`;
+
+  if (!spaced) return inProject;
+  return Prisma.sql`
+    ${goldDueCtes({ project, userId, now, seed }, project.goldEvery ?? 0)}
+    SELECT pick.id
+    FROM (
+      SELECT want.gold
+      FROM spacing, (VALUES (true), (false)) AS want(gold)
+      ORDER BY (want.gold = spacing.due) DESC
+    ) c
+    CROSS JOIN LATERAL (${inProject}) pick
+    LIMIT 1`;
+}
+
+/**
+ * Picks the task the annotator gets next and locks its row for the rest of
+ * the transaction, or returns null when there is none. The same inputs and
+ * the same seed give the same task.
+ */
+export async function pickNextTask(
+  tx: Prisma.TransactionClient,
+  options: PickOptions,
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(nextTaskSql(options));
   return rows[0]?.id ?? null;
 }
 
@@ -107,11 +255,15 @@ export async function countAvailable(
   return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
 
-/** Gives the annotator their current claim, or claims the next available task. */
+/**
+ * Gives the annotator their current claim, or claims the next available task.
+ * Which task that is, is `nextTaskSql`. `seed` is for tests; see `PickOptions`.
+ */
 export async function claimNextTask(
   project: Project,
   userId: string,
   now = new Date(),
+  seed: string = project.id,
 ): Promise<ClaimResult> {
   await releaseExpiredClaims(project.id, now);
   const existing = await findActiveAssignment(project.id, userId, now);
@@ -124,15 +276,18 @@ export async function claimNextTask(
     if (!member?.qualifiedAt) return { ok: false, reason: 'unqualified' };
   }
 
-  // Two people can pick the same candidate at the same moment. Lock the task
-  // row, check it is still eligible and only then claim it; if someone else
-  // got there first, look for the next candidate.
+  const pick = { project, userId, now, seed };
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
-    const taskId = await nextCandidate(project, userId, now);
-    if (!taskId) return { ok: false, reason: 'empty' };
-
-    const assignment = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE`;
+    const outcome = await prisma.$transaction(async (tx) => {
+      // The pick locks the task and passes over tasks that are being claimed
+      // by someone else right now. Only when that leaves nothing does it wait
+      // for those: a task with two slots may still have one for us.
+      const taskId =
+        (await pickNextTask(tx, pick)) ?? (await pickNextTask(tx, { ...pick, wait: true }));
+      if (!taskId) return 'empty' as const;
+      // With the row locked, look again in a statement of its own. The pick
+      // counted the task's claims in its snapshot, and a claim that was
+      // committed between that count and our lock is only visible now.
       const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
         SELECT ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)} AS eligible
         FROM "Task" t WHERE t.id = ${taskId}`;
@@ -147,7 +302,8 @@ export async function claimNextTask(
         },
       });
     });
-    if (assignment) return { ok: true, assignment, resumed: false };
+    if (outcome === 'empty') return { ok: false, reason: 'empty' };
+    if (outcome) return { ok: true, assignment: outcome, resumed: false };
   }
   return { ok: false, reason: 'empty' };
 }
