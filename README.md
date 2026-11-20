@@ -62,14 +62,14 @@ organisation, _Harbor Data Labs_, is created with four projects (one per
 labeling kind), a few weeks of reviewed work, gold tasks and a qualification
 test. Every demo account uses the password `labeling-demo`:
 
-| Email                    | Role            | Try                                                               |
-| ------------------------ | --------------- | ----------------------------------------------------------------- |
-| `admin@example.com`      | Admin           | People, payouts, everything below                                 |
-| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export                          |
-| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)         |
-| `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project |
-| `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work             |
-| `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                |
+| Email                    | Role            | Try                                                                                              |
+| ------------------------ | --------------- | ------------------------------------------------------------------------------------------------ |
+| `admin@example.com`      | Admin           | People, payouts, everything below                                                                |
+| `pm@example.com`         | Project manager | Import a batch, quality, payouts, export                                                         |
+| `reviewer@example.com`   | Reviewer        | Review queue of _Product review sentiment_ (a 50% sample)                                        |
+| `annotator@example.com`  | Annotator       | Label tasks; take the qualification test for the pairwise project                                |
+| `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work, and Earnings shows a project at two rates |
+| `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                                               |
 
 Change the port with `WEB_PORT=8080 docker compose up`. Data lives in the
 `db-data` volume; `docker compose down -v` starts fresh. For daily dumps of
