@@ -1,4 +1,5 @@
 import { render } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { createRoutesStub } from 'react-router';
 
 import AppLayout from '~/routes/app-layout';
@@ -20,20 +21,30 @@ export function renderPage({
   url,
   Component,
   loaderData,
+  action,
+  more = [],
 }: {
   path: string;
   url: string;
   /** the route module's default export */
   Component: unknown;
+  /** the loader's data, or a function of the route's params that returns it */
   loaderData: unknown;
+  action?: () => unknown;
+  /** further pages next to it, to navigate to */
+  more?: Array<{ path: string; Component: () => ReactNode }>;
 }) {
+  const loader =
+    typeof loaderData === 'function'
+      ? ({ params }: { params: Record<string, string | undefined> }) => loaderData(params)
+      : () => loaderData;
   const Stub = createRoutesStub([
     {
       id: 'app',
       Component: AppLayout as never,
       loader: () => layoutData,
       HydrateFallback: () => null,
-      children: [{ path, Component: Component as never, loader: () => loaderData }],
+      children: [{ path, Component: Component as never, loader, action }, ...more],
     },
   ]);
   return render(<Stub initialEntries={[url]} />);
