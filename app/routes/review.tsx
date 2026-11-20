@@ -74,6 +74,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       activeSeconds: assignment.activeSeconds,
       reviewStatus: assignment.reviewStatus,
       answer: assignment.answer as Answer,
+      // a reviewer should know when the answer is a suggestion handed in as it came
+      suggestionUse:
+        assignment.suggestionUnchanged === null
+          ? null
+          : assignment.suggestionUnchanged
+            ? 'unchanged'
+            : assignment.fromSuggestion
+              ? 'changed'
+              : 'ignored',
     },
     task: {
       id: assignment.task.id,
@@ -279,6 +288,15 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
         {sampleNote && <p className="text-sm text-slate-500">{sampleNote}.</p>}
+        {assignment.suggestionUse && (
+          <p className="text-sm text-slate-600">
+            {assignment.suggestionUse === 'unchanged'
+              ? 'The task had a suggested answer, and this is it, handed in unchanged.'
+              : assignment.suggestionUse === 'changed'
+                ? 'The annotator started from the suggested answer and changed it.'
+                : 'The task had a suggested answer, and the annotator answered on their own.'}
+          </p>
+        )}
         <Card>
           {fixing && (
             <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800">

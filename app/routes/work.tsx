@@ -6,6 +6,7 @@ import { Countdown } from '~/components/countdown';
 import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
+import { SuggestionNote } from '~/components/suggestion-note';
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
@@ -28,6 +29,7 @@ import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { SKIP_REASONS } from '~/domain/skip';
 import { renderMarkdown } from '~/domain/markdown';
+import { describeSuggestion } from '~/domain/prelabel';
 import { assignmentRef } from '~/domain/reference';
 import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
 import { requireUser } from '~/lib/auth.server';
@@ -73,6 +75,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const schema = projectSchema(project);
   // unfinished work from before a reload; the page starts from it
   const draft = fitDraft(schema, task.data, assignment.draft);
+  // A suggested answer, shown as a suggestion: it is the answer only once the
+  // annotator takes it. Read like a draft, so a schema edit since cannot
+  // offer something the schema refuses.
+  const data = task.data as Record<string, unknown>;
+  const suggestion = fitDraft(schema, task.data, task.suggestion).answer;
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
@@ -108,7 +115,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     task: {
       ref: assignmentRef(assignment.id),
       batch: task.batch.name,
-      data: withoutImportId(task.data as Record<string, unknown>),
+      data: withoutImportId(data),
+    },
+    suggestion: suggestion && {
+      answer: suggestion,
+      text: describeSuggestion(schema, data, suggestion),
     },
     doneToday: await prisma.assignment.count({
       where: {
@@ -179,6 +190,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
       reviewRequired: assignment.project.reviewRequired,
       reviewSamplePercent: assignment.project.reviewSamplePercent,
+      fromSuggestion: form.get('fromSuggestion') === '1',
     });
     if (!result.ok && result.error === 'expired') {
       return redirect(`/projects/${assignment.projectId}?queue=expired`);
@@ -219,7 +231,14 @@ export default function Work(props: Route.ComponentProps) {
 
 function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { next: boolean }) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
+  // A draft wins over the suggestion; the suggestion is never the answer by itself.
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
+  const [fromSuggestion, setFromSuggestion] = useState(false);
+  const takeSuggestion = () => {
+    if (!loaderData.suggestion) return;
+    setAnswer(structuredClone(loaderData.suggestion.answer));
+    setFromSuggestion(true);
+  };
   // A text without entities or an image without objects is submitted as it
   // is: nothing marked is the answer. For boxes that needs the loaded image.
   const [imageSize, setImageSize] = useState<ImageSize | null>(null);
@@ -321,6 +340,14 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
             you continue.
           </Alert>
         )}
+        {loaderData.suggestion && (
+          <SuggestionNote
+            text={loaderData.suggestion.text}
+            taken={fromSuggestion}
+            hasAnswer={answer !== null}
+            onTake={takeSuggestion}
+          />
+        )}
         <section ref={taskRef} tabIndex={-1} aria-label="Task" className="focus:outline-none">
           <Card>
             <LabelingInterface
@@ -339,6 +366,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
+          <input type="hidden" name="fromSuggestion" value={fromSuggestion ? '1' : ''} />
           <Button
             ref={submitRef}
             type="submit"
