@@ -303,6 +303,39 @@ describe('projects', () => {
     ]);
   });
 
+  it('records a new project and says what a settings save changed', async () => {
+    const org = await createOrg();
+    const pm = await createMember(org.id, 'PROJECT_MANAGER', { name: 'Pat' });
+    const cookie = await cookieFor(pm, org.id);
+    await run(newProjectAction, makeRequest('/projects/new', { cookie, form: validForm }));
+    const project = await prisma.project.findFirstOrThrow({ where: { orgId: org.id } });
+    await run(
+      settingsAction,
+      makeRequest(`/projects/${project.id}/settings`, {
+        cookie,
+        form: {
+          ...validForm,
+          instructions: '# Guide, now longer',
+          payMode: 'HOURLY',
+          rate: '18.00',
+          goldFeedback: project.goldFeedback ? 'on' : '',
+        },
+      }),
+      { projectId: project.id },
+    );
+    const entries = payload<{ entries: Array<{ text: string }> }>(
+      await run(activityLoader, makeRequest(`/projects/${project.id}/activity`, { cookie }), {
+        projectId: project.id,
+      }),
+    ).entries;
+    expect(entries.map((e) => e.text)).toEqual([
+      'changed the pay mode from per task to hourly; the rate from $0.00 to $18.00; the instructions (7 to 19 characters)',
+      'created the project “Support ticket triage”',
+    ]);
+    const saved = await prisma.activity.findFirstOrThrow({ where: { action: 'project.settings' } });
+    expect(JSON.stringify(saved.detail)).not.toContain('now longer');
+  });
+
   it('refuses to pause a draft project', async () => {
     const org = await createOrg();
     const pm = await createMember(org.id, 'ADMIN');
