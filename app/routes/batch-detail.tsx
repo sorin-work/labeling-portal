@@ -19,7 +19,9 @@ import {
   setBatchPaused,
   setBatchPriority,
 } from '~/models/batches.server';
+import { logActivity } from '~/models/activity.server';
 import { openBatches, promoteToGold } from '~/models/gold.server';
+import { resetRuleSuggestions, startPrelabel } from '~/models/prelabel.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
@@ -37,6 +39,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     where: { id: params.batchId, projectId: project.id },
   });
   if (!batch) throw notFound('Batch not found');
+  // a run that a restart cut short goes on when the batch is looked at
+  if (batch.prelabelState === 'PENDING') startPrelabel(batch.id);
 
   const url = new URL(request.url);
   const statusParam = url.searchParams.get('status');
@@ -90,7 +94,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       createdAt: batch.createdAt,
       priority: batch.priority,
       pausedAt: batch.pausedAt,
+      prelabelState: batch.prelabelState,
+      prelabelNote: batch.prelabelNote,
     },
+    hasRule: project.prelabel !== null,
     standing: await batchStanding(batch.id),
     status,
     q,
@@ -119,6 +126,30 @@ export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'manageProjects');
   const form = await request.formData();
+  if (form.get('intent') === 'prelabel') {
+    const batch = await prisma.batch.findFirst({
+      where: { id: params.batchId, projectId: project.id },
+    });
+    if (!batch) throw notFound('Batch not found');
+    if (project.prelabel === null) {
+      return data({ error: 'The project has no suggestion rule.' }, { status: 400 });
+    }
+    // what the rule suggested on tasks nobody has started yet is taken back,
+    // and the rule as it is now runs again, after this request
+    const reset = await resetRuleSuggestions(batch.id);
+    await logActivity(prisma, {
+      projectId: project.id,
+      actorId: current.user.id,
+      action: 'batch.prelabel',
+      detail: { batchId: batch.id, name: batch.name, reset },
+    });
+    startPrelabel(batch.id);
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/batches/${batch.id}`,
+      'The suggestion rule is running over this batch.',
+    );
+  }
   if (form.get('intent') === 'gold-copy') {
     const taskIds = form.getAll('taskId').map(String).slice(0, 200);
     if (taskIds.length === 0)
@@ -228,6 +259,24 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
         <div className="mb-4">
           <Alert>{actionData.error}</Alert>
         </div>
+      )}
+      {(loaderData.hasRule || batch.prelabelState) && (
+        <Form
+          method="post"
+          className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200"
+        >
+          <span className="font-medium">Suggested answers:</span>
+          <span className="text-slate-600" role="status">
+            {batch.prelabelState === 'PENDING'
+              ? 'the rule is running. Reload to see how far it got.'
+              : (batch.prelabelNote ?? 'the rule has not run over this batch.')}
+          </span>
+          {loaderData.hasRule && batch.prelabelState !== 'PENDING' && (
+            <Button name="intent" value="prelabel" variant="secondary" className="ml-auto">
+              Run the rule again
+            </Button>
+          )}
+        </Form>
       )}
       <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200">
         <Form method="post" className="flex items-center gap-2">

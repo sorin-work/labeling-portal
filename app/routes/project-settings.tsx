@@ -4,6 +4,7 @@ import { data, Form } from 'react-router';
 import { ProjectForm } from '~/components/project-form';
 import { Alert, Button, Card } from '~/components/ui';
 import { centsToDecimal } from '~/domain/payouts';
+import { rulesFor } from '~/domain/prelabel';
 import { parseProjectForm } from '~/domain/project-form';
 import { refusalMessage } from '~/domain/schema-diff';
 import { requireUser } from '~/lib/auth.server';
@@ -12,8 +13,10 @@ import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
 import {
   duplicateProject,
+  projectSchema,
   requireProject,
   schemaUsage,
+  setProjectPrelabel,
   setProjectStatus,
   updateProject,
 } from '~/models/projects.server';
@@ -59,8 +62,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     },
     // lets the form show what a schema edit would break before it is saved
     usage: await schemaUsage(project.id),
+    prelabel: {
+      text: project.prelabel === null ? '' : JSON.stringify(project.prelabel, null, 2),
+      rules: rulesFor(projectSchema(project).kind).map((r) => ({
+        name: r.name,
+        title: r.title,
+        example: JSON.stringify(PRELABEL_EXAMPLES[r.name as keyof typeof PRELABEL_EXAMPLES]),
+      })),
+    },
   };
 }
+
+/** What the settings page offers as a start for each rule. */
+const PRELABEL_EXAMPLES = {
+  keywords: { rule: 'keywords', labels: { positive: ['great', 'love it'] } },
+  phrases: { rule: 'phrases', entities: { PERSON: ['Ada Lovelace'] } },
+};
 
 export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
@@ -77,6 +94,29 @@ export async function action({ request, params }: Route.ActionArgs) {
     );
   }
 
+  if (intent === 'prelabel') {
+    const result = await setProjectPrelabel(
+      project,
+      String(form.get('prelabel') ?? ''),
+      current.user.id,
+    );
+    if (!result.ok) {
+      return data(
+        {
+          errors: undefined,
+          saved: false,
+          warnings: [],
+          prelabelErrors: result.errors,
+        },
+        { status: 400 },
+      );
+    }
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/settings`,
+      'Suggestion rule saved. It applies to batches imported from now on.',
+    );
+  }
   if (intent in STATUS_ACTIONS) {
     const change = STATUS_ACTIONS[intent];
     const changed = await setProjectStatus(project, current.user.id, change);
@@ -92,22 +132,30 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const parsed = parseProjectForm(form);
   if (!parsed.ok) {
-    return data({ errors: parsed.errors, saved: false, warnings: [] }, { status: 400 });
+    return data(
+      { errors: parsed.errors, saved: false, warnings: [], prelabelErrors: undefined },
+      { status: 400 },
+    );
   }
   // the save writes its entry in the audit trail itself, with what changed
   const result = await updateProject(project.id, parsed.value, current.user.id);
   if (!result.ok) {
     return data(
-      { errors: { schema: refusalMessage(result.breaking) }, saved: false, warnings: [] },
+      {
+        errors: { schema: refusalMessage(result.breaking) },
+        saved: false,
+        warnings: [],
+        prelabelErrors: undefined,
+      },
       { status: 400 },
     );
   }
   const warnings = result.changes.filter((c) => c.impact === 'warning').map((c) => c.reason);
-  return { errors: undefined, saved: true, warnings };
+  return { errors: undefined, saved: true, warnings, prelabelErrors: undefined };
 }
 
 export default function ProjectSettings({ loaderData, actionData }: Route.ComponentProps) {
-  const { project, usage } = loaderData;
+  const { project, usage, prelabel } = loaderData;
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
@@ -149,6 +197,52 @@ export default function ProjectSettings({ loaderData, actionData }: Route.Compon
             <Button name="intent" value="archive" variant="danger">
               Archive
             </Button>
+          )}
+        </Form>
+        <Form method="post" className="space-y-2 border-t border-slate-100 pt-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Suggested answers
+          </h2>
+          {prelabel.rules.length === 0 ? (
+            <p className="text-sm text-slate-600">
+              No rule suggests answers for this kind of project. A <code>_prediction</code> column
+              in an import file still can.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-slate-600">
+                A rule that suggests an answer for each task of a batch imported from now on.
+                Annotators see the suggestion as a suggestion and take it or not. Leave the box
+                empty for no rule. Rules for this kind:
+              </p>
+              <ul className="text-xs text-slate-600">
+                {prelabel.rules.map((rule) => (
+                  <li key={rule.name}>
+                    <span className="font-medium">{rule.title}</span>, for example{' '}
+                    <code className="break-all">{rule.example}</code>
+                  </li>
+                ))}
+              </ul>
+              <label htmlFor="prelabel" className="sr-only">
+                Suggestion rule (JSON)
+              </label>
+              <textarea
+                id="prelabel"
+                name="prelabel"
+                rows={6}
+                defaultValue={prelabel.text}
+                spellCheck={false}
+                className="block w-full rounded-md px-3 py-2 font-mono text-xs ring-1 ring-slate-300"
+              />
+              {actionData?.prelabelErrors && (
+                <p className="text-xs text-rose-700" role="alert">
+                  {actionData.prelabelErrors.join('; ')}
+                </p>
+              )}
+              <Button name="intent" value="prelabel" variant="secondary">
+                Save the rule
+              </Button>
+            </>
           )}
         </Form>
         <Form method="post" className="border-t border-slate-100 pt-3">
