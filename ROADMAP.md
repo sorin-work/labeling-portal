@@ -602,57 +602,89 @@ on the dashboard, and never which tasks they got wrong.
 ### 11. Low-agreement tasks: extras and adjudication
 
 When a task has `overlap` accepted answers it is complete, whatever they say.
-`refreshTaskStatus` stores the merged answer and an agreement score, and when
-the annotators split evenly (`classificationConsensus` and `pairwiseConsensus`
-return `answer: null` on a tie) it stores no consensus and marks the task
-`COMPLETE` anyway. On a single-label project with an overlap of 2, every
-disagreement is a tie. The export then has `"consensus": null` for those tasks
-and no page lists them.
+`refreshTaskStatus` stores the merged answer and an agreement score and marks
+the task `COMPLETE`. On single-label and pairwise projects an even split has
+no majority: `classificationConsensus` and `pairwiseConsensus` return
+`answer: null`, and with an overlap of 2 every disagreement ends that way.
+Multi-label, entity and box tasks always get a consensus, made of whatever a
+majority shares, and it can be empty (no labels, no spans, no boxes). Either
+way the export carries the result as it is, and no page lists the tasks people
+disagreed on.
 
-- Settings on `Project`: `agreementThreshold Float?` (empty means off) and
-  `maxExtraAnnotators Int @default(0)`, both in `projectFormSchema` and
-  `ProjectForm`.
-- Extra annotators: when a task reaches its answers but has no consensus or is
-  under the threshold, and extras are left, it gets one more slot instead of
-  completing. Data: `extraSlots Int @default(0)` on `Task`.
-  `refreshTaskStatus` compares with `overlap + extraSlots`, and so does
-  `eligibleFor` in `models/queue.server.ts`, which receives the overlap as SQL
-  from three places (`nextCandidate`, the re-check inside the claim
-  transaction, `countAvailable`).
-- Adjudication: when no extras are left and the task is still split, it gets a
-  new `TaskStatus`, `ADJUDICATION`. A new tab and list
-  (`routes/project-adjudication.tsx`, capability `review`) shows those tasks,
-  oldest first. The decision is made on the task page, which already renders
-  every submission read-only: "Use this answer" on one of them, or an editable
-  interface for a final answer of one's own, checked with `validateAnswer`.
-  It stores `consensus`, `adjudicatedById` and `adjudicatedAt` on the task and
-  completes it.
+- Off by default. `agreementThreshold Float?` on `Project` is empty unless a
+  manager sets it, and while it is empty nothing changes: every task completes
+  exactly as today, tied ones included. `maxExtraAnnotators Int @default(1)`
+  (0 to 3) only matters once a threshold is set. Both go into
+  `projectFormSchema` and `ProjectForm`. Turning the setting on does not
+  reopen tasks that are already complete.
+- The rule is the same for every kind. Once a task has its required accepted
+  answers, compare the agreement that `consensus()` in `domain/consensus.ts`
+  already returns, and `Task.agreement` stores, with the threshold:
+  - at or above it, the task completes as today;
+  - under it, the task gets one more annotator, until `maxExtraAnnotators`
+    extras have been used;
+  - still under it after the last extra, the task goes to adjudication.
+- Whether a majority exists plays no part in the rule. A two against one vote
+  under the threshold is escalated like any other, and a tie is not a special
+  case.
+- The number is the one the app computes for each kind today:
+  - single-label classification and pairwise: the share of annotators behind
+    the most chosen label or preference (0.5 for one against one, 0.67 for two
+    against one, 0.33 for three different answers);
+  - multi-label classification: for each label that anyone chose, the share of
+    annotators who chose it, averaged over those labels. `a` and `b` against
+    `a` alone is (1 + 0.5) / 2 = 0.75;
+  - entities: span F1 (same start, end and type), averaged over every pair of
+    annotators;
+  - boxes: box F1 (same label and an IoU of at least 0.5), averaged over every
+    pair of annotators.
+- So an even split scores 0.5 or less, and a threshold above 0.5 catches every
+  tie on single-label and pairwise projects. Under a lower threshold a tied
+  task still completes without a consensus, as today. The form explains the
+  number for the project's kind next to the field. With an overlap of 1 the
+  agreement is always 1 and the setting does nothing.
+- Extra annotators. Data: `extraSlots Int @default(0)` on `Task`, raised by
+  one each time. `refreshTaskStatus` in `models/tasks.server.ts` compares the
+  accepted answers with `overlap + extraSlots`, and so does `eligibleFor` in
+  `models/queue.server.ts`, which receives the overlap as SQL from three
+  places (`nextCandidate`, the re-check inside the claim transaction,
+  `countAvailable`). The consensus and the agreement are then computed over
+  all accepted answers, extras included.
+- Adjudication: a task that is still under the threshold after its last extra
+  (or straight away when `maxExtraAnnotators` is 0) gets a new `TaskStatus`,
+  `ADJUDICATION`. A new tab and list (`routes/project-adjudication.tsx`,
+  capability `review`) shows those tasks, oldest first. The decision is made
+  on the task page, which already renders every submission read-only: "Use
+  this answer" on one of them, "Keep the consensus" when a majority produced
+  one, or an editable interface for a final answer of one's own, checked with
+  `validateAnswer`. It stores `consensus`, `adjudicatedById` and
+  `adjudicatedAt` on the task and completes it.
 - Places that assume two statuses: the `STATUSES` filter in
   `routes/batch-detail.tsx`, `listBatches`, `projectProgress` and the progress
   bars built on them.
 - The JSONL export says where a consensus came from (`majority` or
   `adjudicated`), and the quality page counts both.
 - Tricky: `refreshTaskStatus` runs after every review decision and rewrites
-  the consensus. It must leave an adjudicated task alone.
-- Tricky: one threshold means different things. For classification and
-  pairwise the agreement is the share behind the top vote (0.5 for one against
-  one, 0.67 for two against one). For entities and boxes it is the mean F1
-  between annotators. The form has to explain this next to the field. With an
-  overlap of 1 there is nothing to compare.
+  the consensus. It must leave an adjudicated task alone. It must also raise
+  `extraSlots` only when the accepted answers have reached
+  `overlap + extraSlots`, so a second call with the same answers adds nothing.
 - Tricky: nobody may adjudicate a task they answered themselves. Admins can
   annotate, so this can happen.
 - Tricky: an extra slot can stay empty for ever when every member has already
-  answered the task. Managers should be able to adjudicate an open task with
-  disagreeing answers from its page without waiting.
-- Item 12 changes `eligibleFor` too. The two changes are independent, but
-  whoever lands second has to merge them.
+  answered the task. Managers should be able to send a task that is waiting
+  for an extra annotator to adjudication from its page.
+- Items 10 and 12 add their own conditions to `eligibleFor`. The three changes
+  are independent, but whoever lands later has to merge them.
 - Undecided: whether an adjudicated answer should feed back into the
   annotators' numbers (agreement with the adjudicator, per person). I lean
   towards not yet.
 - Tests: `tests/integration/review.test.ts` has a "consensus on completion"
-  block to extend: a tie opens an extra slot, the third answer settles it, no
-  extras left sends it to adjudication, an adjudicated task survives a later
-  review, the export marks the source.
+  block to extend. With the setting off, a tie completes without a consensus
+  as today. With it on: a task under the threshold opens an extra slot even
+  when it has a majority, a task at the threshold completes, the extra answer
+  can settle it, a task still under after the last extra goes to adjudication,
+  an adjudicated task survives a later review, and the export marks the
+  source. One case per kind for the number that is compared.
 
 ### 12. Queue order and assignment rules
 
