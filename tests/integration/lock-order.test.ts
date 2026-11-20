@@ -6,9 +6,11 @@ import {
   claimNextTask,
   releaseAssignment,
   releaseExpiredClaims,
+  resubmitAssignment,
   skipAssignment,
   submitAssignment,
 } from '~/models/queue.server';
+import { holdReview, recordReview } from '~/models/reviews.server';
 
 import {
   addToProject,
@@ -166,6 +168,103 @@ describe('the task row before the assignment row', () => {
     holder.release();
     await holder.done;
     expect(await pending).toBe(2);
+  });
+
+  it('a revision takes the work clock before the task row, as a submission does', async () => {
+    const { org, project, ann } = await setup();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const reviewing = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const claim = await claimNextTask(reviewing, ann.id, new Date(Date.now() - 60_000));
+    if (!claim.ok) throw new Error('no claim');
+    const submitted = await submitAssignment(claim.assignment.id, ann.id, {
+      answer: { labels: ['positive'] },
+      activeSeconds: 1,
+      reviewRequired: true,
+    });
+    if (!submitted.ok) throw new Error(submitted.error);
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const decided = await recordReview(claim.assignment.id, reviewer.id, {
+      decision: 'SEND_BACK',
+      qaScore: null,
+      feedback: 'again',
+    });
+    expect(decided.ok).toBe(true);
+
+    const holder = hold(taskLock(claim.assignment.taskId));
+    await holder.ready;
+    const pending = resubmitAssignment(claim.assignment.id, ann.id, {
+      answer: { labels: ['negative'] },
+      activeSeconds: 1,
+    });
+    await settle();
+    // waiting for the task row: the clock is taken already, the assignment not yet
+    expect(
+      await lockable(
+        Prisma.sql`SELECT id FROM "Membership" WHERE "orgId" = ${org.id} AND "userId" = ${ann.id} FOR NO KEY UPDATE NOWAIT`,
+      ),
+    ).toBe(false);
+    expect(await lockable(assignmentProbe(claim.assignment.id))).toBe(true);
+    holder.release();
+    await holder.done;
+    expect((await pending).ok).toBe(true);
+  });
+
+  it('two reviewers taking over each other’s lapsed reservations queue instead of deadlocking', async () => {
+    const { org, project, ann, ben } = await setup();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const reviewing = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const work = [];
+    for (const user of [ann, ben]) {
+      const claim = await claimNextTask(reviewing, user.id, new Date(Date.now() - 60_000));
+      if (!claim.ok) throw new Error('no claim');
+      await submitAssignment(claim.assignment.id, user.id, {
+        answer: { labels: ['positive'] },
+        activeSeconds: 1,
+        reviewRequired: true,
+      });
+      work.push(claim.assignment.id);
+    }
+    const [r1, r2] = [
+      await createMember(org.id, 'REVIEWER'),
+      await createMember(org.id, 'REVIEWER'),
+    ];
+    // each holds one, long enough ago that the hold has lapsed
+    const lapsed = new Date(Date.now() - 3 * 3600_000);
+    await prisma.assignment.update({
+      where: { id: work[0] },
+      data: { reviewHeldById: r1.id, reviewHeldAt: lapsed },
+    });
+    await prisma.assignment.update({
+      where: { id: work[1] },
+      data: { reviewHeldById: r2.id, reviewHeldAt: lapsed },
+    });
+    for (let round = 0; round < 5; round++) {
+      const results = await Promise.all([holdReview(work[1], r1.id), holdReview(work[0], r2.id)]);
+      expect(results.every((r) => r.ok || r.error !== undefined)).toBe(true);
+      // put the lapsed holds back for the next round
+      await prisma.assignment.update({
+        where: { id: work[0] },
+        data: { reviewHeldById: r1.id, reviewHeldAt: lapsed },
+      });
+      await prisma.assignment.update({
+        where: { id: work[1] },
+        data: { reviewHeldById: r2.id, reviewHeldAt: lapsed },
+      });
+    }
+
+    // and the order itself: with the lower row held elsewhere, nothing else is locked yet
+    const [low, high] = [...work].sort();
+    // the reviewer whose own lapsed hold is the lower row reserves the higher one
+    const owner = low === work[0] ? r1 : r2;
+    const target = high;
+    const holder = hold(Prisma.sql`SELECT id FROM "Assignment" WHERE id = ${low} FOR UPDATE`);
+    await holder.ready;
+    const pending = holdReview(target, owner.id);
+    await settle();
+    expect(await lockable(assignmentProbe(high))).toBe(true);
+    holder.release();
+    await holder.done;
+    await pending;
   });
 
   it('runs a transaction once more when PostgreSQL broke a deadlock', async () => {
