@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import { claimNextTask, submitAssignment } from '~/models/queue.server';
-import { recordReview, reserveNextReview } from '~/models/reviews.server';
+import { recordReview, renewReviewHold, reserveNextReview } from '~/models/reviews.server';
 import { action as reviseAction } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as reviewAction, loader as reviewLoader } from '~/routes/review';
@@ -715,6 +715,20 @@ describe('reviewer reservations', () => {
     ]);
   });
 
+  it('does not let an annotator reserve anything', async () => {
+    const { org, project, ann, submissions } = await waiting(1);
+    const other = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, other);
+
+    for (const user of [ann, other]) {
+      const cookie = await cookieFor(user, org.id);
+      expect(statusOf(await start(project.id, cookie))).toBe(403);
+      expect(statusOf(await post(submissions[0].id, cookie, { intent: 'hold' }))).toBe(403);
+      expect(statusOf(await post(submissions[0].id, cookie, { intent: 'renew' }))).toBe(403);
+    }
+    expect(await holderOf(submissions[0].id)).toBeNull();
+  });
+
   it('lets a hold lapse after fifteen minutes', async () => {
     const { project, ann, submissions, reviewers } = await waiting(1);
     const [first, second] = reviewers;
@@ -780,6 +794,55 @@ describe('reviewer reservations', () => {
       reviewHeldById: null,
       reviewHeldAt: null,
     });
+  });
+
+  it('renews a hold while its reviewer works, so a long review keeps the submission', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+    const after = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+    await reserveNextReview(project.id, first.user.id, t0);
+
+    // only the reviewer who holds it can renew, and that moves the deadline
+    expect(await renewReviewHold(id, second.user.id, after(10))).toBe(false);
+    expect(await renewReviewHold(id, first.user.id, after(10))).toBe(true);
+    expect(await reserveNextReview(project.id, second.user.id, after(20))).toBeNull();
+    // left alone, it lapses a full period after the last renewal
+    expect(await reserveNextReview(project.id, second.user.id, after(25))).toEqual({ id });
+    // and a hold that someone else took cannot be renewed back
+    expect(await renewReviewHold(id, first.user.id, after(26))).toBe(false);
+    expect(await holderOf(id)).toBe(second.user.id);
+  });
+
+  it('renews from the review page and when a posted fix does not validate', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    await start(project.id, first.cookie);
+    const almostOver = () =>
+      prisma.assignment.update({
+        where: { id },
+        data: { reviewHeldAt: new Date(Date.now() - 14 * 60_000) },
+      });
+    const heldFor = async () =>
+      Date.now() -
+      (await prisma.assignment.findUniqueOrThrow({ where: { id } })).reviewHeldAt!.getTime();
+
+    await almostOver();
+    expect(statusOf(await post(id, second.cookie, { intent: 'renew' }))).toBe(409);
+    expect(await heldFor()).toBeGreaterThan(13 * 60_000);
+    expect(statusOf(await post(id, first.cookie, { intent: 'renew' }))).toBe(200);
+    expect(await heldFor()).toBeLessThan(60_000);
+
+    await almostOver();
+    const invalid = await post(id, first.cookie, {
+      intent: 'fix',
+      corrected: '{"labels":["unknown"]}',
+    });
+    expect(statusOf(invalid)).toBe(400);
+    expect(await heldFor()).toBeLessThan(60_000);
+    expect(await holderOf(id)).toBe(first.user.id);
   });
 
   it('reserves a submission opened from the list and lets go of the other one', async () => {
