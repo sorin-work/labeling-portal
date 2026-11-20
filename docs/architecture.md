@@ -30,6 +30,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `GoldRevision`         | A change to a gold task: who, when, why, the answer before and after |
+| `QueueSecret`          | The key of a project's queue hashes; no page ever gets it            |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -65,35 +66,45 @@ tests/integration/  loaders and actions against a real PostgreSQL
 
 `nextTaskSql` in `models/queue.server.ts` is the whole decision, one
 statement that picks the task and locks it (`FOR UPDATE OF t SKIP LOCKED`).
-Given the same data, the same annotator and the same seed it returns the same
-task, so a reload or a second tab gets the task the first one got. The order:
+Given the same data, the same annotator and the same secret it returns the
+same task, so a reload or a second tab gets the task the first one got. Every
+hash in it is an HMAC keyed with the project's queue secret (`QueueSecret`, a
+random key per project in a table of its own that no loader reads, made by
+the migration for existing projects and on the first claim for new ones). So
+nothing an annotator sees, ids, times or which of their tasks were gold, tells
+them what comes next. The order:
 
 1. **Gold spacing** (`Project.goldEvery`, empty by default). When it is set,
-   the statement first works out whether a gold task is due for this
-   annotator: they have submitted at least as many regular tasks since their
-   last gold task as this round's gap. The gap is drawn from N/2 to 3N/2
-   (`goldGapRange`) by a hash of the seed, the annotator and their last gold
-   submission, so it is uneven, the same on every reload and different for
-   everyone. A gold task is never due for the first task of a session (no
-   submission in the project in the last 30 minutes) or someone's first task
-   ever. The wanted kind is tried first and the other kind second, so the
-   queue serves what is left when only gold or no gold remains. Without
-   spacing, gold tasks stay where their position puts them, as before.
+   each claim is a draw: a gold task is due with a chance of 1 in N
+   (`goldDraw`), from an HMAC of the annotator and their latest submission or
+   skip. The draw has no memory, so the tasks right after a gold task can be
+   gold too and no gap is ever certain; it is new after every task handed in
+   or skipped and the same on a reload. Gold is not due for the first task of
+   a session (no submission in the project in the last 30 minutes) or someone's
+   first task ever; the task after that is an ordinary draw. A cap keeps a
+   streak from running away: with 10 gold tasks among the last 5N submissions
+   (fewer for N below 3) the next claim is regular. The wanted kind is tried
+   first and the other kind second, so the queue serves what is left when
+   only gold or no gold remains. Without spacing, gold tasks stay where their
+   position puts them, as before.
 2. **Batches**: not paused (`Batch.pausedAt`), the highest `Batch.priority`
    first, then in import order (the batch's first position).
 3. **Inside a batch**: by position, or with `Project.queueOrder = SHUFFLED`
-   by `md5(seed:annotator:task)`. The seed is the project's id: the order is
-   the annotator's own and stays the same for them.
+   by the HMAC of the annotator and the task: the order is the annotator's own
+   and stays the same for them.
 
 The levels are nested lateral joins with `LIMIT 1`, so PostgreSQL stops at
 the first batch that has an eligible task and only the picked task is locked.
-The task order inside a batch uses `Task(batchId, status, position, isGold)`
-(added for this) and the batch order `Task(batchId, position)`. A shuffled
-order has no index: it sorts the open tasks of a batch, one batch at a time.
-On a project with 40 batches and 40,000 tasks, 30,000 of them complete and an
-annotator with 2,000 submissions, the statement took 7 ms in import order and
-11 ms shuffled, with or without gold spacing (roadmap item 17 is about
-larger projects).
+Import order inside a batch uses `Task(batchId, status, position)`, and
+with gold spacing, where each kind is looked for on its own,
+`Task(batchId, status, isGold, position)`, so a kind that is used up costs
+nothing to look for. The batch order uses `Task(batchId, position)`. A
+shuffled order has no index: it sorts the open tasks of a batch, one batch at
+a time. On a project with 40 batches and 40,000 tasks, 30,000 of them
+complete, and an annotator with 2,000 submissions who has done every gold
+task, the statement took 8 to 10 ms in import order and 11 to 12 ms shuffled,
+with gold spacing off, on, and with gold due on every claim (roadmap item 17
+is about larger projects).
 
 Pausing stops new claims at the next request. Claims that exist can be
 submitted, and nothing else about the batch changes, so after a resume a task

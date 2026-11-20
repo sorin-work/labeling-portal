@@ -789,12 +789,14 @@ with activity entries; the batch list shows both. A project can hand out tasks
 in import order or shuffled, and can space gold tasks out ("about one gold
 task in every N"). The whole choice is one statement, `nextTaskSql`, that
 picks and locks the task (`FOR UPDATE SKIP LOCKED`) and is the same for the
-same inputs and seed. Different from the design: the shuffle hashes the
-project's id with the annotator and the task, so the order is stable without a
-stored seed; gold spacing draws each gap from N/2 to 3N/2 with a hash instead
-of a random source, never makes the first task of a session (30 minutes
-without a submission) gold, and falls back to the other kind so the queue
-never runs dry. A new index on `Task(batchId, status, position, isGold)`
-serves import order; shuffled order sorts the open tasks of one batch at a
-time. Still open: the daily limit, a manager releasing a claim and manual
+same inputs. Different from the design: every hash is an HMAC keyed with a
+random secret per project that never leaves the server, so neither the
+shuffled order nor gold timing can be worked out from ids; gold spacing is a
+draw without memory (each claim is gold with a chance of 1 in N, with a cap
+on streaks) instead of counting submissions, never makes the first task of a
+session (30 minutes without a submission) gold, and falls back to the other
+kind so the queue never runs dry. New indexes on
+`Task(batchId, status, position)` and `Task(batchId, status, isGold,
+position)` serve import order; shuffled order sorts the open tasks of one
+batch at a time. Still open: the daily limit, a manager releasing a claim and manual
 assignment, as planned, and the measurements of item 17.

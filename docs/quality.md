@@ -66,12 +66,14 @@ average, in percent, reaches the project's pass mark.
 Without a setting, a gold task comes where its row was in the imported file,
 so a block of gold at the top is done in the first minutes and never met
 again. "Gold spacing" in the project settings ("about one gold task in every
-N") spreads them out instead, for each annotator on their own: after a gold
-task the next one is due after between N/2 and 3N/2 regular tasks, drawn anew
-each time. There is no fixed period to count, the first task of a session (no
-submission in the last 30 minutes) is never gold, and a gold copy is treated
-like any other gold task. When no regular task is left the remaining gold
-tasks are still served, and when no gold is left the regular ones are.
+N") spreads them out instead, for each annotator on their own: every task
+they are handed is gold with a chance of 1 in N, whatever came before, so
+there is no beat to count and nothing after a gold task is certain. The draw
+is keyed with a secret that stays on the server. The first task of a session
+(no submission in the last 30 minutes) is never gold, a cap stops a long run
+of gold, and a gold copy is treated like any other gold task. When no regular
+task is left the remaining gold tasks are still served, and when no gold is
+left the regular ones are.
 
 ## Managing gold tasks
 

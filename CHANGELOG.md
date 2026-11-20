@@ -42,9 +42,10 @@
   (higher numbers are handed out first; a paused batch hands out nothing new,
   claims on it can be finished, and resuming continues where it was). A
   project can hand out tasks in import order or shuffled, in an order of each
-  annotator's own that stays the same for them. "Gold spacing" serves about
-  one gold task in every N, at uneven intervals, per annotator and never as the
-  first task of a session. The dashboard count leaves paused batches out.
+  annotator's own that stays the same for them. "Gold spacing" makes each task
+  an annotator gets gold with a chance of 1 in N, per annotator, never as the
+  first task of a session, keyed with a secret per project so the timing
+  cannot be worked out. The dashboard count leaves paused batches out.
   With the default settings the order is the same as before
 
 ### Review and quality
