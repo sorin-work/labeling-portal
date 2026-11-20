@@ -2,9 +2,11 @@ import { Prisma, type Assignment, type Project } from '@prisma/client';
 
 import type { Answer } from '~/domain/answers';
 import { scoreAgainstGold } from '~/domain/gold';
+import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
+import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
 export type ClaimResult =
@@ -152,11 +154,44 @@ export function clampActiveSeconds(reported: number, claimedAt: Date, now: Date)
   return Math.min(Math.floor(reported), elapsed);
 }
 
+/**
+ * Whether a new submission in a project that reviews work goes to a reviewer.
+ * The annotator's history is only read when the project reviews a share.
+ */
+async function sampleForReview(
+  projectId: string,
+  userId: string,
+  samplePercent: number,
+  random: () => number,
+): Promise<SamplingDecision> {
+  if (samplePercent >= 100) {
+    return decideReview({ samplePercent, sentToReviewBefore: 0, flagged: false }, random);
+  }
+  const [sentToReviewBefore, flagged] = await Promise.all([
+    prisma.assignment.count({
+      where: { projectId, userId, status: 'SUBMITTED', reviewStatus: { not: 'NOT_REQUIRED' } },
+    }),
+    isAnnotatorFlagged(projectId, userId),
+  ]);
+  return decideReview({ samplePercent, sentToReviewBefore, flagged }, random);
+}
+
+/**
+ * Stores the answer on the annotator's claim. `random` is the source for the
+ * review sample (see `decideReview`); tests pass a fixed one.
+ */
 export async function submitAssignment(
   assignmentId: string,
   userId: string,
-  input: { answer: Prisma.InputJsonValue; activeSeconds: number; reviewRequired: boolean },
+  input: {
+    answer: Prisma.InputJsonValue;
+    activeSeconds: number;
+    reviewRequired: boolean;
+    /** share of submissions that go to review; everything when left out */
+    reviewSamplePercent?: number;
+  },
   now = new Date(),
+  random: () => number = Math.random,
 ): Promise<{ ok: true; assignment: Assignment } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
@@ -183,19 +218,35 @@ export async function submitAssignment(
     }
   }
 
-  const assignment = await prisma.assignment.update({
-    where: { id: assignmentId },
+  // The sample is drawn here, once, and the outcome is stored. Nothing that
+  // reads the submission later draws again.
+  const sampling: SamplingDecision =
+    input.reviewRequired && !task.isGold
+      ? await sampleForReview(
+          found.assignment.projectId,
+          userId,
+          input.reviewSamplePercent ?? 100,
+          random,
+        )
+      : { review: false, sample: null };
+
+  // only a claim that is still active is written, so a form posted twice
+  // cannot replace the first outcome with a second draw
+  const [assignment] = await prisma.assignment.updateManyAndReturn({
+    where: { id: assignmentId, status: 'ACTIVE' },
     data: {
       status: 'SUBMITTED',
       submittedAt: now,
       answer: input.answer,
       goldScore,
-      reviewStatus: input.reviewRequired && !task.isGold ? 'PENDING' : 'NOT_REQUIRED',
+      reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
+      reviewSample: sampling.sample,
       activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
     },
   });
-  if (!input.reviewRequired && !task.isGold)
-    await refreshTaskStatus(assignment.taskId, prisma, now);
+  if (!assignment) return { ok: false, error: 'not_active' };
+  // work that no reviewer will see is accepted at once and can complete the task
+  if (!sampling.review && !task.isGold) await refreshTaskStatus(assignment.taskId, prisma, now);
   return { ok: true, assignment };
 }
 

@@ -3,7 +3,7 @@ import type { Project } from '@prisma/client';
 import { categoricalValue, fleissKappa, pairwiseKappas } from '~/domain/agreement';
 import type { Answer } from '~/domain/answers';
 import { round } from '~/domain/geometry';
-import { GOLD_PASS_SCORE } from '~/domain/gold';
+import { isGoldFlagged } from '~/domain/gold';
 import { finalAnswer } from '~/domain/outcome';
 import { prisma } from '~/lib/db.server';
 
@@ -26,8 +26,6 @@ export type AnnotatorStats = {
   /** gold accuracy below the pass score after enough attempts */
   flagged: boolean;
 };
-
-const MIN_GOLD_ATTEMPTS = 3;
 
 function mean(values: number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
@@ -133,8 +131,7 @@ export async function projectQuality(project: Project) {
         ...s,
         goldAttempts: gold.length,
         goldAccuracy: goldMean === null ? null : round(goldMean, 4),
-        flagged:
-          goldMean !== null && gold.length >= MIN_GOLD_ATTEMPTS && goldMean < GOLD_PASS_SCORE,
+        flagged: isGoldFlagged(goldMean, gold.length),
         approvalRate: s.reviewed ? round(s.approved / s.reviewed, 4) : null,
         avgQaScore: avgQa === null ? null : round(avgQa, 2),
         avgSeconds: avgSec === null ? null : Math.round(avgSec),
@@ -174,6 +171,26 @@ export async function projectQuality(project: Project) {
       completedTasks: completed._count._all,
     },
   };
+}
+
+/**
+ * Whether the annotator is flagged in the project right now, by the same rule
+ * as the `flagged` column above. Sampling sends all work of a flagged
+ * annotator to review.
+ */
+export async function isAnnotatorFlagged(projectId: string, userId: string): Promise<boolean> {
+  const gold = await prisma.assignment.aggregate({
+    where: {
+      projectId,
+      userId,
+      status: 'SUBMITTED',
+      goldScore: { not: null },
+      task: { isGold: true },
+    },
+    _avg: { goldScore: true },
+    _count: { _all: true },
+  });
+  return isGoldFlagged(gold._avg.goldScore, gold._count._all);
 }
 
 export type DayCount = { day: string; submitted: number; accepted: number };
