@@ -90,8 +90,9 @@
   default) through the normal queue, then goes to a new Adjudication tab. A
   reviewer or manager who did not label it settles it with one of the answers,
   the consensus or an answer of their own, and a reason; that answer becomes
-  the task's consensus. The JSONL export has `consensus_source` (`majority` or
-  `adjudicated`), the quality page counts both, and batch pages filter by the
+  the task's consensus. A task waiting for it has no consensus, in the
+  export either. The JSONL export has `consensus_source` (`majority` or
+  `adjudicated`), the CSV export a `task_status` column, the quality page counts both, and batch pages filter by the
   new status. Existing projects are unchanged and completed tasks are never
   reopened
 

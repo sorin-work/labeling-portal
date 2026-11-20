@@ -51,7 +51,9 @@ tasks only or every task, and optionally a single batch.
   (`majority`, `adjudicated`, or null when there is no consensus), `agreement` and every
   accepted annotation (annotator email, final answer, review status, QA score,
   active seconds). Entity spans include the covered `text`.
-- **CSV**: one row per annotation plus a `consensus` row per completed task.
+- **CSV**: one row per annotation plus a `consensus` row per task that has a
+  consensus, with a `task_status` column (`open`, `adjudication`, `complete`).
+  A task waiting for adjudication has no consensus in any format.
   Pairwise answers are flattened to `preference`, `a_<dimension>`,
   `b_<dimension>` and `rationale` columns.
 - **COCO** (box projects): images, categories (in schema order) and the
