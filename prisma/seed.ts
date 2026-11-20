@@ -13,7 +13,14 @@ import {
   seedPairwiseActivity,
   seedSentimentActivity,
 } from './seed-activity';
-import { INSTRUCTIONS, newsRows, pairwiseRows, reviewRows, streetRows } from './seed-data';
+import {
+  INSTRUCTIONS,
+  newsRows,
+  pairwiseRows,
+  reviewRows,
+  sceneRows,
+  streetRows,
+} from './seed-data';
 
 const prisma = new PrismaClient();
 
@@ -142,6 +149,23 @@ async function main() {
       payMode: 'PER_TASK',
       rateCents: 15,
       rows: streetRows,
+    },
+    {
+      name: 'Street scene check',
+      description: 'Say what each street picture shows.',
+      instructions: INSTRUCTIONS.scenes,
+      kind: 'IMAGE_CLASSIFICATION',
+      schema: {
+        kind: 'image_classification',
+        imageField: 'image_url',
+        labels: ['person', 'car', 'empty street'],
+        multiple: true,
+      },
+      overlap: 2,
+      timeLimitMinutes: 10,
+      payMode: 'PER_TASK',
+      rateCents: 5,
+      rows: sceneRows,
     },
   ];
 

@@ -121,6 +121,12 @@ export const streetRows = Array.from({ length: 6 }, (_, i) => ({
   height: 400,
 }));
 
+/** The street images again, sorted instead of boxed; the last row is a link that is gone. */
+export const sceneRows = [
+  ...streetRows.map(({ id, image_url }) => ({ id: id.replace('street', 'scene'), image_url })),
+  { id: 'scene-7', image_url: '/demo/street-missing.svg' },
+];
+
 export const INSTRUCTIONS = {
   sentiment: `# Product review sentiment
 
@@ -157,4 +163,13 @@ Draw a tight box around every **car** and **person** you can see.
 
 - Include parts that are hidden behind other objects if you can tell where they are.
 - Skip objects smaller than about 10 pixels.`,
+  scenes: `# Street scene check
+
+Look at the whole picture and pick **every** label that fits.
+
+- **person**: at least one person can be seen, even partly.
+- **car**: at least one car can be seen, even partly.
+- **empty street**: neither.
+
+If the picture does not load, skip the task with "Content is broken or unreadable".`,
 };
