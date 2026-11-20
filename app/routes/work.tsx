@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
+import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
+import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
@@ -172,7 +174,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 /**
  * "Submit and next" moves from one assignment to the next without leaving this
  * route, so React would keep the page's state. The key makes the answer, the
- * skip form and the working time start fresh for every task.
+ * skip form, the working time and the autosave start fresh for every task.
  */
 export default function Work(props: Route.ComponentProps) {
   return <WorkPage key={props.loaderData.assignment.id} {...props} />;
@@ -180,7 +182,7 @@ export default function Work(props: Route.ComponentProps) {
 
 function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
   const [skipping, setSkipping] = useState(false);
   const skipForm = useRef<HTMLFormElement>(null);
 
@@ -195,7 +197,20 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   }, [skipping]);
   const navigation = useNavigation();
   const busy = navigation.state !== 'idle';
-  const activeSeconds = useActiveTime();
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(assignment.draftSeconds);
+  const draftState = useDraftSave({
+    url: `/work/${assignment.id}/draft`,
+    answer,
+    seconds: activeSeconds,
+    restored: assignment.draft !== null,
+    // submit, skip and release end the claim; a save after them would be refused
+    paused: navigation.formData != null,
+    onRecover: (unsaved) => {
+      const fitted = fitDraft(schema, task.data, unsaved.draft);
+      if (fitted) setAnswer(fitted);
+      raiseActiveSeconds(unsaved.seconds);
+    },
+  });
   const submitRef = useRef<HTMLButtonElement>(null);
 
   // Ctrl/Cmd+Enter submits, even from the rationale box
@@ -235,6 +250,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             >
               Working time {formatDuration(activeSeconds)}
             </span>
+            <DraftNote state={draftState} />
             <Countdown expiresAt={assignment.expiresAt} />
           </div>
         </div>
