@@ -22,10 +22,15 @@ or fix the work.
 - **Box editing**: move and resize boxes by dragging or with the arrow keys,
   zoom and pan the image, undo and redo. Reviewers and managers get the same
   zoomable picture without the editing
+- **Accessible**: every labeling action works from the keyboard, entity spans
+  included; radio groups are real radio groups; focus moves to the next task
+  and changes are said aloud for screen readers; text meets 4.5:1 contrast.
+  axe runs over the main pages in the tests
 - **Import** CSV or JSONL into batches with per-line error reports, example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
-  abandoned claims, one extension per claim, skip with a reason, release
+  abandoned claims, up to three extensions per claim, skip with a reason,
+  release
 - **Drafts**: the answer in progress and its working time are saved to the
   server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
@@ -224,12 +229,18 @@ Good to know:
 ```bash
 npm test                 # unit + integration (needs TEST_DATABASE_URL)
 npm run test:unit        # domain logic only, no database
+npm run test:dom         # components and pages in jsdom, with axe
 npm run check            # lint, format, typecheck and tests, like CI
 npm run build
 ```
 
 Integration tests call route loaders and actions directly with real `Request`
 objects and a signed session cookie, against a real PostgreSQL database.
+
+DOM tests render the labeling interfaces and the main pages in jsdom (pages
+through `createRoutesStub`, inside the real app layout) and fail on any axe
+violation. Colour contrast is checked from the stylesheet in a unit test,
+since jsdom has no colours.
 
 CI also proves that a backup restores: it puts the demo data into the test
 database, dumps it with `docker/backup.sh`, restores the dump into a scratch
@@ -251,6 +262,7 @@ prisma/          schema, migrations, demo seed
 docker/          container entrypoint, backup script and its checks
 tests/unit/      domain tests
 tests/integration/  loader/action tests against PostgreSQL
+tests/dom/       components and pages in jsdom, with axe
 docs/            architecture, routes, import/export formats, quality metrics
 ```
 

@@ -40,7 +40,11 @@ tests/integration/  loaders and actions against a real PostgreSQL
    not done or skipped and that has fewer live claims and submissions than the
    project's overlap. The task row is locked while the claim is created.
 2. The claim expires after the project's time limit. In the last two minutes
-   the annotator can ask for more time once, which adds another full limit.
+   the annotator can ask for more time, up to three times per claim
+   (`MAX_EXTENSIONS` in `domain/time-limit.ts`), and each time adds another
+   full limit. Three leaves room for people who need longer and keeps one
+   person from sitting on a task for ever. `extendAssignment` only updates the
+   claim as it read it, so two requests at once count once.
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. A text without
@@ -337,6 +341,66 @@ pass on what the key map decides. Pairwise score rows are real radio groups:
 one tab stop each, the arrows choose, and a typed digit scores the row that
 has focus (or the first empty one) and moves to the next, A then B for each
 dimension.
+
+## Accessibility
+
+What a keyboard or screen reader user gets, and where it is checked.
+
+- **Every action has a keyboard path.** Entity spans: Tab to the text, the
+  left and right arrows walk it word by word (`wordRanges` in
+  `domain/spans.ts`: words, and punctuation marks on their own), Shift with
+  an arrow selects one word more or less, Enter marks the selection with the
+  active type. These keys only act while the text has focus. Boxes: see
+  "Boxes on an image" below; the list under the picture says every box with
+  its label and position, and picking one there gives it focus on the
+  picture, where the arrows, the label keys and Delete work on it. A box's
+  label can also be changed in the list.
+- **Radio groups are real radio buttons**: the labels of a single-label
+  classification (checkboxes for multi-label), the pairwise preference, the
+  pairwise score rows and the reviewer's quality score. One tab stop per
+  group, the arrows choose, and the hotkeys still work while one has focus.
+  A chosen label or preference also shows a tick, not only a colour.
+- **Focus.** After a navigation focus goes to `<main id="main">`
+  (`app-layout.tsx`), unless the page put it somewhere itself. After "Submit
+  and next" it goes to the next task, and a live region says the task's
+  reference and the count for today. The list of shortcuts is a modal
+  dialog: focus moves into it, Tab stays inside, and closing it puts focus
+  back. The skip form and the armed approval give focus back the same way
+  (`use-dialog-focus.ts`), unless the person moved it on themselves. Every
+  focusable element shows the `:focus-visible` ring from `app.css`;
+  visually hidden radio buttons draw it on their visible part, and a box on
+  the picture draws a dashed ring, since SVG shows no outline.
+- **What is said aloud.** One live region per interface: the word or words
+  under the entity cursor and what was marked or removed; a box added,
+  moved, resized, relabelled or removed, undo and redo, the zoom. The
+  countdown says the time left at 10, 5 and 1 minutes and when it is up
+  (`timeAnnouncement`); two minutes belongs to the warning, which is an
+  alert. A draft that could not be saved is said; a save that worked is not.
+- **Colour.** Text is at least 4.5:1 on its background. `text-slate-400` is
+  gone (2.6:1 on white); hints and meta text use `text-slate-500`, and red
+  text is `rose-700`. The chart on the quality page and the gold flag are
+  also there in words.
+- **Checked by tests.** `tests/dom` runs in jsdom with Testing Library and
+  `vitest-axe` (the `dom` project in `vitest.config.ts`): the four
+  interfaces, editable and read-only; the work page for every kind; review,
+  revise (both modes), qualification test and task page for every kind;
+  project settings, quality and payouts; the list of shortcuts and the skip
+  form. Every page renders inside the real app layout, and `tests/dom/axe.ts`
+  is the one place where an axe rule may be switched off, each with its
+  reason. The only one is `color-contrast`, because jsdom computes no
+  colours: `tests/unit/contrast.test.ts` reads Tailwind's palette from the
+  theme the stylesheet imports, finds every text colour class in `app/` and
+  the background it sits on (its own class string, else the page and card
+  surfaces, else a listed parent), and works the ratios out
+  (`domain/contrast.ts`). It also checks the focus ring (3:1) and the text on
+  the default entity colours. Small key tests in `tests/dom` cover the
+  entity cursor, the radio groups, the shortcut list, the box list and the
+  next task.
+- **Not checked by machine.** Anything that needs layout: the size of
+  targets, reflow at 400% zoom, and the colours a schema gives its entity
+  types or what is under a box on an image. Box labels on the picture are
+  drawn in the label's colour over the image and cannot be checked; the list
+  under the picture is the readable version.
 
 ## Boxes on an image
 
