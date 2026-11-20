@@ -34,7 +34,8 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
  * SQL condition on task `t`: open, not part of the qualification test, not a
  * retired gold task, not in a paused batch, not already claimed, done or
  * skipped by this annotator, and (unless it is a gold task) with fewer live
- * claims and submissions than `overlap`. A completed task and the gold tasks
+ * claims and submissions than `overlap` plus the extra slots a task under the
+ * agreement threshold was given. A completed task and the gold tasks
  * copied from it are one group: someone who has labeled, skipped or holds any
  * task of the group gets none of the others, because seeing the same item
  * twice would tell them it is gold.
@@ -68,7 +69,7 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
         SELECT count(*) FROM "Assignment" a
         WHERE a."taskId" = t.id
           AND (a.status = 'SUBMITTED' OR (a.status = 'ACTIVE' AND a."expiresAt" > ${utc(now)}))
-      ) < ${overlap}
+      ) < ${overlap} + t."extraSlots"
     )
   )`;
 }
