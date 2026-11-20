@@ -5,6 +5,7 @@ import { data, Form, Link, redirect, useNavigation } from 'react-router';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -37,14 +38,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect('/my-work');
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
+  const schema = projectSchema(assignment.project);
   return {
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
     projectName: assignment.project.name,
-    schema: projectSchema(assignment.project),
+    schema,
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
+    // changes that were under way before a reload
+    draft: fitDraft(schema, assignment.task.data, assignment.draft),
     feedback: assignment.reviews[0]?.feedback ?? '',
   };
 }

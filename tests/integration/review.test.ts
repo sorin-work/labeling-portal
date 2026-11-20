@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { action as reviseAction } from '~/routes/my-work-revise';
+import { action as reviseDraftAction } from '~/routes/my-work-draft';
+import { action as reviseAction, loader as reviseLoader } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as reviewAction, loader as reviewLoader } from '~/routes/review';
 import { loader as queueLoader } from '~/routes/project-review';
@@ -145,6 +146,46 @@ describe('review', () => {
     );
     expect(statusOf(stolen)).toBe(404);
     expect(ann.id).toBeTruthy();
+  });
+
+  it('keeps a draft of a revision until it is resubmitted', async () => {
+    const { reviewerCookie, annCookie, submission, org } = await setup();
+    const path = `/my-work/${submission.id}`;
+    const params = { assignmentId: submission.id };
+    const saveDraft = (cookie: string) =>
+      run(
+        reviseDraftAction,
+        makeRequest(`${path}/draft`, { cookie, form: { draft: '{"labels":["negative"]}' } }),
+        params,
+      );
+
+    // only sent-back work has a draft
+    expect(statusOf(await saveDraft(annCookie))).toBe(409);
+    await run(
+      reviewAction,
+      makeRequest(`/review/${submission.id}`, {
+        cookie: reviewerCookie,
+        form: { intent: 'send_back', feedback: 'Look again.', qaScore: '2' },
+      }),
+      params,
+    );
+    const other = await createMember(org.id, 'ANNOTATOR');
+    expect(statusOf(await saveDraft(await cookieFor(other, org.id)))).toBe(404);
+    expect(statusOf(await saveDraft(annCookie))).toBe(200);
+
+    const page = await run(reviseLoader, makeRequest(path, { cookie: annCookie }), params);
+    expect(payload(page)).toMatchObject({
+      answer: { labels: ['positive'] },
+      draft: { labels: ['negative'] },
+    });
+
+    await run(
+      reviseAction,
+      makeRequest(path, { cookie: annCookie, form: { answer: '{"labels":["negative"]}' } }),
+      params,
+    );
+    const updated = await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(updated).toMatchObject({ reviewStatus: 'PENDING', draft: null });
   });
 
   it('stores a reviewer correction when fixing', async () => {

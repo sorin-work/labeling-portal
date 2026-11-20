@@ -8,6 +8,8 @@ export default [
   route('projects/:projectId/download', 'routes/project-download.ts'),
   route('projects/:projectId/example', 'routes/project-sample.ts'),
   route('projects/:projectId/quality.csv', 'routes/project-quality-export.ts'),
+  route('work/:assignmentId/draft', 'routes/work-draft.ts'),
+  route('my-work/:assignmentId/draft', 'routes/my-work-draft.ts'),
   layout('routes/app-layout.tsx', [
     index('routes/dashboard.tsx'),
     route('projects', 'routes/projects.tsx'),

@@ -10,6 +10,11 @@ export function badRequest(message = 'Bad request'): Response {
   return new Response(message, { status: 400, statusText: message });
 }
 
+/** For routes that are called with `fetch` and read by a script, like the draft autosave. */
+export function jsonError(error: string, status: number): Response {
+  return Response.json({ ok: false, error }, { status });
+}
+
 /** Collects zod-style issues into a field -> first message map for forms. */
 export function fieldErrors(
   issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>,

@@ -13,6 +13,9 @@ export type ClaimResult =
 
 const MAX_CLAIM_ATTEMPTS = 5;
 
+/** A claim that ends (submitted, skipped, released, expired) drops its draft. */
+const NO_DRAFT = { draft: Prisma.DbNull, draftSeconds: 0 };
+
 function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
@@ -69,7 +72,7 @@ async function nextCandidate(project: Project, userId: string, now: Date) {
 export async function releaseExpiredClaims(projectId?: string, now = new Date()): Promise<number> {
   const result = await prisma.assignment.updateMany({
     where: { status: 'ACTIVE', expiresAt: { lte: now }, ...(projectId ? { projectId } : {}) },
-    data: { status: 'EXPIRED' },
+    data: { status: 'EXPIRED', ...NO_DRAFT },
   });
   return result.count;
 }
@@ -162,7 +165,10 @@ export async function submitAssignment(
   if ('error' in found) return { ok: false, error: found.error! };
   if (found.assignment.expiresAt <= now) {
     // the slot may already belong to someone else
-    await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'EXPIRED' } });
+    await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: { status: 'EXPIRED', ...NO_DRAFT },
+    });
     return { ok: false, error: 'expired' };
   }
 
@@ -192,6 +198,7 @@ export async function submitAssignment(
       goldScore,
       reviewStatus: input.reviewRequired && !task.isGold ? 'PENDING' : 'NOT_REQUIRED',
       activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+      ...NO_DRAFT,
     },
   });
   if (!input.reviewRequired && !task.isGold)
@@ -208,7 +215,7 @@ export async function skipAssignment(
   if ('error' in found) return { ok: false, error: found.error! };
   await prisma.assignment.update({
     where: { id: assignmentId },
-    data: { status: 'SKIPPED', skipReason: reason },
+    data: { status: 'SKIPPED', skipReason: reason, ...NO_DRAFT },
   });
   return { ok: true };
 }
@@ -225,7 +232,13 @@ export async function resubmitAssignment(
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
   const result = await prisma.assignment.updateMany({
     where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
-    data: { answer, reviewStatus: 'PENDING', submittedAt: now, reviewedAt: null },
+    data: {
+      answer,
+      reviewStatus: 'PENDING',
+      submittedAt: now,
+      reviewedAt: null,
+      draft: Prisma.DbNull,
+    },
   });
   if (result.count === 0) {
     const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
@@ -241,7 +254,59 @@ export async function releaseAssignment(
 ): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
-  await prisma.assignment.update({ where: { id: assignmentId }, data: { status: 'RELEASED' } });
+  await prisma.assignment.update({
+    where: { id: assignmentId },
+    data: { status: 'RELEASED', ...NO_DRAFT },
+  });
+  return { ok: true };
+}
+
+/**
+ * Keeps unfinished work on a claim so that a reload does not lose it. The
+ * draft is stored as it is; only submitting validates. `draft` is left out
+ * when the answer did not change and the save only carries working time. That
+ * time never goes down, so an older tab cannot take seconds away again.
+ */
+export async function saveDraft(
+  assignmentId: string,
+  userId: string,
+  input: { draft?: Prisma.InputJsonValue; activeSeconds: number },
+  now = new Date(),
+): Promise<{ ok: true; draftSeconds: number } | { ok: false; error: AssignmentError }> {
+  const found = await ownActive(assignmentId, userId);
+  if ('error' in found) return { ok: false, error: found.error! };
+  if (found.assignment.expiresAt <= now) return { ok: false, error: 'expired' };
+  const draftSeconds = Math.max(
+    found.assignment.draftSeconds,
+    clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
+  );
+  // the claim can be submitted or released between the check and this write
+  const saved = await prisma.assignment.updateMany({
+    where: { id: assignmentId, userId, status: 'ACTIVE' },
+    data: { draftSeconds, ...(input.draft === undefined ? {} : { draft: input.draft }) },
+  });
+  if (saved.count === 0) return { ok: false, error: 'not_active' };
+  return { ok: true, draftSeconds };
+}
+
+/**
+ * The same for the revise page. That assignment is submitted, not active, so
+ * the guard is the one `resubmitAssignment` uses: the annotator's own
+ * submission, while it is sent back.
+ */
+export async function saveRevisionDraft(
+  assignmentId: string,
+  userId: string,
+  draft: Prisma.InputJsonValue,
+): Promise<{ ok: true } | { ok: false; error: AssignmentError }> {
+  const saved = await prisma.assignment.updateMany({
+    where: { id: assignmentId, userId, status: 'SUBMITTED', reviewStatus: 'SENT_BACK' },
+    data: { draft },
+  });
+  if (saved.count === 0) {
+    const exists = await prisma.assignment.count({ where: { id: assignmentId, userId } });
+    return { ok: false, error: exists ? 'not_active' : 'not_found' };
+  }
   return { ok: true };
 }
 

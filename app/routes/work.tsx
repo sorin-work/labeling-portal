@@ -11,6 +11,7 @@ import { LabelingInterface } from '~/components/labeling';
 import { MarkdownBody } from '~/components/markdown';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
+import { fitDraft } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -59,6 +60,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     throw redirect(`/projects/${assignment.projectId}`);
   }
   const { project, task } = assignment;
+  const schema = projectSchema(project);
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
@@ -76,10 +78,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
       canExtend: assignment.extendedAt === null,
+      // unfinished work from before a reload; the page starts from it
+      draft: fitDraft(schema, task.data, assignment.draft),
+      draftSeconds: assignment.draftSeconds,
     },
     project: { id: project.id, name: project.name },
     instructionsHtml: renderMarkdown(project.instructions),
-    schema: projectSchema(project),
+    schema,
     task: {
       id: task.id,
       externalId: task.externalId,
