@@ -426,14 +426,20 @@ export function isInternalHost(hostname: string): boolean {
 }
 
 /**
- * Where a box project's image is. Either an absolute http or https URL, or a
- * path on the portal itself. The server never requests it: the address is
+ * Where the image of an image task is (image classification and boxes, see
+ * `isImageKind`). Either an absolute http or https URL, or a path on the
+ * portal itself. The server never requests it: the address is
  * stored as text and only an annotator's browser loads it. Anything else
  * (`javascript:`, `data:`, `file:`, a `//host` address that borrows the
  * page's scheme) is refused. So are addresses inside a network (see
  * `isInternalHost`): every annotator's browser would request them, from
  * inside the annotator's own network. `allowedHosts` lists internal hosts the
  * installation serves images from on purpose (`INTERNAL_IMAGE_HOSTS`).
+ *
+ * Only the address is checked, once, at import. A public address that
+ * redirects to an internal host is followed by the annotator's browser, and
+ * removing a host from `INTERNAL_IMAGE_HOSTS` later does not touch tasks that
+ * were already imported from it.
  */
 export function isImageRef(value: unknown, allowedHosts: readonly string[] = []): boolean {
   if (typeof value !== 'string' || /[\s\\]/.test(value)) return false;

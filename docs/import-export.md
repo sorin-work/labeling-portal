@@ -94,6 +94,16 @@ in `INTERNAL_IMAGE_HOSTS`, comma separated (for example
 names and addresses in it are let through. It applies to every project of the
 installation.
 
+The address is checked once, when the file is imported. Two things are not
+covered by that check:
+
+- A public address that redirects to an internal host is followed by the
+  annotator's browser. The portal never requests the address, so it cannot
+  see the redirect.
+- Removing a host from `INTERNAL_IMAGE_HOSTS` does not touch tasks that were
+  already imported with it. They keep their addresses and are still handed
+  out; take such a batch out of the queue by pausing it, or remove it.
+
 ### Gold answers
 
 | Kind           | Short form in CSV    | Full form (JSON)                                                    |
