@@ -211,14 +211,21 @@ describe('diffSchema', () => {
 
     it('says in which places the answers are stored', () => {
       const after = { ...classification, labels: ['positive', 'negative'] };
-      const where = { qualification: 1, consensus: 3, gold: 1, correction: 1, submission: 2 };
+      const where = {
+        qualification: 1,
+        dispute: 1,
+        consensus: 3,
+        gold: 1,
+        correction: 1,
+        submission: 2,
+      };
       const [change] = diffSchema(classification, after, usage({ names: { neutral: where } }));
       expect(change.reason).toBe(
-        'the label “neutral” cannot be removed or renamed while 8 stored answers use it ' +
+        'the label “neutral” cannot be removed or renamed while 9 stored answers use it ' +
           '(2 submissions, 1 reviewer correction, 1 gold answer, 3 consensus answers, ' +
-          '1 qualification answer)',
+          '1 disputed answer, 1 qualification answer)',
       );
-      expect(change.affected).toBe(8);
+      expect(change.affected).toBe(9);
     });
 
     it('sees a rename as a removal and an addition', () => {

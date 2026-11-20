@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { openDispute, resolveDispute, withdrawDispute } from '~/models/disputes.server';
 import { resubmitAssignment, saveRevisionDraft } from '~/models/queue.server';
 import { recordReview } from '~/models/reviews.server';
 import { loader as earningsLoader } from '~/routes/earnings';
@@ -405,6 +406,63 @@ describe('the day work becomes payable', () => {
     expect((await report(APRIL)).totalCents).toBe(35);
     // sent back in March's submissions: waiting, not owed
     expect(await report(MARCH)).toMatchObject({ totalCents: 0, pending: 1 });
+  });
+
+  it('dates a dispute outcome the way the work became payable', async () => {
+    const { project, pm, ann, reviewer, report } = await withReview();
+    const now = new Date('2026-03-20T09:00:00Z');
+    const answer = { labels: ['positive'] };
+    const returned = await submitWork(project, ann.id, answer, { now });
+    const fixed = await submitWork(project, ann.id, answer, { now });
+    const kept = await submitWork(project, ann.id, answer, { now });
+    const decidedAt = new Date('2026-03-25T09:00:00Z');
+    const sendBack = { decision: 'SEND_BACK' as const, qaScore: 2, feedback: 'again' };
+    await recordReview(returned.id, reviewer.id, sendBack, decidedAt);
+    await recordReview(kept.id, reviewer.id, sendBack, decidedAt);
+    await recordReview(
+      fixed.id,
+      reviewer.id,
+      { decision: 'FIX', qaScore: 3, feedback: '', correctedAnswer: { labels: ['negative'] } },
+      decidedAt,
+    );
+
+    const disputedAt = new Date('2026-03-26T09:00:00Z');
+    const open = async (assignmentId: string) => {
+      const opened = await openDispute(assignmentId, ann.id, 'It is positive.', disputedAt);
+      if (!opened.ok) throw new Error(opened.error);
+      return opened.dispute.id;
+    };
+    const aboutReturned = await open(returned.id);
+    const aboutFixed = await open(fixed.id);
+    await open(kept.id);
+    // an open dispute changes nothing: the fix is payable, the send-backs are not
+    expect(await report(MARCH)).toMatchObject({ totalCents: 35, pending: 2 });
+
+    const settledAt = new Date('2026-04-02T09:00:00Z');
+    const overturn = { outcome: 'OVERTURNED' as const, resolution: 'Ann read it correctly.' };
+    expect(await resolveDispute(aboutReturned, pm.id, overturn, settledAt)).toEqual({ ok: true });
+    expect(await resolveDispute(aboutFixed, pm.id, overturn, settledAt)).toEqual({ ok: true });
+    expect(await withdrawDispute(kept.id, ann.id, settledAt)).toEqual({ ok: true });
+
+    // The overturned fix was accepted and payable since its review in March
+    // and stays there. The withdrawn dispute left its work sent back.
+    const march = await report(MARCH);
+    expect(march.lines).toEqual([expect.objectContaining({ tasks: 1, amountCents: 35 })]);
+    expect(march.pending).toBe(1);
+    // The overturned send-back became payable in April, and only there.
+    const april = await report(APRIL);
+    expect(april.lines).toEqual([expect.objectContaining({ tasks: 1, amountCents: 35 })]);
+    // each piece of work is paid once over the two months
+    const both = payload<Report>(
+      await run(
+        payoutsLoader,
+        makeRequest('/payouts?from=2026-03-01&to=2026-04-30', {
+          cookie: await cookieFor(pm, project.orgId),
+        }),
+      ),
+    );
+    expect(both).toMatchObject({ totalCents: 70, pending: 1 });
+    expect(both.lines[0].tasks).toBe(2);
   });
 
   it('counts the time spent revising, capped at the time since the review', async () => {
