@@ -62,33 +62,64 @@ const SURFACES = ['white', 'slate-50'];
 
 /**
  * Text that sits on a background set further out, on a parent element, and
- * so not in its own class string. Each entry is checked against that
- * background instead of the surfaces.
+ * so not in its own class string. Keyed by the file and the text colour, so
+ * an exception holds for that one use and not for the colour everywhere.
  */
-const ON_PARENT: Record<string, { on: string[]; where: string }> = {
-  'indigo-100': { on: ['indigo-600'], where: 'the key cap on a chosen label' },
-  'slate-100': { on: ['slate-900'], where: 'the error page stack trace' },
-  'slate-300': { on: ['slate-900'], where: 'the button that closes the toast' },
-  white: { on: ['slate-900', 'indigo-600', 'rose-600'], where: 'the toast, filled buttons' },
-};
+const ON_PARENT: Array<{ file: string; text: string; on: string[]; where: string }> = [
+  {
+    file: 'app/components/labeling/text-classification.tsx',
+    text: 'indigo-100',
+    on: ['indigo-600'],
+    where: 'the key cap on a chosen label',
+  },
+  {
+    file: 'app/components/flash.tsx',
+    text: 'slate-300',
+    on: ['slate-900'],
+    where: 'the button that closes the toast',
+  },
+  {
+    file: 'app/components/flash.tsx',
+    text: 'white',
+    on: ['slate-900'],
+    where: 'the same button when hovered',
+  },
+];
 
 /** States WCAG does not ask contrast of: a control that cannot be used. */
 const EXEMPT_VARIANTS = ['disabled:', 'aria-disabled:'];
 
-type Pair = { text: string; bg: string; file: string };
+type Pair = { text: string; bg: string; file: string; variant: string };
 
+/**
+ * Every text colour on the background it is drawn on, in every state a
+ * class string names (hover, focus, ...). In a state, the text colour and the
+ * background are the ones for that state when the string has them, and the
+ * plain ones otherwise: a hover background without a hover text colour keeps
+ * the plain text colour, and is checked with it.
+ */
 function pairs(): Pair[] {
   const found = new Map<string, Pair>();
   for (const { file, text } of strings) {
     const backgrounds = classesOf(text, 'bg');
-    for (const fg of classesOf(text, 'text')) {
-      if (EXEMPT_VARIANTS.includes(fg.variant)) continue;
-      // a hover colour sits on the hover background when there is one
-      const own = backgrounds.filter((b) => b.variant === fg.variant);
-      const plain = backgrounds.filter((b) => b.variant === '');
-      const bgs = (own.length > 0 ? own : plain).map((b) => b.name);
-      const on = bgs.length > 0 ? bgs : (ON_PARENT[fg.name]?.on ?? SURFACES);
-      for (const bg of on) found.set(`${fg.name} on ${bg}`, { text: fg.name, bg, file });
+    const colours = classesOf(text, 'text');
+    const states = new Set(['', ...[...backgrounds, ...colours].map((c) => c.variant)]);
+    for (const variant of states) {
+      if (EXEMPT_VARIANTS.includes(variant)) continue;
+      const pick = (list: ColorClass[]) => {
+        const own = list.filter((c) => c.variant === variant);
+        return (own.length > 0 ? own : list.filter((c) => c.variant === '')).map((c) => c.name);
+      };
+      const fgs = pick(colours);
+      if (fgs.length === 0) continue; // the text colour comes from further out
+      const bgs = pick(backgrounds);
+      for (const fg of fgs) {
+        const parent = ON_PARENT.find((p) => p.file === file && p.text === fg);
+        const on = bgs.length > 0 ? bgs : (parent?.on ?? SURFACES);
+        for (const bg of on) {
+          found.set(`${variant}${fg} on ${bg} in ${file}`, { text: fg, bg, file, variant });
+        }
+      }
     }
   }
   return [...found.values()];
@@ -105,13 +136,17 @@ describe('colour contrast', () => {
   it('finds the class strings of the app', () => {
     expect(strings.length).toBeGreaterThan(100);
     expect(pairs().length).toBeGreaterThan(30);
+    // a hover background with the plain text colour is checked: the danger button
+    expect(pairs()).toContainEqual(
+      expect.objectContaining({ variant: 'hover:', text: 'white', file: 'app/components/ui.tsx' }),
+    );
   });
 
   it('gives every text colour on its background at least 4.5:1', () => {
     const failing = pairs()
       .map((p) => ({ ...p, ratio: contrastRatio(color(p.text), color(p.bg)) }))
       .filter((p) => p.ratio < AA_TEXT)
-      .map((p) => `text-${p.text} on ${p.bg}: ${p.ratio.toFixed(2)} (${p.file})`);
+      .map((p) => `${p.variant}text-${p.text} on ${p.bg}: ${p.ratio.toFixed(2)} (${p.file})`);
     expect(failing).toEqual([]);
   });
 
