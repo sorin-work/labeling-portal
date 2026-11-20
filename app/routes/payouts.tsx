@@ -41,7 +41,7 @@ export default function Payouts({ loaderData }: Route.ComponentProps) {
     <div className="space-y-6">
       <PageHeader
         title="Payouts"
-        subtitle="Accepted work only, counted on the day it became payable: the day a reviewer approved or corrected it, or the day it was submitted when no review was needed. Each task is paid at the rate its project had when it was submitted. Dates are inclusive and in UTC."
+        subtitle="Accepted work only, counted on the day it became payable: the day a reviewer approved or corrected it, or the day it was submitted when no review was needed. Work accepted before this rule came in counts on the day it was submitted. Each task is paid at the rate its project had when it was submitted. Dates are inclusive and in UTC."
         actions={
           <a href={`/payouts/export?${query}`} download>
             <Button variant="secondary">Download CSV</Button>

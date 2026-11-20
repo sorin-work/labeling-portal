@@ -832,17 +832,21 @@ later as a spot check, and releasing or taking over a hold before it lapses.
 `submitAssignment` copies the project's `rateCents` and `payMode` onto the
 assignment in the write that stores the answer, and `payoutReport`, its CSV
 and the new `/earnings` page read the copy. `computePayouts` groups by
-project, pay mode and rate, and work counts on the day it became payable
-(`payableAt`). `/earnings` shows a person their own blocks for a range and,
-whatever the range, what is waiting for review or was sent back. Revising
-time is added to the active time. Different from the design: a check
-constraint refuses a submitted row without its rate, the migration also
-fills in missing review dates from the latest review, and hourly rounding
-moved into one integer function. The page says that nothing is marked as
-paid, because the portal does not record payments. Still open: the rates of
-work from before the migration are the project's rate of that day, which is
-an approximation, and marking a period as paid, bonuses, reviewer pay and
-other currencies remain out.
+project, pay mode and rate. The day work became payable is stored in
+`Assignment.payableAt` by the write that accepts it, and both reports go by
+it. `/earnings` shows a person their own blocks for a range and, whatever the
+range, what is waiting for review or was sent back. Revising time is added to
+the active time. Different from the design: the payable day is a stored
+column and not derived, and work accepted before the upgrade keeps its
+submission day, so no past report changes; check constraints refuse a
+submitted row without its rate and accepted work without its date; a revision
+is credited at most the project's time limit and a task three limits in all,
+because revising has no deadline; and hourly rounding moved into one integer
+function. The page says that nothing is marked as paid, because the portal
+does not record payments. Still open: the rates of work from before the
+migration are the project's rate of that day, which is an approximation, and
+marking a period as paid, bonuses, reviewer pay and other currencies remain
+out.
 
 ### 7. Scheduled backups
 

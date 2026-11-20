@@ -66,7 +66,18 @@
   needed. Before, it counted on the day it was submitted
 - Time spent revising sent-back work is added to the active time, which is
   paid on hourly projects. It is saved with the revision draft, so a reload
-  does not lose it
+  does not lose it. A revision is credited at most the project's time limit,
+  and a task at most three time limits in all
+
+**Upgrade note.** The day work became payable is stored from this version on
+(`Assignment.payableAt`). The migration sets it to the submission date for
+every piece of work that is already accepted when the migration runs, so
+every past pay report is unchanged: a period that was paid shows the same
+total as before, and nothing in it is owed again. Work accepted after the
+upgrade gets the new rule: the review date, the submission date where no
+review was needed, or the date of the overturn for a send-back that a dispute
+overturned. Work submitted before the upgrade and approved after it counts in
+the period of its approval.
 
 ### Operations
 

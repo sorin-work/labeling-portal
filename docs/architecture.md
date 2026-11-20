@@ -282,28 +282,44 @@ Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
 at the time since the claim. It is saved with the draft, so a reload does not
 start the count again. Time spent revising work that was sent back is added
-to it, capped at the time since the review, and is kept with the revision
-draft in the same way.
+to it, within the bounds below, and is kept with the revision draft in the
+same way.
 
 - **The rate is frozen at submission.** `submitAssignment` copies the
   project's `rateCents` and `payMode` onto the assignment in the same write
-  that stores the answer. Payouts, the earnings page and the payout CSV read
+  that stores the answer, and reads them in that transaction while holding
+  the project row, so a rate change that commits at the same moment is either
+  waited for or seen. Payouts, the earnings page and the payout CSV read
   that copy and never the project, so changing a project's rate changes
   nothing that is already submitted. A revision after a send-back keeps the
   rate of the first submission. A check constraint
   (`Assignment_submitted_has_rate`) refuses a submitted row without the
   copy, so code that writes submissions directly, such as a seed or a test,
   has to set both columns.
-- **Work counts on the day it became payable** (`payableAt` in
-  `app/domain/payouts.ts`): `reviewedAt` for work a reviewer approved or
-  fixed, `submittedAt` for work that needed no review (review off, gold
-  tasks, and work the review sample did not draw). Work submitted in March
-  and approved in April belongs to April, so a period that was paid does not
-  change afterwards. A send-back that a dispute overturns is dated at the
-  overturn, so it lands in that period. Work that is waiting for review or
-  was sent back has no such date: the payouts page counts it as pending by
-  its submission date, and the earnings page lists all of it whatever the
-  range.
+- **Work counts on the day it became payable**, and that day is stored:
+  `Assignment.payableAt`. The write that accepts the work sets it
+  (`payableSince` in `app/domain/payouts.ts` is the rule): the review for work
+  a reviewer approved or fixed, the submission for work that needed no review
+  (review off, gold tasks, and work the review sample did not draw), and the
+  overturn for a send-back that a dispute overturned. Work submitted in March
+  and approved in April belongs to April. A check constraint
+  (`Assignment_accepted_has_payable_date`) refuses accepted work without the
+  date and any other work with one, so no write can accept work and leave it
+  out of every period. Work that is waiting for review or was sent back has
+  no date: the payouts page counts it as pending by its submission date, and
+  the earnings page lists all of it whatever the range.
+- **The cutover.** Before the date was stored, the reports counted accepted
+  work on the day it was submitted. The migration gives every piece of work
+  that is already accepted its submission date, so every period of every past
+  report is what it was, and nothing that was paid from an old report is owed
+  again. Only work accepted after the upgrade follows the rule above.
+- **Revising has no deadline, so its time is bounded by hand**
+  (`revisionSeconds` in `app/domain/active-time.ts`, used by the resubmission
+  and by the revision draft): never more than the time since the review,
+  never more than the project's time limit for one revision, which is what a
+  first claim gets, and never more than three time limits for an assignment
+  in total, however often it is sent back. Every project has a time limit
+  (1 to 480 minutes), so there is always a bound.
 - **Money is whole cents everywhere.** Amounts are computed per block of
   work, which is one person, project, pay mode and rate, by `amountCents`.
   An hourly block is rounded once, to the nearest cent with half a cent

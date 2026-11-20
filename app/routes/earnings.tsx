@@ -180,7 +180,8 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
           <li>
             Work counts on the day it became payable: the day a reviewer approved or corrected it,
             or the day you submitted it when no review was needed. Work submitted in one month and
-            approved in the next belongs to the second.
+            approved in the next belongs to the second. Work that was accepted before this rule came
+            in counts on the day it was submitted, as it did then.
           </li>
           <li>
             Each task is paid at the rate its project had when you first submitted it. A later
@@ -188,8 +189,9 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
           </li>
           <li>Gold tasks are paid like any other task. The qualification test is not paid.</li>
           <li>
-            Hourly work is paid for active time, which includes the time you spend revising work
-            that was sent back. The amount is rounded once, to the nearest cent, for each line
+            Hourly work is paid for active time. That includes the time you spend revising work that
+            was sent back, up to the project&apos;s time limit for each revision and three time
+            limits for a task in all. The amount is rounded once, to the nearest cent, for each line
             above, not for each task. Adding up your tasks one by one can differ by a cent.
           </li>
         </ul>
