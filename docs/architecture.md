@@ -148,11 +148,12 @@ be disputed.
     overturned corrections) and the task may complete;
   - an overturned send-back gets `reviewedAt` set to the time of the overturn,
     which is the day the work became payable. An overturned fix was accepted
-    and payable since the review, so its `reviewedAt` stays. That is as far
-    as it goes today: the payouts report still selects by `submittedAt`, so
-    overturned work shows in the period it was submitted in. It will show in
-    the period of the overturn, and never in one that was already paid, once
-    the report goes by the day work became payable (roadmap item 5);
+    and payable since the review, so its `reviewedAt` stays. The pay reports
+    go by that date (`payableAt`, see "Pay"), so an overturned send-back shows
+    in the period of the overturn, once, and never in the period it was
+    submitted in, which may be paid already. A dispute that is upheld or
+    withdrawn leaves the work as the review left it and changes nothing that
+    is payable;
   - a draft of a revision that was started before the dispute is dropped, so
     approved work never carries one;
   - if the submission is not in the state the decision left it in, the
@@ -298,9 +299,11 @@ draft in the same way.
   fixed, `submittedAt` for work that needed no review (review off, gold
   tasks, and work the review sample did not draw). Work submitted in March
   and approved in April belongs to April, so a period that was paid does not
-  change afterwards. Work that is waiting for review or was sent back has no
-  such date: the payouts page counts it as pending by its submission date,
-  and the earnings page lists all of it whatever the range.
+  change afterwards. A send-back that a dispute overturns is dated at the
+  overturn, so it lands in that period. Work that is waiting for review or
+  was sent back has no such date: the payouts page counts it as pending by
+  its submission date, and the earnings page lists all of it whatever the
+  range.
 - **Money is whole cents everywhere.** Amounts are computed per block of
   work, which is one person, project, pay mode and rate, by `amountCents`.
   An hourly block is rounded once, to the nearest cent with half a cent

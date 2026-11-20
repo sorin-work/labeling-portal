@@ -879,9 +879,9 @@ keeps its date. Sent-back work cannot be revised while its dispute is open.
 Different from the design: the window is a project setting instead of a fixed
 14 days, the dispute stores a copy of the answer it was about, the annotator
 can withdraw an open dispute, and a dispute is not opened when nobody but the
-deciding reviewer could settle it. Still open: the payouts report selects by
-`submittedAt`, so an overturned send-back shows in the period it was
-submitted in until item 5 makes the report go by the day work became payable
-(the date is stamped for it). Gold scores and low QA scores on approved work
-cannot be disputed, and nobody is told about a new dispute or its outcome
-except by the tab count and the "My work" page.
+deciding reviewer could settle it. Since item 5 the pay reports go by the day
+work became payable, so an overturned send-back shows in the period of the
+overturn and never in the one it was submitted in. Still open: gold scores
+and low QA scores on approved work cannot be disputed, and nobody is told
+about a new dispute or its outcome except by the tab count and the "My work"
+page.
