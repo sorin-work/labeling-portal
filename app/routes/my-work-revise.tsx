@@ -55,6 +55,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     answer: assignment.answer as Answer,
     draft: draft.answer,
     draftNote: droppedNote(schema, draft.dropped),
+    draftSeconds: assignment.draftSeconds,
     feedback: assignment.reviews[0]?.feedback ?? '',
   };
 }
@@ -91,16 +92,20 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
-  // revising is work too: on an hourly project this time is paid
-  const [activeSeconds] = useActiveTime();
+  // revising is work too: on an hourly project this time is paid. It is
+  // saved with the draft, so a reload does not start the count again
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds);
   // nothing is saved in compare mode: the answer there cannot change
   const draftState = useDraftSave({
     url: `/my-work/${loaderData.id}/draft`,
     user: loaderData.userId,
     answer: value,
+    // only a revision has time to keep; a correction is just looked at
+    seconds: mode === 'revise' ? activeSeconds : 0,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
     onRecover: (unsaved) => {
+      raiseActiveSeconds(unsaved.seconds);
       const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
       if (fitted) setValue(fitted);
     },
