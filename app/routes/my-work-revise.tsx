@@ -2,8 +2,10 @@ import type { Prisma } from '@prisma/client';
 import { useState } from 'react';
 import { data, Form, Link, redirect, useNavigation } from 'react-router';
 
+import { DraftNote } from '~/components/draft-note';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
+import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
@@ -75,8 +77,19 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function Revise({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
-  const [value, setValue] = useState<Answer>(answer);
+  const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
+  // nothing is saved in compare mode: the answer there cannot change
+  const draftState = useDraftSave({
+    url: `/my-work/${loaderData.id}/draft`,
+    answer: value,
+    restored: loaderData.draft !== null,
+    paused: navigation.formData != null,
+    onRecover: (unsaved) => {
+      const fitted = fitDraft(schema, taskData, unsaved.draft);
+      if (fitted) setValue(fitted);
+    },
+  });
 
   if (mode === 'compare') {
     return (
@@ -136,11 +149,12 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
       <Card>
         <LabelingInterface schema={schema} data={taskData} value={value} onChange={setValue} />
       </Card>
-      <Form method="post">
+      <Form method="post" className="flex items-center gap-3">
         <input type="hidden" name="answer" value={JSON.stringify(value)} />
         <Button type="submit" disabled={navigation.state !== 'idle'}>
           Resubmit for review
         </Button>
+        <DraftNote state={draftState} />
       </Form>
     </div>
   );
