@@ -1,7 +1,12 @@
 import { Prisma, type PrismaClient, type Project } from '@prisma/client';
 
 import type { ProjectInput } from '~/domain/project-form';
-import type { SchemaUsage } from '~/domain/schema-diff';
+import {
+  breakingChanges,
+  diffSchema,
+  type SchemaChange,
+  type SchemaUsage,
+} from '~/domain/schema-diff';
 import { KIND_TO_ENUM, parseTaskSchema, type TaskSchema } from '~/domain/task-schema';
 import type { CurrentUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -178,29 +183,71 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
   };
 }
 
-export async function updateProject(projectId: string, input: ProjectInput, now = new Date()) {
-  const before = await prisma.project.findUniqueOrThrow({
-    where: { id: projectId },
-    select: { instructions: true },
-  });
-  const instructionsChanged = before.instructions.trim() !== input.instructions.trim();
-  return prisma.project.update({
-    where: { id: projectId },
-    data: {
-      name: input.name,
-      description: input.description,
-      instructions: input.instructions,
-      ...(instructionsChanged ? { instructionsUpdatedAt: now } : {}),
-      overlap: input.overlap,
-      timeLimitMinutes: input.timeLimitMinutes,
-      reviewRequired: input.reviewRequired,
-      qualificationRequired: input.qualificationRequired,
-      qualificationPassPercent: input.qualificationPassPercent,
-      payMode: input.payMode,
-      rateCents: input.rateCents,
-      kind: KIND_TO_ENUM[input.schema.kind],
-      schema: input.schema as Prisma.InputJsonValue,
-    },
+export type UpdateProjectResult =
+  | {
+      ok: true;
+      project: Project;
+      /** What the save changed in the schema, with warnings; empty when it was not edited. */
+      changes: SchemaChange[];
+      /** The schema before and after, when it was edited. */
+      schemaChange: [TaskSchema, TaskSchema] | null;
+    }
+  | { ok: false; breaking: SchemaChange[] };
+
+/**
+ * Saves the settings form. A schema edit that would orphan or corrupt stored
+ * work is refused here, whatever sent the form: the edit is compared with the
+ * saved schema and with what the project's tasks and answers use.
+ */
+export async function updateProject(
+  projectId: string,
+  input: ProjectInput,
+  now = new Date(),
+): Promise<UpdateProjectResult> {
+  return prisma.$transaction(async (tx) => {
+    // one save at a time per project, so the check and the write below see
+    // the same saved schema
+    await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE`;
+    const before = await tx.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { instructions: true, schema: true },
+    });
+
+    // a stored schema that no longer parses cannot be compared; saving a
+    // valid one is the only way to repair it
+    const saved = parseTaskSchema(before.schema);
+    let changes: SchemaChange[] = [];
+    if (saved.ok && diffSchema(saved.schema, input.schema).length > 0) {
+      changes = diffSchema(saved.schema, input.schema, await schemaUsage(projectId, tx));
+      const breaking = breakingChanges(changes);
+      if (breaking.length > 0) return { ok: false, breaking };
+    }
+
+    const instructionsChanged = before.instructions.trim() !== input.instructions.trim();
+    const project = await tx.project.update({
+      where: { id: projectId },
+      data: {
+        name: input.name,
+        description: input.description,
+        instructions: input.instructions,
+        ...(instructionsChanged ? { instructionsUpdatedAt: now } : {}),
+        overlap: input.overlap,
+        timeLimitMinutes: input.timeLimitMinutes,
+        reviewRequired: input.reviewRequired,
+        qualificationRequired: input.qualificationRequired,
+        qualificationPassPercent: input.qualificationPassPercent,
+        payMode: input.payMode,
+        rateCents: input.rateCents,
+        kind: KIND_TO_ENUM[input.schema.kind],
+        schema: input.schema as Prisma.InputJsonValue,
+      },
+    });
+    return {
+      ok: true,
+      project,
+      changes,
+      schemaChange: saved.ok && changes.length > 0 ? [saved.schema, input.schema] : null,
+    };
   });
 }
 

@@ -4,13 +4,19 @@ import { data, Form } from 'react-router';
 import { ProjectForm } from '~/components/project-form';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseProjectForm } from '~/domain/project-form';
+import { refusalMessage } from '~/domain/schema-diff';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest } from '~/lib/http';
 import { logActivity } from '~/models/activity.server';
-import { duplicateProject, requireProject, updateProject } from '~/models/projects.server';
+import {
+  duplicateProject,
+  requireProject,
+  schemaUsage,
+  updateProject,
+} from '~/models/projects.server';
 
 import type { Route } from './+types/project-settings';
 
@@ -43,6 +49,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       payMode: project.payMode,
       rate: (project.rateCents / 100).toFixed(2),
     },
+    // lets the form show what a schema edit would break before it is saved
+    usage: await schemaUsage(project.id),
   };
 }
 
@@ -87,14 +95,24 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   const parsed = parseProjectForm(form);
-  if (!parsed.ok) return data({ errors: parsed.errors, saved: false }, { status: 400 });
-  await updateProject(project.id, parsed.value);
+  if (!parsed.ok) {
+    return data({ errors: parsed.errors, saved: false, warnings: [] }, { status: 400 });
+  }
+  const result = await updateProject(project.id, parsed.value);
+  if (!result.ok) {
+    return data(
+      { errors: { schema: refusalMessage(result.breaking) }, saved: false, warnings: [] },
+      { status: 400 },
+    );
+  }
   await logActivity({
     projectId: project.id,
     actorId: current.user.id,
     action: 'project.settings',
+    ...(result.schemaChange ? { detail: { changes: { schema: result.schemaChange } } } : {}),
   });
-  return { errors: undefined, saved: true };
+  const warnings = result.changes.filter((c) => c.impact === 'warning').map((c) => c.reason);
+  return { errors: undefined, saved: true, warnings };
 }
 
 export default function ProjectSettings({ loaderData, actionData }: Route.ComponentProps) {
