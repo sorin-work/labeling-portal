@@ -38,6 +38,14 @@
   layouts where the digits need Shift and on the number pad. On the
   qualification test they act on one question, the one that was clicked or
   holds the focus, and that question is marked
+- Queue order: a batch has a priority and can be paused from its page
+  (higher numbers are handed out first; a paused batch hands out nothing new,
+  claims on it can be finished, and resuming continues where it was). A
+  project can hand out tasks in import order or shuffled, in an order of each
+  annotator's own that stays the same for them. "Gold spacing" serves about
+  one gold task in every N, at uneven intervals, per annotator and never as the
+  first task of a session. The dashboard count leaves paused batches out.
+  With the default settings the order is the same as before
 
 ### Review and quality
 

@@ -45,7 +45,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 9   | Disputes on review decisions                 | Shipped | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Shipped | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later   | quality       | M    | -          |
-| 12  | Queue order, batch priority and gold spacing | Later   | queue         | M    | -          |
+| 12  | Queue order, batch priority and gold spacing | Shipped | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Later   | labeling      | M    | -          |
 | 14  | Image classification                         | Later   | labeling      | M    | -          |
 | 15  | Audit trail                                  | Later   | ops           | M    | -          |
@@ -291,8 +291,8 @@ disagreed on.
 - Tricky: an extra slot can stay empty for ever when every member has already
   answered the task. Managers should be able to send a task that is waiting
   for an extra annotator to adjudication from its page.
-- Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
-  two that must stay: a retired gold task is never eligible
+- Items 10 and 12 have shipped conditions in `eligibleFor` that must stay.
+  Item 12: a task in a paused batch is never eligible. Item 10: a retired gold task is never eligible
   (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
   that task's other copies are one group (the second `NOT EXISTS`, over
   `kin`): whoever has a claim, a submission or a skip on one of them gets
@@ -308,70 +308,6 @@ disagreed on.
   can settle it, a task still under after the last extra goes to adjudication,
   an adjudicated task survives a later review, and the export marks the
   source. One case per kind for the number that is compared.
-
-### 12. Queue order, batch priority and gold spacing
-
-The queue has one rule: the open task with the lowest `position` that you have
-not touched and that has a free slot (`nextCandidate` in
-`models/queue.server.ts`). Position is import order. So an urgent batch
-imported later waits behind everything before it, and a batch with a problem
-cannot be held back short of pausing the whole project. Everyone works through
-the file in the same order. Gold tasks sit wherever their rows were in the
-file, so a block of gold at the top is done in the first ten minutes and never
-met again.
-
-This pull request is three changes to how the next task is chosen, and nothing
-else. They are the ordering rules that item 17 has to keep.
-
-- Batch priority and pause: `priority Int @default(0)` and
-  `pausedAt DateTime?` on `Batch`. `nextCandidate` joins the batch and sorts
-  by priority first; `eligibleFor` skips paused batches. Controls on
-  `routes/batch-detail.tsx` (new intents beside `delete`), shown in
-  `routes/project-batches.tsx`, with activity entries.
-- Order inside a priority: a project setting, import order or shuffled.
-  Shuffled has to be stable for one annotator and different between them, for
-  example `ORDER BY md5(t.id || userId)`.
-- Gold spacing: a project setting `goldEvery` ("about one gold task in every
-  N"). `claimNextTask` counts the annotator's submissions since their last
-  gold task, and when one is due and an unseen one exists it serves that,
-  otherwise a regular task. Some jitter keeps it from being exactly every Nth.
-  Empty means today's behaviour.
-- Tricky: `countAvailable` feeds "N tasks available" and the Start button on
-  the dashboard. It must skip paused batches too, or the dashboard offers work
-  that the claim then refuses.
-- Tricky: eligibility is evaluated three times per claim (the candidate query,
-  the locked re-check, the count). The choice between gold and regular has to
-  sit inside the retry loop of `claimNextTask`.
-- Tricky: no index serves a shuffled order, so every claim sorts all eligible
-  tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
-- Tricky: with default settings the behaviour must stay exactly as it is. The
-  queue tests rely on position order.
-- Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
-  has shipped two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
-  that task's other copies are one group (the second `NOT EXISTS`, over
-  `kin`): whoever has a claim, a submission or a skip on one of them gets
-  none of the others. Gold spacing has to treat those copies like any other
-  gold task, and a new order must not single them out: today a copy sits in a
-  batch with open tasks, at the position of one of them.
-- Follow-ups, each small enough for a pull request of its own and not part of
-  this one:
-  - a daily limit per annotator, so one fast person cannot label most of a
-    project: `dailyTaskLimit` on `Project`, counted per UTC day like "done
-    today" on the work page, a `limit` reason in `ClaimResult` with a text in
-    `lib/queue-messages.ts`, and the same check in `countAvailable`;
-  - a manager releasing somebody's claim from `routes/task-detail.tsx`. A
-    claim that was walked away from blocks its slot until the time limit runs
-    out, which can be eight hours (`timeLimitMinutes` goes up to 480) or
-    sixteen with the extension. It is listed under "Claims" on the task page
-    and cannot be released there;
-  - assigning tasks to named people by hand (`assignedToId` on `Task`). I do
-    not think it is needed while claims work.
-- Tests: `tests/integration/queue.test.ts`, with the random source passed in
-  as `now` is today: a higher priority batch is served first, a paused batch
-  is skipped by the claim and by the count, the shuffled order is stable for
-  one annotator and differs between two, gold arrives about every N tasks and
-  never twice for one person, and the defaults give position order.
 
 ### 13. Moving, resizing and zooming boxes
 
@@ -845,3 +781,20 @@ and past qualification attempts never follow a rescore. Still open: gold spacing
 the position of a random open task), a retired task that someone has claimed
 can still be submitted, and the server does different work for a gold
 submission than for a regular one, which a patient observer could measure.
+
+### 12. Queue order, batch priority and gold spacing
+
+Managers set a priority on a batch and pause or resume it from the batch page,
+with activity entries; the batch list shows both. A project can hand out tasks
+in import order or shuffled, and can space gold tasks out ("about one gold
+task in every N"). The whole choice is one statement, `nextTaskSql`, that
+picks and locks the task (`FOR UPDATE SKIP LOCKED`) and is the same for the
+same inputs and seed. Different from the design: the shuffle hashes the
+project's id with the annotator and the task, so the order is stable without a
+stored seed; gold spacing draws each gap from N/2 to 3N/2 with a hash instead
+of a random source, never makes the first task of a session (30 minutes
+without a submission) gold, and falls back to the other kind so the queue
+never runs dry. A new index on `Task(batchId, status, position, isGold)`
+serves import order; shuffled order sorts the open tasks of one batch at a
+time. Still open: the daily limit, a manager releasing a claim and manual
+assignment, as planned, and the measurements of item 17.

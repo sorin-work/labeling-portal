@@ -22,7 +22,9 @@ or fix the work.
 - **Import** CSV or JSONL into batches with per-line error reports, example
   files and gold answers in a `_gold` column
 - **Task queue**: claim the next task, time limits with automatic release of
-  abandoned claims, one extension per claim, skip with a reason, release
+  abandoned claims, one extension per claim, skip with a reason, release.
+  Managers give batches a priority or pause them, can shuffle the order for
+  each annotator and can space gold tasks out ("about one in every N")
 - **Drafts**: the answer in progress and its working time are saved to the
   server while an annotator works, so a reload or a closed tab loses nothing
 - **Review**: approve, send back with feedback, or fix the answer; QA scores

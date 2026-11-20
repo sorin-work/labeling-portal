@@ -36,9 +36,10 @@ tests/integration/  loaders and actions against a real PostgreSQL
 ## Task lifecycle
 
 1. An annotator presses **Start**. `claimNextTask` releases expired claims,
-   then picks the first open task (by import position) that the annotator has
-   not done or skipped and that has fewer live claims and submissions than the
-   project's overlap. The task row is locked while the claim is created.
+   then picks an open task that the annotator may be given (`eligibleFor`:
+   not done or skipped by them, not in a paused batch, fewer live claims and
+   submissions than the project's overlap) in the order described in "Which
+   task comes next" below. The task row is locked while the claim is created.
 2. The claim expires after the project's time limit. In the last two minutes
    the annotator can ask for more time once, which adds another full limit.
    Expired claims are released lazily the next time anyone asks for work in
@@ -59,6 +60,50 @@ tests/integration/  loaders and actions against a real PostgreSQL
    `refreshTaskStatus` runs in the transaction that accepted the submission
    and locks the task row before it counts, so acceptances that arrive at the
    same moment are counted one after the other and none is missed.
+
+## Which task comes next
+
+`nextTaskSql` in `models/queue.server.ts` is the whole decision, one
+statement that picks the task and locks it (`FOR UPDATE OF t SKIP LOCKED`).
+Given the same data, the same annotator and the same seed it returns the same
+task, so a reload or a second tab gets the task the first one got. The order:
+
+1. **Gold spacing** (`Project.goldEvery`, empty by default). When it is set,
+   the statement first works out whether a gold task is due for this
+   annotator: they have submitted at least as many regular tasks since their
+   last gold task as this round's gap. The gap is drawn from N/2 to 3N/2
+   (`goldGapRange`) by a hash of the seed, the annotator and their last gold
+   submission, so it is uneven, the same on every reload and different for
+   everyone. A gold task is never due for the first task of a session (no
+   submission in the project in the last 30 minutes) or someone's first task
+   ever. The wanted kind is tried first and the other kind second, so the
+   queue serves what is left when only gold or no gold remains. Without
+   spacing, gold tasks stay where their position puts them, as before.
+2. **Batches**: not paused (`Batch.pausedAt`), the highest `Batch.priority`
+   first, then in import order (the batch's first position).
+3. **Inside a batch**: by position, or with `Project.queueOrder = SHUFFLED`
+   by `md5(seed:annotator:task)`. The seed is the project's id: the order is
+   the annotator's own and stays the same for them.
+
+The levels are nested lateral joins with `LIMIT 1`, so PostgreSQL stops at
+the first batch that has an eligible task and only the picked task is locked.
+The task order inside a batch uses `Task(batchId, status, position, isGold)`
+(added for this) and the batch order `Task(batchId, position)`. A shuffled
+order has no index: it sorts the open tasks of a batch, one batch at a time.
+On a project with 40 batches and 40,000 tasks, 30,000 of them complete and an
+annotator with 2,000 submissions, the statement took 7 ms in import order and
+11 ms shuffled, with or without gold spacing (roadmap item 17 is about
+larger projects).
+
+Pausing stops new claims at the next request. Claims that exist can be
+submitted, and nothing else about the batch changes, so after a resume a task
+that has some of its answers gets the rest. A priority change only affects
+the next claim. The dashboard count (`countAvailable`) uses the same
+`eligibleFor` and so leaves paused batches out too.
+
+After the pick, `claimNextTask` checks `eligibleFor` again on the locked row,
+because a slot count taken before the lock may miss a claim that was committed
+in between, and retries with a new pick if it fails.
 
 ## Review sampling
 
