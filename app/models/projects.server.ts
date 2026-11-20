@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient, type Project, type ProjectStatus } from '@prisma/client';
 
 import { settingsChanges } from '~/domain/activity';
+import { parsePrelabel } from '~/domain/prelabel';
 import type { ProjectInput } from '~/domain/project-form';
 import {
   breakingChanges,
@@ -417,6 +418,8 @@ export async function duplicateProject(project: Project, actorId: string) {
         instructions: project.instructions,
         kind: project.kind,
         schema: project.schema as Prisma.InputJsonValue,
+        prelabel:
+          project.prelabel === null ? Prisma.DbNull : (project.prelabel as Prisma.InputJsonValue),
         overlap: project.overlap,
         timeLimitMinutes: project.timeLimitMinutes,
         reviewRequired: project.reviewRequired,
@@ -450,4 +453,43 @@ export async function duplicateProject(project: Project, actorId: string) {
     });
     return copy;
   });
+}
+
+export type SetPrelabelResult = { ok: true } | { ok: false; errors: string[] };
+
+/**
+ * Saves the project's suggestion rule, checked against its schema as it is
+ * now; empty text turns it off. It applies to batches imported from then on;
+ * "Run again" on a batch page applies it to that batch.
+ */
+export async function setProjectPrelabel(
+  project: Project,
+  text: string,
+  actorId: string,
+): Promise<SetPrelabelResult> {
+  const schema = projectSchema(project);
+  const parsed = parsePrelabel(text, schema);
+  if (!parsed.ok) return parsed;
+  const config = parsed.config;
+  await prisma.$transaction(async (tx) => {
+    await tx.project.update({
+      where: { id: project.id },
+      data: { prelabel: config === null ? Prisma.DbNull : (config as Prisma.InputJsonValue) },
+    });
+    await logActivity(tx, {
+      projectId: project.id,
+      actorId,
+      action: 'project.prelabel',
+      detail:
+        config === null
+          ? { rule: null }
+          : {
+              rule: config.rule,
+              terms: Object.values(
+                config.rule === 'keywords' ? config.labels : config.entities,
+              ).flat().length,
+            },
+    });
+  });
+  return { ok: true };
 }

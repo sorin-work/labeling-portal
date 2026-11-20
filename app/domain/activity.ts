@@ -15,6 +15,8 @@ export const ACTIVITY_ACTIONS = {
   'project.settings': 'Project settings changed',
   'project.status': 'Project launched, paused or archived',
   'project.duplicated': 'Project copied',
+  'project.prelabel': 'Suggestion rule changed',
+  'batch.prelabel': 'Suggestions run again',
   'batch.imported': 'Batch imported',
   'batch.deleted': 'Batch deleted',
   'batch.priority': 'Batch priority changed',
@@ -211,6 +213,12 @@ export function describeActivity(action: string, detail: unknown): string {
       return `changed the status from ${String(d.from).toLowerCase()} to ${String(d.to).toLowerCase()}`;
     case 'project.duplicated':
       return 'made a copy of this project';
+    case 'project.prelabel':
+      return typeof d.rule === 'string'
+        ? `set the suggestion rule to ${d.rule} (${plural(d.terms, 'word or phrase', 'words and phrases')})`
+        : 'turned the suggestion rule off';
+    case 'batch.prelabel':
+      return `ran the suggestion rule again over “${String(d.name)}”, taking back ${plural(d.reset, 'earlier suggestion')}`;
     case 'batch.imported':
       return `imported ${String(d.tasks)} tasks as “${String(d.name)}”${d.qualification ? ' (qualification test)' : ''}${d.via === 'api' ? ' through the API' : ''}`;
     case 'batch.deleted':

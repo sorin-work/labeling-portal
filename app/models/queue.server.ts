@@ -11,6 +11,7 @@ import {
   type Credit,
   type Interval,
 } from '~/domain/active-time';
+import { sameAnswer } from '~/domain/gold';
 import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
@@ -473,6 +474,22 @@ async function sampleForReview(
 }
 
 /**
+ * How a submission relates to the task's suggestion. `suggestionUnchanged` is
+ * set only where there was a suggestion; an answer that equals it counts as
+ * started from it even when the page did not say so (a draft restored after
+ * a reload).
+ */
+function suggestionUse(
+  suggestion: Prisma.JsonValue,
+  answer: Prisma.InputJsonValue,
+  started: boolean | undefined,
+): { fromSuggestion: boolean; suggestionUnchanged: boolean | null } {
+  if (suggestion === null) return { fromSuggestion: false, suggestionUnchanged: null };
+  const unchanged = sameAnswer(answer, suggestion);
+  return { fromSuggestion: Boolean(started) || unchanged, suggestionUnchanged: unchanged };
+}
+
+/**
  * Stores the answer on the annotator's claim. `random` is the source for the
  * review sample (see `decideReview`); tests pass a fixed one.
  */
@@ -485,6 +502,8 @@ export async function submitAssignment(
     reviewRequired: boolean;
     /** share of submissions that go to review; everything when left out */
     reviewSamplePercent?: number;
+    /** the annotator pressed "Start from the suggestion" */
+    fromSuggestion?: boolean;
   },
   now = new Date(),
   random: () => number = Math.random,
@@ -566,6 +585,9 @@ export async function submitAssignment(
           // work that needs no review is payable from this moment
           payableAt: payableSince(reviewStatus, now),
           answer: input.answer,
+          // what the task's suggestion had to do with it: it is never the answer
+          // by itself, the annotator took it or wrote their own
+          ...suggestionUse(task.suggestion, input.answer, input.fromSuggestion),
           goldScore,
           reviewStatus,
           reviewSample: sampling.sample,

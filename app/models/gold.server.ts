@@ -487,6 +487,10 @@ export async function promoteToGold(
             isGold: true,
             goldAnswer: answer,
             goldSourceId: source.id,
+            // the copy shows what the task showed: a missing suggestion would mark it as gold
+            suggestion:
+              source.suggestion === null ? undefined : (source.suggestion as Prisma.InputJsonValue),
+            suggestionSource: source.suggestionSource,
             createdAt: now,
           },
         });

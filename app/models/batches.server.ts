@@ -94,8 +94,8 @@ async function writeBatch(
       const earlier = await earlierBatch(tx, projectId, key, input.idempotencyHash ?? null);
       if (earlier) return earlier;
     }
-    const [project] = await tx.$queryRaw<Array<{ schema: unknown }>>`
-      SELECT schema FROM "Project" WHERE id = ${projectId} FOR SHARE`;
+    const [project] = await tx.$queryRaw<Array<{ schema: unknown; prelabel: unknown }>>`
+      SELECT schema, prelabel FROM "Project" WHERE id = ${projectId} FOR SHARE`;
     const saved = parseTaskSchema(project?.schema);
     if (!saved.ok || diffSchema(saved.schema, input.schema).length > 0) {
       return { ok: false, error: 'schema_changed' };
@@ -110,6 +110,8 @@ async function writeBatch(
         format: input.format,
         idempotencyKey: key,
         idempotencyHash: key ? (input.idempotencyHash ?? null) : null,
+        // the project's rule runs over the batch after the import, off the request
+        prelabelState: project?.prelabel != null && !input.qualification ? 'PENDING' : null,
       },
     });
     await tx.task.createMany({
@@ -122,6 +124,10 @@ async function writeBatch(
         isGold: row.gold !== undefined && !input.qualification,
         isQualification: input.qualification ?? false,
         goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
+        // a suggestion from the file, kept apart from every answer
+        suggestion:
+          row.suggestion === undefined ? undefined : (row.suggestion as Prisma.InputJsonValue),
+        suggestionSource: row.suggestion === undefined ? undefined : 'file',
       })),
     });
     await logActivity(tx, {
