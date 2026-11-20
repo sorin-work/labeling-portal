@@ -8,6 +8,27 @@
  */
 export const MAX_EXTENSIONS = 3;
 
+/** The longest time limit a project can have, in minutes. */
+export const MAX_TIME_LIMIT_MINUTES = 480;
+
+/**
+ * More time can only be asked for in the last two minutes of a claim, when
+ * the warning shows. Asking earlier would stack all extensions at once.
+ */
+export const EXTEND_WINDOW_MS = 2 * 60_000;
+
+/** True when a claim that ends at `expiresAt` can be extended at `now` (extensions left aside). */
+export function inExtendWindow(expiresAt: Date, now: Date): boolean {
+  const left = expiresAt.getTime() - now.getTime();
+  return left > 0 && left <= EXTEND_WINDOW_MS;
+}
+
+/**
+ * How long one claim can live at most: its time limit and every extension,
+ * each another full limit.
+ */
+export const MAX_CLAIM_MS = MAX_TIME_LIMIT_MINUTES * (1 + MAX_EXTENSIONS) * 60_000;
+
 export function extensionsLeft(used: number): number {
   return Math.max(0, MAX_EXTENSIONS - used);
 }

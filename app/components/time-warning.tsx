@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Form } from 'react-router';
 
-import { Button } from './ui';
+import { EXTEND_WINDOW_MS } from '~/domain/time-limit';
 
-const WARN_MS = 2 * 60_000;
+import { Button } from './ui';
 
 /**
  * Shown in the last two minutes of a claim, with a button to ask for more
@@ -24,7 +24,7 @@ export function TimeWarning({
     return () => window.clearInterval(timer);
   }, [end]);
 
-  if (left > WARN_MS || left <= 0) return null;
+  if (left > EXTEND_WINDOW_MS || left <= 0) return null;
   return (
     <div
       role="alert"

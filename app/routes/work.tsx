@@ -9,6 +9,7 @@ import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys
 import { TaskContext } from '~/components/task-context';
 import { TimeWarning } from '~/components/time-warning';
 import { formatDuration, useActiveTime } from '~/components/use-active-time';
+import { noImplicitSubmit } from '~/components/no-implicit-submit';
 import { useRestoreFocus } from '~/components/use-dialog-focus';
 import { useDraftSave } from '~/components/use-draft-save';
 import { LabelingInterface } from '~/components/labeling';
@@ -143,7 +144,9 @@ export async function action({ request, params }: Route.ActionArgs) {
           error:
             result.error === 'no_extensions_left'
               ? `You already got extra time ${MAX_EXTENSIONS} times on this task.`
-              : 'This task is no longer yours.',
+              : result.error === 'too_early'
+                ? 'More time can be asked for in the last two minutes.'
+                : 'This task is no longer yours.',
         },
         { status: 409 },
       );
@@ -381,6 +384,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
           <Form
             ref={skipForm}
             method="post"
+            onKeyDown={noImplicitSubmit}
             className="space-y-3 rounded-lg bg-white p-4 ring-1 ring-slate-200"
           >
             <fieldset className="space-y-1">

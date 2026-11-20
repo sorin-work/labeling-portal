@@ -403,22 +403,22 @@ describe('more time', () => {
     const id = claim.ok ? claim.assignment.id : '';
     const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
 
-    expect(await extendAssignment(id, ann.id, 30, at(25))).toEqual({
+    expect(await extendAssignment(id, ann.id, 30, at(29))).toEqual({
       ok: true,
       expiresAt: at(60),
       extensionsLeft: 2,
     });
-    expect(await extendAssignment(id, ann.id, 30, at(55))).toEqual({
+    expect(await extendAssignment(id, ann.id, 30, at(59))).toEqual({
       ok: true,
       expiresAt: at(90),
       extensionsLeft: 1,
     });
-    expect(await extendAssignment(id, ann.id, 30, at(85))).toEqual({
+    expect(await extendAssignment(id, ann.id, 30, at(89))).toEqual({
       ok: true,
       expiresAt: at(120),
       extensionsLeft: 0,
     });
-    expect(await extendAssignment(id, ann.id, 30, at(115))).toEqual({
+    expect(await extendAssignment(id, ann.id, 30, at(119))).toEqual({
       ok: false,
       error: 'no_extensions_left',
     });
@@ -432,7 +432,7 @@ describe('more time', () => {
     const t0 = new Date('2026-01-10T09:00:00Z');
     const claim = await claimNextTask(project, ann.id, t0);
     const id = claim.ok ? claim.assignment.id : '';
-    const now = new Date(t0.getTime() + 25 * 60_000);
+    const now = new Date(t0.getTime() + 29 * 60_000);
     const results = await Promise.all([
       extendAssignment(id, ann.id, 30, now),
       extendAssignment(id, ann.id, 30, now),
@@ -440,6 +440,59 @@ describe('more time', () => {
     const row = await prisma.assignment.findUniqueOrThrow({ where: { id } });
     expect(row.extensions).toBe(results.filter((r) => r.ok).length);
     expect(row.expiresAt.getTime() - t0.getTime()).toBe(row.extensions * 30 * 60_000 + 30 * 60_000);
+  });
+
+  it('only gives more time in the last two minutes, so extensions cannot be stacked', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+    // three requests right after claiming: refused, nothing added
+    for (const minute of [1, 1, 1]) {
+      expect(await extendAssignment(id, ann.id, 30, at(minute))).toEqual({
+        ok: false,
+        error: 'too_early',
+      });
+    }
+    expect(await extendAssignment(id, ann.id, 30, at(27.9))).toEqual({
+      ok: false,
+      error: 'too_early',
+    });
+    // granted at two minutes left; the next one waits for the new last two minutes
+    expect((await extendAssignment(id, ann.id, 30, at(28))).ok).toBe(true);
+    expect(await extendAssignment(id, ann.id, 30, at(28.5))).toEqual({
+      ok: false,
+      error: 'too_early',
+    });
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect([row.extensions, row.expiresAt]).toEqual([1, at(60)]);
+  });
+
+  it('credits a first submission at most two time limits, with every extension used', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { timeLimitMinutes: 480 });
+    await createTasks(project.id, [{ text: 'one' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, ann);
+    const t0 = new Date(Date.now() - 4 * 480 * 60_000 + 60_000);
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+    for (const end of [480, 960, 1440]) {
+      expect((await extendAssignment(id, ann.id, 480, at(end - 1))).ok).toBe(true);
+    }
+    const now = at(4 * 480 - 1);
+    const result = await submitAssignment(
+      id,
+      ann.id,
+      { answer: { labels: ['positive'] }, activeSeconds: 4 * 480 * 60, reviewRequired: false },
+      now,
+    );
+    expect(result.ok).toBe(true);
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    // nearly four limits passed, all of it inside the credit window; two are credited
+    expect(row.activeSeconds).toBe(2 * 480 * 60);
   });
 
   it('cannot revive a claim that already ran out', async () => {

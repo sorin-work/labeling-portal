@@ -4,6 +4,7 @@ import {
   clampActiveSeconds,
   creditHorizon,
   creditTime,
+  firstSubmissionCap,
   mergeIntervals,
   revisionCap,
   revisionSeconds,
@@ -13,7 +14,7 @@ import {
 import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
-import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
+import { extensionsLeft, inExtendWindow, MAX_EXTENSIONS } from '~/domain/time-limit';
 import { prisma, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
@@ -464,7 +465,7 @@ export async function submitAssignment(
   // gold tasks are scored against their known answer instead of being reviewed
   const task = await prisma.task.findUniqueOrThrow({
     where: { id: found.assignment.taskId },
-    include: { project: { select: { schema: true, orgId: true } } },
+    include: { project: { select: { schema: true, orgId: true, timeLimitMinutes: true } } },
   });
 
   // The sample is drawn here, once, and the outcome is stored. Nothing that
@@ -490,6 +491,8 @@ export async function submitAssignment(
       start: found.assignment.claimedAt,
       now,
       credited: clock?.credited ?? [],
+      // the claim plus at most one more limit, however often it was extended
+      cap: firstSubmissionCap(task.project.timeLimitMinutes),
     });
     // scored here, under a lock on the expected answer, so a manager's edit of
     // it cannot fall between reading it and storing the score
@@ -723,7 +726,8 @@ export async function saveRevisionDraft(
 
 /**
  * Gives the annotator another full time limit on their claim. Allowed
- * `MAX_EXTENSIONS` times, and only before the claim has run out. The update
+ * `MAX_EXTENSIONS` times, each in the last two minutes of the claim
+ * (`EXTEND_WINDOW_MS`). The update
  * only goes through on the claim as it was read, so two requests at once
  * cannot both count as the same extension.
  */
@@ -734,13 +738,15 @@ export async function extendAssignment(
   now = new Date(),
 ): Promise<
   | { ok: true; expiresAt: Date; extensionsLeft: number }
-  | { ok: false; error: AssignmentError | 'no_extensions_left' }
+  | { ok: false; error: AssignmentError | 'no_extensions_left' | 'too_early' }
 > {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
   const { assignment } = found;
   if (assignment.expiresAt <= now) return { ok: false, error: 'expired' };
   if (assignment.extensions >= MAX_EXTENSIONS) return { ok: false, error: 'no_extensions_left' };
+  // only in the last two minutes, when the warning shows: never all at once
+  if (!inExtendWindow(assignment.expiresAt, now)) return { ok: false, error: 'too_early' };
   const expiresAt = addMinutes(assignment.expiresAt, minutes);
   const updated = await prisma.assignment.updateMany({
     where: {
