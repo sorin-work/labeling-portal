@@ -115,21 +115,22 @@ function objectAt(value: Prisma.Sql): Prisma.Sql {
 export async function schemaUsage(projectId: string, db: Db = prisma): Promise<SchemaUsage> {
   const rows = await db.$queryRaw<Array<{ metric: string; name: string | null; count: number }>>`
     WITH stored AS (
-      SELECT a.answer AS answer FROM "Assignment" a WHERE a."projectId" = ${projectId}
+      SELECT a.answer AS answer, false AS history
+      FROM "Assignment" a WHERE a."projectId" = ${projectId}
       UNION ALL
-      SELECT r."correctedAnswer"
+      SELECT r."correctedAnswer", false
       FROM "Review" r JOIN "Assignment" a ON a.id = r."assignmentId"
       WHERE a."projectId" = ${projectId}
       UNION ALL
-      SELECT t."goldAnswer" FROM "Task" t WHERE t."projectId" = ${projectId}
+      SELECT t."goldAnswer", false FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
-      SELECT t.consensus FROM "Task" t WHERE t."projectId" = ${projectId}
+      SELECT t.consensus, false FROM "Task" t WHERE t."projectId" = ${projectId}
       UNION ALL
-      SELECT d.answer
+      SELECT d.answer, false
       FROM "Dispute" d JOIN "Assignment" a ON a.id = d."assignmentId"
       WHERE a."projectId" = ${projectId} AND d.answer IS DISTINCT FROM a.answer
       UNION ALL
-      SELECT earlier."previousAnswer"
+      SELECT earlier."previousAnswer", true
       FROM (
         SELECT DISTINCT g."taskId", g."previousAnswer"
         FROM "GoldRevision" g JOIN "Task" t ON t.id = g."taskId"
@@ -137,26 +138,27 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
           AND g."previousAnswer" IS DISTINCT FROM t."goldAnswer"
       ) earlier
       UNION ALL
-      SELECT e.value
+      SELECT e.value, false
       FROM "QualificationAttempt" q
       CROSS JOIN LATERAL jsonb_each(${objectAt(Prisma.sql`q.answers`)}) e
       WHERE q."projectId" = ${projectId}
     ),
     answers AS (
-      SELECT row_number() OVER () AS id, answer FROM stored WHERE jsonb_typeof(answer) = 'object'
+      SELECT row_number() OVER () AS id, answer, history
+      FROM stored WHERE jsonb_typeof(answer) = 'object'
     ),
     names AS (
-      SELECT a.id, 'labels' AS source, e.value #>> '{}' AS name
+      SELECT a.id, a.history, 'labels' AS source, e.value #>> '{}' AS name
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'labels'`)}) e
       WHERE jsonb_typeof(e.value) = 'string'
       UNION
-      SELECT a.id, 'spans', e.value->>'label'
+      SELECT a.id, a.history, 'spans', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'spans'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
       UNION
-      SELECT a.id, 'boxes', e.value->>'label'
+      SELECT a.id, a.history, 'boxes', e.value->>'label'
       FROM answers a
       CROSS JOIN LATERAL jsonb_array_elements(${arrayAt(Prisma.sql`a.answer->'boxes'`)}) e
       WHERE jsonb_typeof(e.value->'label') = 'string'
@@ -177,6 +179,8 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
     UNION ALL
     SELECT 'name', name, count(DISTINCT id)::int FROM names GROUP BY name
     UNION ALL
+    SELECT 'goldHistory', name, count(DISTINCT id)::int FROM names WHERE history GROUP BY name
+    UNION ALL
     SELECT 'multiLabel', NULL, count(*)::int
     FROM (SELECT id FROM names WHERE source = 'labels' GROUP BY id HAVING count(*) > 1) multi
     UNION ALL
@@ -196,6 +200,8 @@ export async function schemaUsage(projectId: string, db: Db = prisma): Promise<S
     tasks: total('tasks'),
     answers: total('answers'),
     names: byName('name'),
+    // only there when a gold task's history holds a name
+    ...(byName('goldHistory').size > 0 ? { goldHistory: byName('goldHistory') } : {}),
     multiLabel: total('multiLabel'),
     ties: total('ties'),
     scored: total('scored'),
