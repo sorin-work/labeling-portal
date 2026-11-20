@@ -169,7 +169,7 @@ export async function submitAssignment(
   // gold tasks are scored against their known answer instead of being reviewed
   const task = await prisma.task.findUniqueOrThrow({
     where: { id: found.assignment.taskId },
-    include: { project: { select: { schema: true } } },
+    include: { project: { select: { schema: true, rateCents: true, payMode: true } } },
   });
   let goldScore: number | null = null;
   if (task.isGold && task.goldAnswer) {
@@ -188,6 +188,10 @@ export async function submitAssignment(
     data: {
       status: 'SUBMITTED',
       submittedAt: now,
+      // the rate is frozen here, in the write that submits the work: a later
+      // change of the project's rate does not reprice it
+      rateCents: task.project.rateCents,
+      payMode: task.project.payMode,
       answer: input.answer,
       goldScore,
       reviewStatus: input.reviewRequired && !task.isGold ? 'PENDING' : 'NOT_REQUIRED',

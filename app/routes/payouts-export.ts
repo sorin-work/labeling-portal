@@ -1,11 +1,15 @@
 import { toCsv } from '~/domain/csv';
+import { centsToDecimal } from '~/domain/payouts';
 import { requireRole } from '~/lib/auth.server';
 import { readRange } from '~/lib/dates';
 import { payoutReport } from '~/models/payouts.server';
 
 import type { Route } from './+types/payouts-export';
 
-/** CSV with one row per annotator and project, ready for a payroll import. */
+/**
+ * CSV with one row per annotator, project and rate, ready for a payroll
+ * import. A project whose rate changed within the range has one row per rate.
+ */
 export async function loader({ request }: Route.LoaderArgs) {
   const { membership } = await requireRole(request, ['ADMIN', 'PROJECT_MANAGER']);
   const range = readRange(new URL(request.url));
@@ -18,10 +22,10 @@ export async function loader({ request }: Route.LoaderArgs) {
       line.email,
       p.projectName,
       p.payMode === 'HOURLY' ? 'hourly' : 'per task',
-      (p.rateCents / 100).toFixed(2),
+      centsToDecimal(p.rateCents),
       p.tasks,
       (p.seconds / 3600).toFixed(2),
-      (p.amountCents / 100).toFixed(2),
+      centsToDecimal(p.amountCents),
     ]),
   );
   const csv = toCsv(
