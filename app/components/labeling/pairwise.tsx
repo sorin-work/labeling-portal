@@ -220,35 +220,51 @@ export function PairwiseRubric({
             </span>
           )}
         </legend>
+        {/* a real radio group, like the score rows: one tab stop, the arrows choose */}
         <div className="flex flex-wrap gap-2">
-          {preferences.map((p) => (
-            <button
-              key={p.value}
-              type="button"
-              aria-pressed={draft.preference === p.value}
-              disabled={readOnly}
-              onClick={() => update({ preference: p.value })}
-              className={cx(
-                'rounded-md px-3 py-1.5 text-sm font-medium ring-1',
-                draft.preference === p.value
-                  ? 'bg-indigo-600 text-white ring-indigo-600'
-                  : 'bg-white ring-slate-300 hover:bg-slate-50',
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
+          {preferences.map((p) => {
+            const chosen = draft.preference === p.value;
+            return (
+              <label key={p.value} className="relative">
+                <input
+                  type="radio"
+                  name={`${id}-preference`}
+                  value={p.value}
+                  checked={chosen}
+                  disabled={readOnly}
+                  onChange={() => update({ preference: p.value })}
+                  className="peer sr-only"
+                />
+                <span
+                  className={cx(
+                    'inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium ring-1',
+                    'peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-indigo-600',
+                    chosen ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white ring-slate-300',
+                    !readOnly && 'cursor-pointer',
+                    !readOnly && !chosen && 'hover:bg-slate-50',
+                  )}
+                >
+                  {p.label}
+                  {chosen && (
+                    <span aria-hidden className="ml-1.5">
+                      ✓
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
         </div>
       </fieldset>
       <div>
         <label
-          htmlFor="rationale"
+          htmlFor={`${id}-rationale`}
           className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500"
         >
           Rationale
         </label>
         <textarea
-          id="rationale"
+          id={`${id}-rationale`}
           rows={4}
           readOnly={readOnly}
           value={draft.rationale}
