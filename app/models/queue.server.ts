@@ -1,14 +1,12 @@
 import { Prisma, type Assignment, type PayMode, type Project } from '@prisma/client';
 
 import { clampActiveSeconds, creditTime, revisionCap, revisionSeconds } from '~/domain/active-time';
-import type { Answer } from '~/domain/answers';
-import { scoreAgainstGold } from '~/domain/gold';
-import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { payableSince } from '~/domain/payouts';
-import { parseTaskSchema } from '~/domain/task-schema';
+import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { prisma, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
+import { scoreGoldSubmission } from './gold.server';
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
@@ -34,17 +32,29 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
 }
 
 /**
- * SQL condition on task `t`: open, not part of the qualification test, not
- * already claimed, done or skipped by this annotator, and (unless it is a gold
- * task) with fewer live claims and submissions than `overlap`.
+ * SQL condition on task `t`: open, not part of the qualification test, not a
+ * retired gold task, not already claimed, done or skipped by this annotator,
+ * and (unless it is a gold task) with fewer live claims and submissions than
+ * `overlap`. A completed task and the gold tasks copied from it are one
+ * group: someone who has labeled, skipped or holds any task of the group gets
+ * none of the others, because seeing the same item twice would tell them it
+ * is gold.
  */
 function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     t.status = 'OPEN'
     AND NOT t."isQualification"
+    AND t."goldRetiredAt" IS NULL
     AND NOT EXISTS (
       SELECT 1 FROM "Assignment" mine
       WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
+        AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "Task" kin
+      JOIN "Assignment" mine ON mine."taskId" = kin.id
+      WHERE (kin.id = t."goldSourceId" OR kin."goldSourceId" = COALESCE(t."goldSourceId", t.id))
+        AND mine."userId" = ${userId}
         AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
     )
     AND (
@@ -247,17 +257,6 @@ export async function submitAssignment(
     where: { id: found.assignment.taskId },
     include: { project: { select: { schema: true, orgId: true } } },
   });
-  let goldScore: number | null = null;
-  if (task.isGold && task.goldAnswer) {
-    const schema = parseTaskSchema(task.project.schema);
-    if (schema.ok) {
-      goldScore = scoreAgainstGold(
-        schema.schema,
-        input.answer as Answer,
-        task.goldAnswer as Answer,
-      );
-    }
-  }
 
   // The sample is drawn here, once, and the outcome is stored. Nothing that
   // reads the submission later draws again.
@@ -283,6 +282,11 @@ export async function submitAssignment(
       now,
       creditedUntil: clock?.creditedUntil ?? null,
     });
+    // scored here, under a lock on the expected answer, so a manager's edit of
+    // it cannot fall between reading it and storing the score
+    const goldScore = task.isGold
+      ? await scoreGoldSubmission(tx, task.id, task.project.schema, input.answer)
+      : null;
     // The rate is frozen in the write that submits the work, and it is read
     // here, in the same transaction, holding the project row: a settings save
     // that changes the rate either waits for this submission or is seen by it.

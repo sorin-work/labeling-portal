@@ -30,20 +30,31 @@ export async function createBatch(
   });
 }
 
+/**
+ * A project's batches with their progress. Gold tasks and qualification
+ * questions never complete, so they are counted apart (as `projectProgress`
+ * does) and a batch that contains some can still read as done.
+ */
 export async function listBatches(projectId: string) {
   const [batches, counts] = await Promise.all([
     prisma.batch.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' } }),
     prisma.task.groupBy({
-      by: ['batchId', 'status'],
+      by: ['batchId', 'status', 'isGold', 'isQualification'],
       where: { projectId },
       _count: { _all: true },
     }),
   ]);
   return batches.map((batch) => {
     const mine = counts.filter((c) => c.batchId === batch.id);
-    const total = mine.reduce((sum, c) => sum + c._count._all, 0);
-    const complete = mine.find((c) => c.status === 'COMPLETE')?._count._all ?? 0;
-    return { ...batch, total, complete };
+    const sum = (rows: typeof mine) => rows.reduce((n, c) => n + c._count._all, 0);
+    const regular = mine.filter((c) => !c.isGold && !c.isQualification);
+    return {
+      ...batch,
+      total: sum(regular),
+      complete: sum(regular.filter((c) => c.status === 'COMPLETE')),
+      gold: sum(mine.filter((c) => c.isGold)),
+      qualification: sum(mine.filter((c) => c.isQualification)),
+    };
   });
 }
 

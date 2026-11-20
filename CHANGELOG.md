@@ -111,6 +111,26 @@ the period of its approval.
   into a scratch database and compares the row counts, and runs the daily
   loop and the pruning against made-up clocks
 
+- Gold tasks can be managed after import. A manager can change the expected
+  answer with a reason (the old answer, who, when and why are kept), see what
+  a rescore would change and apply it, retire a gold task and bring it back,
+  and make gold tasks from completed tasks, one by one or several from the
+  batch page. A rescore only changes gold scores: accepted work stays
+  accepted and paid, and past qualification attempts are not regraded
+- After submitting a gold task, annotators see their score and the expected
+  answer. A project setting, "gold feedback", controls it. It is on for new
+  projects and off for every project that exists when this is deployed,
+  because turning it on shows annotators the expected answers of the gold
+  tasks they have already submitted
+- Nothing on the work page tells a gold task from any other. The page no
+  longer gets any id of the task: it shows a short reference cut from the
+  claim's id in place of the external id, and managers find a task by that
+  reference on the task page and in the batch search. A gold copy is placed
+  among the open tasks of a batch that is being worked on and is never handed
+  to someone who labeled its original or an earlier copy
+- Quality page: the gold tasks with the lowest average score. Batch progress
+  no longer counts gold tasks and test questions, which never complete
+
 ### Fixes
 
 - A task could stay open for good with its overlap met when its last

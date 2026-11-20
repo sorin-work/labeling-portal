@@ -8,11 +8,13 @@ import {
   type TextClassificationSchema,
 } from './task-schema';
 
-/** The six places an answer is stored, in the order errors list them. */
+/** The seven places an answer is stored, in the order errors list them. */
 export const ANSWER_SOURCES = [
   'submission',
   'correction',
   'gold',
+  // the expected answers a gold task had before it was edited, kept for good
+  'goldHistory',
   'consensus',
   'dispute',
   'qualification',
@@ -28,9 +30,10 @@ export type AnswerCounts = Partial<Record<AnswerSource, number>>;
  *
  * "Stored answers" are submissions, reviewer corrections, gold answers,
  * consensus answers, the answer a dispute was about (once the submission has
- * moved on from it) and the answers of qualification attempts. Every count
- * says how many are in each of those places, so that an error can tell the
- * manager where to look.
+ * moved on from it), the expected answers a gold task had before it was
+ * edited, and the answers of qualification attempts. Every count says how
+ * many are in each of those places, so that an error can tell the manager
+ * where to look.
  */
 export type SchemaUsage = {
   /** Imported tasks, gold and qualification tasks included. */
@@ -96,6 +99,7 @@ const SOURCE_NAMES: Record<AnswerSource, [one: string, many: string]> = {
   submission: ['submission', 'submissions'],
   correction: ['reviewer correction', 'reviewer corrections'],
   gold: ['gold answer', 'gold answers'],
+  goldHistory: ['earlier gold answer', 'earlier gold answers'],
   consensus: ['consensus answer', 'consensus answers'],
   dispute: ['disputed answer', 'disputed answers'],
   qualification: ['qualification answer', 'qualification answers'],
@@ -187,11 +191,20 @@ function nameChanges(
       changes.push(safe(field, summary));
       continue;
     }
+    // Say when it is the history of a gold task that holds the name: that
+    // never goes away, so waiting or relabeling will not free it.
+    const kept = where.goldHistory ?? 0;
+    const history =
+      kept === 0
+        ? ''
+        : kept === used
+          ? `, ${kept === 1 ? 'which is' : 'all of them'} in the history of a gold task whose expected answer was changed; that history is kept for good`
+          : `, ${kept} of them in the history of a gold task whose expected answer was changed; that history is kept for good`;
     changes.push({
       field,
       impact: 'breaking',
       summary,
-      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it (${places(where)})`,
+      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it (${places(where)})${history}`,
       affected: used,
     });
   }

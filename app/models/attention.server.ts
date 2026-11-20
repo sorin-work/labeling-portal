@@ -41,7 +41,12 @@ export async function needsAttention(orgId: string, now = new Date()): Promise<A
     }),
     prisma.assignment.groupBy({
       by: ['projectId', 'userId'],
-      where: { projectId: { in: ids }, status: 'SUBMITTED', goldScore: { not: null } },
+      where: {
+        projectId: { in: ids },
+        status: 'SUBMITTED',
+        goldScore: { not: null },
+        task: { isGold: true, goldRetiredAt: null },
+      },
       _avg: { goldScore: true },
       _count: { _all: true },
     }),
