@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 
 import type { BboxAnswer, Box } from '~/domain/answers';
 import type { BboxSchema } from '~/domain/task-schema';
@@ -22,9 +22,17 @@ export function BoundingBoxes({
 }: LabelingProps<BboxSchema, BboxAnswer>) {
   const src = String(data[schema.imageField] ?? '');
   const imageRef = useRef<HTMLImageElement>(null);
-  const [size, setSize] = useState<{ w: number; h: number } | null>(
-    value ? { w: value.imageWidth, h: value.imageHeight } : null,
-  );
+  const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
+  // A cached image can finish loading before React is listening for onLoad
+  // (a reload), so ask the element as well. Until the image has been measured,
+  // an answer that is already there (a restored draft) knows the size.
+  useEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setMeasured({ w: image.naturalWidth, h: image.naturalHeight });
+    }
+  }, [src]);
+  const size = measured ?? (value ? { w: value.imageWidth, h: value.imageHeight } : null);
   const [active, setActive] = useRemembered(
     'labeling-portal:box-label',
     schema.labels[0],
@@ -143,7 +151,10 @@ export function BoundingBoxes({
           className="block max-h-[70vh] max-w-full"
           draggable={false}
           onLoad={(event) =>
-            setSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })
+            setMeasured({
+              w: event.currentTarget.naturalWidth,
+              h: event.currentTarget.naturalHeight,
+            })
           }
         />
         {size && (

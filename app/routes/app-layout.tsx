@@ -3,6 +3,7 @@ import { data, Form, Link, NavLink, Outlet } from 'react-router';
 import { Flash } from '~/components/flash';
 
 import { cx } from '~/components/ui';
+import { beforeSignOut } from '~/components/use-draft-save';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { consumeFlash } from '~/lib/flash.server';
@@ -88,7 +89,8 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             <div className="text-sm font-medium">{user.name}</div>
             <div className="text-xs text-slate-500">{ROLE_LABELS[role]}</div>
           </Link>
-          <Form method="post" action="/logout">
+          {/* saves the open task, then empties what this tab keeps for it */}
+          <Form method="post" action="/logout" onSubmit={beforeSignOut}>
             <button className="text-sm text-slate-500 hover:text-slate-800">Sign out</button>
           </Form>
         </div>
