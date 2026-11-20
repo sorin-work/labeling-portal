@@ -37,6 +37,8 @@ export const ACTIVITY_ACTIONS = {
   'person.password': 'Password set by an admin',
   'person.removed': 'Person removed',
   'account.password': 'Own password changed',
+  'token.created': 'API token made',
+  'token.revoked': 'API token revoked',
   'auth.signed_in': 'Signed in',
   'auth.locked': 'Sign-in locked',
   'export.labels': 'Labels downloaded',
@@ -210,7 +212,7 @@ export function describeActivity(action: string, detail: unknown): string {
     case 'project.duplicated':
       return 'made a copy of this project';
     case 'batch.imported':
-      return `imported ${String(d.tasks)} tasks as “${String(d.name)}”${d.qualification ? ' (qualification test)' : ''}`;
+      return `imported ${String(d.tasks)} tasks as “${String(d.name)}”${d.qualification ? ' (qualification test)' : ''}${d.via === 'api' ? ' through the API' : ''}`;
     case 'batch.deleted':
       return `deleted ${typeof d.name === 'string' ? `the batch “${d.name}” of` : 'a batch of'} ${plural(d.tasks, 'task')}`;
     case 'batch.priority':
@@ -265,12 +267,16 @@ export function describeActivity(action: string, detail: unknown): string {
       return `removed ${who} from the organisation`;
     case 'account.password':
       return 'changed their own password';
+    case 'token.created':
+      return `made the ${d.readOnly === false ? 'read and write' : 'read-only'} API token “${String(d.name)}” (${String(d.prefix)}…)`;
+    case 'token.revoked':
+      return `revoked the API token “${String(d.name)}” (${String(d.prefix)}…)`;
     case 'auth.signed_in':
       return 'signed in';
     case 'auth.locked':
       return 'was locked out of signing in after too many failed attempts';
     case 'export.labels':
-      return `downloaded the labels${project} as ${String(d.format)}${d.batch ? ', one batch' : ''}${d.annotators === 'email' ? ', with email addresses' : ''}`;
+      return `downloaded the labels${project} as ${String(d.format)}${d.batch ? ', one batch' : ''}${d.annotators === 'email' ? ', with email addresses' : ''}${d.via === 'api' ? ', through the API' : ''}`;
     case 'export.quality':
       return `downloaded the quality table${project}`;
     case 'export.payouts':

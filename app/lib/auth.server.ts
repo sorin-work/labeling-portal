@@ -3,7 +3,9 @@ import { redirect } from 'react-router';
 
 import { prisma } from './db.server';
 import { verifyPassword } from './password.server';
+import { RateLimiter } from './rate-limit.server';
 import { getSession } from './session.server';
+import { hashToken, TOKEN_PREFIX } from './tokens.server';
 
 export type CurrentUser = {
   user: Pick<User, 'id' | 'email' | 'name'>;
@@ -53,4 +55,81 @@ export async function requireRole(request: Request, roles: Role[]): Promise<Curr
     throw new Response('You do not have access to this page.', { status: 403 });
   }
   return current;
+}
+
+/** What a request to the JSON API needs: reading, or writing too. */
+export type ApiAccess = 'read' | 'write';
+
+export type ApiUser = CurrentUser & { token: { id: string; readOnly: boolean } };
+
+/** An error of the JSON API: always JSON, never a redirect or a page. */
+export function apiError(status: number, error: string, headers?: HeadersInit): Response {
+  return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store', ...headers } });
+}
+
+/** 120 requests a minute per token, in memory and per process like the sign-in limiter. */
+export const apiLimiter = new RateLimiter(120, 60_000);
+
+/** `lastUsedAt` is written at most this often, so a read is not a write every time. */
+const LAST_USED_EVERY_MS = 60_000;
+
+/**
+ * Who a request to the JSON API is, from its `Authorization: Bearer` token.
+ * The only place a token is read: pages never look at the header, and this
+ * never looks at the session cookie, so the two ways in stay apart. It
+ * answers JSON 401 for no token or one that is unknown, revoked or expired
+ * or whose person has left the organisation, 403 when a read-only token is
+ * used for `write`, and 429 past the per-token limit. The role is the
+ * membership's as it is now, read on every request as for the pages, so the
+ * same `requireProject` and `can` checks apply.
+ */
+export async function requireApiUser(
+  request: Request,
+  access: ApiAccess,
+  now = new Date(),
+): Promise<ApiUser> {
+  const header = request.headers.get('Authorization') ?? '';
+  const match = /^Bearer\s+(\S+)$/i.exec(header);
+  if (!match || !match[1].startsWith(TOKEN_PREFIX)) {
+    throw apiError(401, 'An API token is needed: Authorization: Bearer lp_...', {
+      'WWW-Authenticate': 'Bearer',
+    });
+  }
+  const token = await prisma.apiToken.findUnique({ where: { tokenHash: hashToken(match[1]) } });
+  if (!token || token.revokedAt !== null || (token.expiresAt !== null && token.expiresAt <= now)) {
+    throw apiError(401, 'The token is unknown, revoked or expired.', {
+      'WWW-Authenticate': 'Bearer error="invalid_token"',
+    });
+  }
+  const membership = await prisma.membership.findUnique({
+    where: { orgId_userId: { orgId: token.orgId, userId: token.userId } },
+    include: { user: { select: { id: true, email: true, name: true } } },
+  });
+  if (!membership)
+    throw apiError(401, 'The token belongs to someone who has left the organisation.');
+  const limit = apiLimiter.hit(token.id, now.getTime());
+  if (!limit.allowed) {
+    throw apiError(429, 'Too many requests with this token.', {
+      'Retry-After': String(limit.retryAfterSeconds),
+    });
+  }
+  if (access === 'write' && token.readOnly) {
+    throw apiError(403, 'This token is read-only.');
+  }
+  await prisma.apiToken.updateMany({
+    where: {
+      id: token.id,
+      OR: [
+        { lastUsedAt: null },
+        { lastUsedAt: { lt: new Date(now.getTime() - LAST_USED_EVERY_MS) } },
+      ],
+    },
+    data: { lastUsedAt: now },
+  });
+  const { user, ...rest } = membership;
+  return {
+    user,
+    membership: { id: rest.id, orgId: rest.orgId, role: rest.role },
+    token: { id: token.id, readOnly: token.readOnly },
+  };
 }
