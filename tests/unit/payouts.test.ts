@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  amountCents,
+  centsToDecimal,
   computePayouts,
+  divideRounded,
   formatCents,
   parseMoney,
-  amountCents,
+  payableAt,
   type PaidWork,
 } from '~/domain/payouts';
 
@@ -20,6 +23,26 @@ const work = (overrides: Partial<PaidWork>): PaidWork => ({
   ...overrides,
 });
 
+describe('divideRounded', () => {
+  it('rounds to the nearest whole, a half going up', () => {
+    expect(divideRounded(0, 3600)).toBe(0);
+    expect(divideRounded(7200, 3600)).toBe(2);
+    expect(divideRounded(1799, 3600)).toBe(0);
+    expect(divideRounded(1800, 3600)).toBe(1);
+    expect(divideRounded(5399, 3600)).toBe(1);
+    expect(divideRounded(5400, 3600)).toBe(2);
+  });
+
+  it('stays exact where a float would not', () => {
+    // 0.1 + 0.2 style traps: these are whole cents all the way
+    expect(divideRounded(1005, 10)).toBe(101);
+    expect(divideRounded(35, 10)).toBe(4);
+    // a year of hourly work at $95.37/h, to the cent
+    expect(divideRounded(9537 * 7_488_000, 3600)).toBe(19_836_960);
+    expect(Number.isInteger(divideRounded(9537 * 7_488_001, 3600))).toBe(true);
+  });
+});
+
 describe('amountCents', () => {
   it('pays the flat rate per task', () => {
     expect(amountCents('PER_TASK', 40, 3, 9999)).toBe(120);
@@ -28,6 +51,44 @@ describe('amountCents', () => {
   it('pays hourly work by the second', () => {
     expect(amountCents('HOURLY', 1800, 1, 3600)).toBe(1800);
     expect(amountCents('HOURLY', 1800, 2, 1800)).toBe(900);
+  });
+
+  it('rounds an hourly amount to the nearest cent, half a cent going up', () => {
+    // $18/h is half a cent per second
+    expect(amountCents('HOURLY', 1800, 1, 60)).toBe(30);
+    expect(amountCents('HOURLY', 1800, 1, 61)).toBe(31);
+    expect(amountCents('HOURLY', 1800, 1, 1)).toBe(1);
+    // $17/h for 7 seconds is 3.3 cents
+    expect(amountCents('HOURLY', 1700, 1, 7)).toBe(3);
+    expect(amountCents('HOURLY', 0, 4, 9000)).toBe(0);
+  });
+});
+
+describe('payableAt', () => {
+  const submittedAt = new Date('2026-03-30T10:00:00Z');
+  const reviewedAt = new Date('2026-04-02T09:00:00Z');
+
+  it('is the review for work a reviewer approved or fixed', () => {
+    expect(payableAt({ reviewStatus: 'APPROVED', submittedAt, reviewedAt })).toBe(reviewedAt);
+    expect(payableAt({ reviewStatus: 'FIXED', submittedAt, reviewedAt })).toBe(reviewedAt);
+  });
+
+  it('is the submission for work that needed no review', () => {
+    expect(payableAt({ reviewStatus: 'NOT_REQUIRED', submittedAt, reviewedAt: null })).toBe(
+      submittedAt,
+    );
+  });
+
+  it('is nothing while work waits for review or was sent back', () => {
+    expect(payableAt({ reviewStatus: 'PENDING', submittedAt, reviewedAt: null })).toBeNull();
+    expect(payableAt({ reviewStatus: 'SENT_BACK', submittedAt, reviewedAt })).toBeNull();
+    expect(payableAt({ reviewStatus: null, submittedAt: null, reviewedAt: null })).toBeNull();
+  });
+
+  it('falls back to the submission when an accepted row has no review date', () => {
+    expect(payableAt({ reviewStatus: 'APPROVED', submittedAt, reviewedAt: null })).toBe(
+      submittedAt,
+    );
   });
 });
 
@@ -61,6 +122,65 @@ describe('computePayouts', () => {
     expect(lines[0].amountCents).toBe(92);
   });
 
+  it('keeps work under different rates of one project apart', () => {
+    // the project paid 25 cents a task, then 40
+    const { lines, totalCents } = computePayouts([
+      work({ rateCents: 40 }),
+      work({ rateCents: 25 }),
+      work({ rateCents: 25 }),
+      work({ rateCents: 40 }),
+      work({ rateCents: 40 }),
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].projects.map((p) => [p.rateCents, p.tasks, p.amountCents])).toEqual([
+      [25, 2, 50],
+      [40, 3, 120],
+    ]);
+    expect(lines[0]).toMatchObject({ tasks: 5, amountCents: 170 });
+    expect(totalCents).toBe(170);
+  });
+
+  it('keeps per-task and hourly work of one project apart', () => {
+    const { lines } = computePayouts([
+      work({ payMode: 'HOURLY', rateCents: 1800, activeSeconds: 600 }),
+      work({ payMode: 'PER_TASK', rateCents: 1800 }),
+    ]);
+    expect(lines[0].projects.map((p) => [p.payMode, p.amountCents])).toEqual([
+      ['HOURLY', 300],
+      ['PER_TASK', 1800],
+    ]);
+  });
+
+  it('rounds each block once, so a rate change can move the total by a cent', () => {
+    const hourly = (rateCents: number) => work({ payMode: 'HOURLY', rateCents, activeSeconds: 61 });
+    // one block: 2 x 61s at $18/h is exactly 61 cents
+    expect(computePayouts([hourly(1800), hourly(1800)]).totalCents).toBe(61);
+    // two blocks: 30.5 and 31.52 cents, each rounded by itself, make 63 and not 62
+    const { lines, totalCents } = computePayouts([hourly(1800), hourly(1860)]);
+    expect(lines[0].projects.map((p) => p.amountCents)).toEqual([31, 32]);
+    expect(lines[0].amountCents).toBe(63);
+    expect(totalCents).toBe(63);
+  });
+
+  it('adds whole cents only', () => {
+    const { lines, totalCents } = computePayouts(
+      Array.from({ length: 1000 }, (_, i) =>
+        work({
+          userId: `u${i % 7}`,
+          name: `P${i % 7}`,
+          payMode: 'HOURLY',
+          rateCents: 1799 + (i % 3),
+          activeSeconds: 37 + i,
+        }),
+      ),
+    );
+    expect(lines.every((l) => Number.isInteger(l.amountCents))).toBe(true);
+    expect(lines.flatMap((l) => l.projects).every((p) => Number.isInteger(p.amountCents))).toBe(
+      true,
+    );
+    expect(totalCents).toBe(lines.reduce((sum, l) => sum + l.amountCents, 0));
+  });
+
   it('returns nothing for no work', () => {
     expect(computePayouts([])).toEqual({ lines: [], totalCents: 0 });
   });
@@ -69,6 +189,25 @@ describe('computePayouts', () => {
 describe('money helpers', () => {
   it('formats cents', () => {
     expect(formatCents(123456)).toBe('$1,234.56');
+    expect(formatCents(0)).toBe('$0.00');
+    expect(formatCents(5)).toBe('$0.05');
+    expect(formatCents(100)).toBe('$1.00');
+    expect(formatCents(99999)).toBe('$999.99');
+    expect(formatCents(100000000)).toBe('$1,000,000.00');
+    expect(formatCents(-150)).toBe('-$1.50');
+  });
+
+  it('writes cents as a decimal number without going through a float', () => {
+    expect(centsToDecimal(0)).toBe('0.00');
+    expect(centsToDecimal(5)).toBe('0.05');
+    expect(centsToDecimal(35)).toBe('0.35');
+    expect(centsToDecimal(1250)).toBe('12.50');
+    expect(centsToDecimal(100000)).toBe('1000.00');
+    expect(centsToDecimal(-5)).toBe('-0.05');
+    // every amount survives the trip through the settings form
+    for (const cents of [1, 7, 10, 29, 57, 110, 1005, 1999, 123457]) {
+      expect(parseMoney(centsToDecimal(cents))).toBe(cents);
+    }
   });
 
   it('parses money input', () => {
