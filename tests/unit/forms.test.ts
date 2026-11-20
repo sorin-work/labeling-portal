@@ -61,6 +61,7 @@ describe('parseProjectForm', () => {
         reviewRequired: true,
         reviewSamplePercent: 100,
         disputeWindowDays: 14,
+        goldFeedback: false,
         qualificationRequired: false,
         qualificationPassPercent: 75,
         payMode: 'HOURLY',
@@ -93,6 +94,11 @@ describe('parseProjectForm', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(Object.keys(result.errors)).toEqual(['disputeWindowDays']);
     }
+  });
+
+  it('reads the gold feedback checkbox', () => {
+    const on = parseProjectForm(form({ ...valid, goldFeedback: 'on' }));
+    expect(on.ok && on.value.goldFeedback).toBe(true);
   });
 
   it('reports each bad field', () => {

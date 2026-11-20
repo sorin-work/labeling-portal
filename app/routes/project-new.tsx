@@ -54,6 +54,7 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         disputeWindowDays: Number.isFinite(disputeWindow)
           ? disputeWindow
           : DEFAULT_DISPUTE_WINDOW_DAYS,
+        goldFeedback: values.goldFeedback === 'on',
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
         payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),
