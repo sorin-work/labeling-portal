@@ -298,7 +298,9 @@ meanings on one page.
 - **Label keys** skip the letters that mean something else somewhere (`a`,
   `e`, `s` on the pages, `f`, `n` and `r` in the box interface), on every
   page, so a label always has the same key. That leaves thirty keys, as many
-  as a schema may have labels.
+  as a schema may have labels. `r` joined the list with box editing, so
+  labels 24 to 30 moved one letter on: they were `r` to `y` and are now `t`
+  to `z`.
 - **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
   browser and to screen readers; the exceptions are Ctrl or Cmd with Enter and
   with Z, which the browser only uses inside text boxes. A key that is held
@@ -348,13 +350,17 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
   convert at any zoom and position, and the picture is shown with one CSS
   transform (`viewTransform`). Zoom and position are kept for the session
   under the assignment's id (`viewKey`) and never reach the draft or the
-  answer.
+  answer. Coordinates are kept to a tenth of a pixel and inside the image
+  (`storedBox`). The component stores every box that way, and `validateBbox`
+  and the draft reader compare the minimum size on the same rounded box, so a
+  box the interface keeps is never refused or dropped as too small.
 - **What a press does** is decided by `hitTest` and `pointerIntent`. The
   handles of the selected box come first. Of the boxes under the pointer the
   smallest wins, so a box inside a larger one can always be reached, and of
   two equally large ones the topmost. A press on a handle resizes, on a box
   moves, on the background draws. With Space held or the middle button it
-  moves the view.
+  moves the view. Handles, lines, labels and the reach of a press are sized
+  in screen pixels, whatever the size of the image and the zoom.
 - **A drag** starts only after four screen pixels, so a click never moves a
   box. While it lasts the component shows a preview, and the answer changes
   once, when the drag ends, so the draft autosave never sees a half dragged
@@ -362,7 +368,10 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
   pixels outside the picture put the box back; inside that margin it stops
   at the edge. `moveBox` keeps a box inside the image, `resizeBox` flips it
   when a handle is dragged past the opposite side, and neither lets it get
-  smaller than the schema's `minBoxSize`.
+  smaller than the schema's `minBoxSize`. The drag is measured in the view it
+  started in, so zooming meanwhile does not make the box jump, and only the
+  view keys work while it lasts: a removal or an undo during a drag is
+  ignored.
 - **Without a pointer.** Every box can take focus, and the box that has focus
   is the selected one, so Tab walks through them. `n` puts a new box in the
   middle of the view. The arrow keys move the focused box by one image pixel,
