@@ -61,14 +61,25 @@ throws away twenty drawn boxes or a half-written rationale. The working time
 goes with it: `useActiveTime` starts again from zero, which on an hourly
 project is lost pay.
 
+The same state is also kept when it should go. `Work` is not remounted when
+"Submit and next" moves from one `/work/:assignmentId` to the next (only
+`LabelingInterface` has a `key`), so the next task opens with the previous
+task's answer still in `answer` and the submit button enabled, and the seconds
+counter runs on across tasks.
+
+- First, reset per assignment: render the body of the page under
+  `key={assignment.id}`, so `answer`, the skip form and `useActiveTime` start
+  fresh for every task. This fixes the carry-over that exists today, and the
+  rest of the item depends on it: without it the first autosave on a new task
+  would store the previous task's answer and seconds as the new draft.
 - Data: `draft Json?` and `draftSeconds Int @default(0)` on `Assignment`.
 - A new `intent=draft` branch in the `work.tsx` action, next to `extend`,
   `release` and `skip`. It calls a new `saveDraft` in `models/queue.server.ts`
   that uses the same `ownActive` check as the others and stores the seconds
   through `clampActiveSeconds`. It answers with JSON and does not redirect.
-- The loader returns the draft. The component starts `answer` from it, and
-  `useActiveTime` takes a starting value so the counter continues instead of
-  restarting.
+- The loader returns the draft. With the key in place the component starts
+  `answer` from it, and `useActiveTime` takes `draftSeconds` as a starting
+  value, so after a reload the counter continues instead of restarting.
 - The page saves through `useFetcher` a few seconds after the last change and
   when the tab is hidden, and shows "Draft saved" next to the working time.
 - Tricky: a draft is not a valid answer. A pairwise draft starts with
@@ -90,8 +101,11 @@ project is lost pay.
   the server: it follows the annotator to another device, it keeps the working
   time honest, and nothing is left behind on a shared computer.
 - Tests: next to the work route tests in `tests/integration/queue.test.ts`:
-  save and load again, seconds are clamped, cleared on submit, not found for
-  someone else's assignment, refused once the claim is no longer active.
+  save and load again, seconds are clamped, cleared on submit, the next
+  assignment's loader returns no draft, not found for someone else's
+  assignment, refused once the claim is no longer active. The reset between
+  tasks is component behaviour; a test for it has to wait for the DOM test
+  setup of item 8.
 
 ### 2. Safe schema edits once work exists
 
@@ -898,6 +912,11 @@ price: people accept what is already filled in.
   carry the suggestion.
 - The work loader (`routes/work.tsx`) sends the suggestion and the interface
   starts from it. A draft from item 1 wins when both exist.
+- That only works when the page starts fresh for each assignment. Today `Work`
+  is not remounted between tasks and `answer` carries over from the previous
+  one, so the next task's suggestion would never be shown. Item 1 fixes this
+  by rendering the page body under `key={assignment.id}`; if this item lands
+  first it has to do the same.
 - Never for gold or qualification tasks. A gold task with a suggestion either
   gives the answer away or tests whether people fix it, and neither is what
   gold accuracy means today.
