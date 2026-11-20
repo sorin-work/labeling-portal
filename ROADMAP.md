@@ -301,11 +301,19 @@ rate in the settings silently reprices every earlier month.
 - Tricky: hourly amounts are rounded once per block (`amountCents`). More
   blocks means the total can differ by a cent from before. State the rule on
   the page and test it.
-- Tricky: which date puts work into a period. The report goes by
-  `submittedAt`. So work approved in November still lands in October's total,
-  after October was paid, and `resubmitAssignment` resets `submittedAt`, which
-  moves revised work to a later period. Annotators will compare this page with
-  what they were paid, so it has to say which date it uses.
+- The date that puts work into a period changes. Today the report goes by
+  `submittedAt`, so work approved in November still lands in October's total
+  after October was paid. From now on work counts on the day it became
+  payable: `reviewedAt` for work a reviewer approved or fixed, and
+  `submittedAt` for work accepted without a review (`NOT_REQUIRED`: projects
+  with review off, gold tasks, and work that the sampling of item 4 lets
+  through). Both reports use this date, `payoutReport` with its CSV and the
+  new page, and both say so on the page. A period that was paid then never
+  changes afterwards. When item 9 overturns a send-back, that work becomes
+  payable at the time of the overturn, for the same reason.
+- Work that is waiting for review or was sent back has no such date yet.
+  `payoutReport` keeps counting it as `pending` by `submittedAt` in the range;
+  the earnings page lists all of it, whatever the range.
 - Tricky: time spent revising sent-back work is not counted at all.
   `routes/my-work-revise.tsx` posts no `activeSeconds` and
   `resubmitAssignment` does not touch them. On an hourly project that is
@@ -314,15 +322,15 @@ rate in the settings silently reprices every earlier month.
 - Tricky: gold tasks are paid like other work (`NOT_REQUIRED` is one of the
   `ACCEPTED_STATUSES`) and the qualification test is not. The page should say
   so, or people will count differently.
-- Undecided: switch both reports to the date the work was accepted
-  (`reviewedAt`, or `submittedAt` for work accepted without review). I lean
-  towards yes, because a period that was paid should not change afterwards.
 - Not in this item: marking a period as paid, bonuses and deductions, pay for
   reviewers (a `Review` records no time), currencies other than USD
   (`formatCents`, the `rate_usd` and `amount_usd` columns).
 - Tests: `tests/unit/payouts.test.ts` for the grouping by rate;
   `tests/integration/payouts.test.ts`: a rate change leaves earlier work
-  alone, an annotator sees only their own lines, revise time is counted.
+  alone, an annotator sees only their own lines, revise time is counted, and
+  work submitted in one month and approved in the next counts in the second.
+  The existing cases use a project without review, so they go by `submittedAt`
+  as before.
 
 ### 6. More import and export formats
 
@@ -493,6 +501,14 @@ often from people who do this work on the big platforms.
     `routes/task-detail.tsx`;
   - `Assignment.reviewStatus` becomes `APPROVED`, and `refreshTaskStatus`
     runs, because the consensus can change and the task may complete;
+  - pay goes by the day work became payable (item 5), which for reviewed work
+    is `reviewedAt`. An overturned send-back becomes payable at the overturn,
+    so `reviewedAt` is set to that time: the work shows in the current period
+    and never in one that was already paid. An overturned fix was accepted and
+    payable since the original review, so its `reviewedAt` stays; moving it
+    would take it out of a period that may be paid and pay it again. The
+    original decision, its reviewer and its date stay on the `Review` row and
+    on the `Dispute`;
   - `projectQuality` counts every review row (`reviewed`, `approved`,
     `sentBack`, QA scores) and `reviewerStats` counts decisions. Both leave
     overturned rows out. `myStats` groups by `reviewStatus` and follows.
@@ -511,8 +527,9 @@ often from people who do this work on the big platforms.
   project with two reviewers does not wait for a manager.
 - Tests: a new `tests/integration/disputes.test.ts` (who may open and resolve,
   an overturned fix restores the annotator's answer in the consensus and the
-  export, an overturned send-back completes the task, upheld changes nothing,
-  no revise while open) and `tests/unit/outcome.test.ts` for `finalAnswer`.
+  export, an overturned send-back completes the task and is payable from the
+  overturn, an overturned fix keeps its date, upheld changes nothing, no
+  revise while open) and `tests/unit/outcome.test.ts` for `finalAnswer`.
 
 ### 10. Gold tasks: add, fix and rescore
 
