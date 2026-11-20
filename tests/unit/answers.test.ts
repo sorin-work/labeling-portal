@@ -194,3 +194,30 @@ describe('parseAnswerJson', () => {
     expect(parseAnswerJson(null)).toBeNull();
   });
 });
+
+describe('image classification answers', () => {
+  const images = { ...SCHEMA_TEMPLATES.image_classification, multiple: true };
+
+  it('are checked like text classification', () => {
+    expect(validateAnswer(images, {}, { labels: ['usable', 'blurry'] })).toEqual({
+      ok: true,
+      answer: { labels: ['usable', 'blurry'] },
+    });
+    expect(validateAnswer(images, {}, { labels: ['cat'] })).toMatchObject({ ok: false });
+    expect(validateAnswer(SCHEMA_TEMPLATES.image_classification, {}, { labels: [] })).toMatchObject(
+      {
+        ok: false,
+      },
+    );
+  });
+
+  it('have no empty answer: an image without a fitting label is skipped', () => {
+    expect(emptyAnswer(images, { width: 10, height: 10 })).toBeNull();
+  });
+
+  it('score against gold by label overlap', () => {
+    expect(scoreAgainstGold(images, { labels: ['usable', 'blurry'] }, { labels: ['usable'] })).toBe(
+      0.5,
+    );
+  });
+});

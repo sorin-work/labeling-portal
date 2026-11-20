@@ -6,6 +6,7 @@ import {
   goldImpact,
   goldStanding,
   isGoldFlagged,
+  parseGold,
   parseGoldReason,
   rescore,
   sameAnswer,
@@ -272,5 +273,17 @@ describe('a label held by the history of a gold task', () => {
     expect(reason({ goldHistory: 3 })).toMatch(
       /use it \(3 earlier gold answers\), all of them in the history of a gold task/,
     );
+  });
+});
+
+describe('gold for image classification', () => {
+  it('reads the short form and describes the answer', () => {
+    const schema = { ...SCHEMA_TEMPLATES.image_classification, multiple: true };
+    expect(parseGold(schema, {}, 'usable|blurry')).toEqual({
+      ok: true,
+      answer: { labels: ['usable', 'blurry'] },
+    });
+    expect(describeGoldAnswer(schema, { labels: ['usable'] })).toBe('usable');
+    expect(scoreAgainstGold(schema, { labels: ['usable'] }, { labels: ['usable'] })).toBe(1);
   });
 });

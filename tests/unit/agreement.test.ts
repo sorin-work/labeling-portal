@@ -5,6 +5,7 @@ import {
   cohensKappa,
   describeKappa,
   fleissKappa,
+  isCategorical,
   pairwiseKappas,
 } from '~/domain/agreement';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
@@ -138,5 +139,25 @@ describe('describeKappa', () => {
     expect(describeKappa(0.65)).toBe('substantial');
     expect(describeKappa(0.95)).toBe('almost perfect');
     expect(describeKappa(null)).toBe('not enough data');
+  });
+});
+
+describe('categorical kinds', () => {
+  it('gives image classification a categorical value, so it gets kappa', () => {
+    const images = { ...SCHEMA_TEMPLATES.image_classification, multiple: true };
+    expect(categoricalValue(images, { labels: ['usable', 'blurry'] })).toBe('blurry|usable');
+    expect(isCategorical(images)).toBe(true);
+  });
+
+  it('names every kind: spans and boxes have none and use F1', () => {
+    expect(categoricalValue(SCHEMA_TEMPLATES.ner, { spans: [] })).toBeNull();
+    expect(
+      categoricalValue(SCHEMA_TEMPLATES.bbox, { boxes: [], imageWidth: 1, imageHeight: 1 }),
+    ).toBeNull();
+    expect(
+      Object.values(SCHEMA_TEMPLATES)
+        .filter(isCategorical)
+        .map((s) => s.kind),
+    ).toEqual(['text_classification', 'image_classification', 'pairwise']);
   });
 });

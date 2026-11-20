@@ -580,3 +580,29 @@ describe('a gold answer in a re-imported csv export', () => {
     expect(result.rows.map((row) => row.line)).toEqual([5]);
   });
 });
+
+describe('image classification imports', () => {
+  const images = SCHEMA_TEMPLATES.image_classification;
+
+  it('follow the same rule for image addresses as boxes', () => {
+    expect(
+      parseImport('{"image_url":"https://cdn.example.test/a.jpg"}', 'JSONL', images).errors,
+    ).toEqual([]);
+    expect(parseImport('{"image_url":"/demo/street-1.svg"}', 'JSONL', images).errors).toEqual([]);
+    for (const address of ['http://10.0.0.5/a.jpg', 'javascript:alert(1)', 'a.jpg']) {
+      expect(parseImport(JSON.stringify({ image_url: address }), 'JSONL', images).errors).toEqual([
+        { line: 1, message: 'image_url must be a public http(s) URL or a path starting with /' },
+      ]);
+    }
+    expect(
+      parseImport('{"image_url":"http://10.0.0.5/a.jpg"}', 'JSONL', images, {
+        internalImageHosts: ['10.0.0.5'],
+      }).errors,
+    ).toEqual([]);
+  });
+
+  it('read a gold label in the short form', () => {
+    const row = '{"image_url":"/demo/street-1.svg","_gold":"usable"}';
+    expect(parseImport(row, 'JSONL', images).rows[0].gold).toEqual({ labels: ['usable'] });
+  });
+});

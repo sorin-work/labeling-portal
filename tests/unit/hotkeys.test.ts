@@ -39,6 +39,7 @@ const SCHEMAS: TaskSchema[] = [
   { ...SCHEMA_TEMPLATES.ner, entities: names(20).map((name) => ({ name })) },
   { ...SCHEMA_TEMPLATES.pairwise, allowTie: true },
   { ...SCHEMA_TEMPLATES.bbox, labels: names(30) },
+  { ...SCHEMA_TEMPLATES.image_classification, labels: names(30) },
 ];
 const [classification, , pairwise, boxes] = SCHEMAS;
 

@@ -310,6 +310,7 @@ describe('the table of formats', () => {
     ]);
     const names = (kind: SchemaKind) => exportFormatsFor(kind).map((f) => f.name);
     expect(names('text_classification')).toEqual(['jsonl', 'csv']);
+    expect(names('image_classification')).toEqual(['jsonl', 'csv']);
     expect(names('pairwise')).toEqual(['jsonl', 'csv']);
     expect(names('ner')).toEqual(['jsonl', 'csv', 'conll']);
     expect(names('bbox')).toEqual(['jsonl', 'csv', 'coco', 'yolo', 'voc']);
@@ -590,6 +591,16 @@ describe('importing an export again', () => {
       data: [{ id: 'r-1', text: 'Fine, "mostly"', source: 'web' }, { text: 'No id, two\nlines' }],
       consensus: { labels: ['positive', 'neutral'] },
       gold: { labels: ['positive', 'neutral'] },
+    },
+    {
+      name: 'image classification',
+      schema: { ...SCHEMA_TEMPLATES.image_classification, multiple: true },
+      data: [
+        { id: 'photo-1', image_url: 'https://cdn.example.test/p.jpg', width: 800 },
+        { id: 'photo-2', image_url: '/demo/street-2.svg' },
+      ],
+      consensus: { labels: ['usable', 'blurry'] },
+      gold: { labels: ['usable', 'blurry'] },
     },
     {
       name: 'named entities',

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseTaskSchema, requiredFields, SCHEMA_TEMPLATES } from '~/domain/task-schema';
+import {
+  isImageKind,
+  mainField,
+  parseTaskSchema,
+  requiredFields,
+  SCHEMA_TEMPLATES,
+} from '~/domain/task-schema';
 
 describe('parseTaskSchema', () => {
   it('accepts every built-in template', () => {
@@ -82,5 +88,32 @@ describe('requiredFields', () => {
       'response_b',
     ]);
     expect(requiredFields(SCHEMA_TEMPLATES.bbox)).toEqual(['image_url']);
+  });
+});
+
+describe('image classification', () => {
+  it('needs an image field and two labels, and fills `multiple`', () => {
+    expect(
+      parseTaskSchema({ kind: 'image_classification', imageField: 'url', labels: ['a', 'b'] }),
+    ).toEqual({
+      ok: true,
+      schema: {
+        kind: 'image_classification',
+        imageField: 'url',
+        labels: ['a', 'b'],
+        multiple: false,
+      },
+    });
+    expect(
+      parseTaskSchema({ kind: 'image_classification', imageField: 'url', labels: ['a'] }),
+    ).toMatchObject({ ok: false });
+    expect(requiredFields(SCHEMA_TEMPLATES.image_classification)).toEqual(['image_url']);
+  });
+
+  it('names the image as the field that stands for a task, as boxes do', () => {
+    expect(mainField(SCHEMA_TEMPLATES.image_classification)).toBe('image_url');
+    expect(mainField(SCHEMA_TEMPLATES.text_classification)).toBe('text');
+    expect(isImageKind(SCHEMA_TEMPLATES.image_classification)).toBe(true);
+    expect(isImageKind(SCHEMA_TEMPLATES.ner)).toBe(false);
   });
 });

@@ -210,3 +210,12 @@ describe('consensus edge cases', () => {
     expect(bboxConsensus([empty, empty]).agreement).toBe(1);
   });
 });
+
+describe('image classification consensus', () => {
+  it('is the classification consensus', () => {
+    const answers = [{ labels: ['usable'] }, { labels: ['usable'] }, { labels: ['blurry'] }];
+    expect(consensus(SCHEMA_TEMPLATES.image_classification, answers)).toEqual(
+      classificationConsensus(answers, false),
+    );
+  });
+});

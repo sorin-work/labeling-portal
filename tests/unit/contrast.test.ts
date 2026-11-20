@@ -67,7 +67,7 @@ const SURFACES = ['white', 'slate-50'];
  */
 const ON_PARENT: Array<{ file: string; text: string; on: string[]; where: string }> = [
   {
-    file: 'app/components/labeling/text-classification.tsx',
+    file: 'app/components/labeling/label-choices.tsx',
     text: 'indigo-100',
     on: ['indigo-600'],
     where: 'the key cap on a chosen label',
