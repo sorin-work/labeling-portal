@@ -28,6 +28,8 @@ or fix the work.
 - **Export** of finished labels as JSONL, CSV or COCO (box projects)
 - Activity log, needs-attention list for managers, demo data
 
+Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
+
 ## Stack
 
 | Part    | Tech                                                                                              |
@@ -118,7 +120,8 @@ docs/            architecture, routes, import/export formats, quality metrics
 More detail: [architecture](docs/architecture.md),
 [routes and permissions](docs/routes.md),
 [import and export formats](docs/import-export.md),
-[quality metrics](docs/quality.md).
+[quality metrics](docs/quality.md). What might come next:
+[roadmap](ROADMAP.md).
 
 ## Troubleshooting
 
