@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
 import { claimNextTask, submitAssignment } from '~/models/queue.server';
+import { reserveNextReview } from '~/models/reviews.server';
 import { action as reviseAction } from '~/routes/my-work-revise';
 import { loader as myWorkLoader } from '~/routes/my-work';
 import { action as reviewAction, loader as reviewLoader } from '~/routes/review';
-import { loader as queueLoader } from '~/routes/project-review';
+import { action as queueAction, loader as queueLoader } from '~/routes/project-review';
 import { loader as taskLoader } from '~/routes/task-detail';
 import { action as workAction } from '~/routes/work';
 
@@ -578,5 +579,185 @@ describe('review sampling', () => {
     const saved = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.assignment.id } });
     expect(saved).toMatchObject({ reviewStatus: 'NOT_REQUIRED', reviewSample: 'NOT_DRAWN' });
     expect(await taskStatus(task.id)).toBe('COMPLETE');
+  });
+});
+
+describe('reviewer reservations', () => {
+  beforeEach(resetDb);
+
+  /** One annotator with `count` submissions waiting, oldest first, and some reviewers. */
+  async function waiting(count: number, reviewers = 2) {
+    const org = await createOrg();
+    const project = await createTestProject(org.id);
+    await createTasks(
+      project.id,
+      Array.from({ length: count }, (_, i) => ({ text: `task ${i}` })),
+    );
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, ann);
+    const submissions = [];
+    for (let i = 0; i < count; i++) {
+      const now = new Date(Date.now() - (count - i) * 60 * 60_000);
+      submissions.push(await submitWork(project, ann.id, { labels: ['positive'] }, { now }));
+    }
+    const people = [];
+    for (let i = 0; i < reviewers; i++) {
+      const user = await createMember(org.id, 'REVIEWER', { name: `Reviewer ${i + 1}` });
+      people.push({ user, cookie: await cookieFor(user, org.id) });
+    }
+    await addToProject(project.id, ...people.map((p) => p.user));
+    return { org, project, ann, submissions, reviewers: people };
+  }
+
+  const start = (projectId: string, cookie: string) =>
+    run(queueAction, makeRequest(`/projects/${projectId}/review`, { cookie, form: {} }), {
+      projectId,
+    });
+  const post = (id: string, cookie: string, form: Record<string, string>) =>
+    run(reviewAction, makeRequest(`/review/${id}`, { cookie, form }), { assignmentId: id });
+  const holderOf = async (id: string) =>
+    (await prisma.assignment.findUniqueOrThrow({ where: { id } })).reviewHeldById;
+
+  it('gives reviewers who ask at the same moment different submissions', async () => {
+    const { project, submissions, reviewers } = await waiting(3, 5);
+
+    const taken = await Promise.all(reviewers.map((r) => reserveNextReview(project.id, r.user.id)));
+
+    const ids = taken.filter((t) => t !== null).map((t) => t.id);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids)).toEqual(new Set(submissions.map((s) => s.id)));
+    const holders = await Promise.all(submissions.map((s) => holderOf(s.id)));
+    expect(new Set(holders).size).toBe(3);
+  });
+
+  it('reserves on "Start reviewing", which is a POST', async () => {
+    const { project, submissions, reviewers } = await waiting(2);
+    const [first, second] = reviewers;
+
+    // the old link no longer does anything
+    const viewed = await run(
+      queueLoader,
+      makeRequest(`/projects/${project.id}/review?next=1`, { cookie: first.cookie }),
+      { projectId: project.id },
+    );
+    expect(statusOf(viewed)).toBe(200);
+    expect(await holderOf(submissions[0].id)).toBeNull();
+
+    expect(locationOf(await start(project.id, first.cookie))).toBe(`/review/${submissions[0].id}`);
+    expect(locationOf(await start(project.id, second.cookie))).toBe(`/review/${submissions[1].id}`);
+    // asking again brings a reviewer back to what they hold
+    expect(locationOf(await start(project.id, first.cookie))).toBe(`/review/${submissions[0].id}`);
+    expect(await holderOf(submissions[0].id)).toBe(first.user.id);
+    expect(await holderOf(submissions[1].id)).toBe(second.user.id);
+
+    const list = await run(
+      queueLoader,
+      makeRequest(`/projects/${project.id}/review`, { cookie: second.cookie }),
+      { projectId: project.id },
+    );
+    expect(payload<{ pending: Array<{ heldBy: string | null }> }>(list).pending).toMatchObject([
+      { heldBy: 'Reviewer 1' },
+      { heldBy: 'You' },
+    ]);
+  });
+
+  it('lets a hold lapse after fifteen minutes', async () => {
+    const { project, ann, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+    const after = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+
+    expect(await reserveNextReview(project.id, first.user.id, t0)).toEqual({
+      id: submissions[0].id,
+    });
+    const held = await prisma.assignment.findUniqueOrThrow({ where: { id: submissions[0].id } });
+    expect(held.reviewHeldAt).toEqual(t0);
+    expect(await reserveNextReview(project.id, second.user.id, after(14))).toBeNull();
+    expect(await reserveNextReview(project.id, second.user.id, after(15))).toEqual({
+      id: submissions[0].id,
+    });
+    expect(await holderOf(submissions[0].id)).toBe(second.user.id);
+    // and nobody is handed their own work
+    expect(await reserveNextReview(project.id, ann.id, after(60))).toBeNull();
+  });
+
+  it('stores the hold in UTC whatever time zone the database session uses', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const t0 = new Date('2026-06-01T09:00:00Z');
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'America/New_York'`);
+      await reserveNextReview(project.id, first.user.id, t0, tx);
+      const tooEarly = new Date(t0.getTime() + 14 * 60_000);
+      expect(await reserveNextReview(project.id, second.user.id, tooEarly, tx)).toBeNull();
+    });
+
+    const held = await prisma.assignment.findUniqueOrThrow({ where: { id: submissions[0].id } });
+    expect(held).toMatchObject({ reviewHeldById: first.user.id, reviewHeldAt: t0 });
+  });
+
+  it('refuses a decision on a submission another reviewer holds', async () => {
+    const { project, submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+    await start(project.id, first.cookie);
+
+    const refused = await post(id, second.cookie, { intent: 'approve' });
+    expect(statusOf(refused)).toBe(409);
+    expect(payload<{ error: string }>(refused).error).toMatch(/reserved/);
+    expect(await prisma.review.count()).toBe(0);
+    const page = await run(reviewLoader, makeRequest(`/review/${id}`, { cookie: second.cookie }), {
+      assignmentId: id,
+    });
+    expect(payload<{ hold: { reviewer: string; mine: boolean } }>(page).hold).toMatchObject({
+      reviewer: 'Reviewer 1',
+      mine: false,
+    });
+
+    // once the hold is older than fifteen minutes anyone may decide
+    await prisma.assignment.update({
+      where: { id },
+      data: { reviewHeldAt: new Date(Date.now() - 16 * 60_000) },
+    });
+    expect(statusOf(await post(id, second.cookie, { intent: 'approve' }))).toBe(302);
+    expect(await prisma.assignment.findUniqueOrThrow({ where: { id } })).toMatchObject({
+      reviewStatus: 'APPROVED',
+      reviewHeldById: null,
+      reviewHeldAt: null,
+    });
+  });
+
+  it('reserves a submission opened from the list and lets go of the other one', async () => {
+    const { project, submissions, reviewers } = await waiting(2);
+    const [first, second] = reviewers;
+    const [older, newer] = submissions.map((s) => s.id);
+    await start(project.id, first.cookie);
+    expect(await holderOf(older)).toBe(first.user.id);
+
+    expect(locationOf(await post(newer, first.cookie, { intent: 'hold' }))).toBe(
+      `/review/${newer}`,
+    );
+    expect(await holderOf(newer)).toBe(first.user.id);
+    expect(await holderOf(older)).toBeNull();
+    expect(statusOf(await post(newer, second.cookie, { intent: 'hold' }))).toBe(409);
+    expect(await holderOf(newer)).toBe(first.user.id);
+  });
+
+  it('stores one decision when two reviewers decide at the same moment', async () => {
+    const { submissions, reviewers } = await waiting(1);
+    const [first, second] = reviewers;
+    const id = submissions[0].id;
+
+    const results = await Promise.all([
+      post(id, first.cookie, { intent: 'approve', qaScore: '5' }),
+      post(id, second.cookie, { intent: 'send_back', feedback: 'Not quite' }),
+    ]);
+
+    expect(results.map(statusOf).sort()).toEqual([302, 409]);
+    const reviews = await prisma.review.findMany({ where: { assignmentId: id } });
+    expect(reviews).toHaveLength(1);
+    const saved = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(saved.reviewStatus).toBe(reviews[0].decision === 'APPROVE' ? 'APPROVED' : 'SENT_BACK');
   });
 });

@@ -8,18 +8,30 @@ import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { parseReviewForm } from '~/domain/review-form';
+import { activeHold, REVIEW_HOLD_MINUTES } from '~/domain/review-hold';
+import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, formatRelative } from '~/lib/format';
 import { forbidden, notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
-import { nextPendingReview, recordReview } from '~/models/reviews.server';
+import {
+  holdReview,
+  recordReview,
+  reserveNextReview,
+  type ReviewRefusal,
+} from '~/models/reviews.server';
 
 import type { Route } from './+types/review';
 
 export function meta() {
   return [{ title: 'Review submission · Labeling Portal' }];
 }
+
+const REFUSED: Record<ReviewRefusal, string> = {
+  not_pending: 'Someone already reviewed this submission.',
+  held: `Another reviewer has reserved this submission. It frees up if they do not decide within ${REVIEW_HOLD_MINUTES} minutes.`,
+};
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
@@ -28,6 +40,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     include: {
       task: true,
       user: { select: { name: true } },
+      reviewHeldBy: { select: { name: true } },
       reviews: {
         orderBy: { createdAt: 'desc' },
         include: { reviewer: { select: { name: true } } },
@@ -36,11 +49,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   });
   if (!assignment || assignment.status !== 'SUBMITTED') throw notFound('Submission not found');
   const project = await requireProject(current, assignment.projectId, 'review');
+  const hold = activeHold(assignment, current.user.id, new Date());
 
   return {
     project: { id: project.id, name: project.name },
     schema: projectSchema(project),
     ownWork: assignment.userId === current.user.id,
+    hold: hold && { reviewer: hold.reviewer, mine: hold.mine, until: hold.until },
+    sampleNote: assignment.reviewSample ? SAMPLE_LABELS[assignment.reviewSample] : null,
     assignment: {
       id: assignment.id,
       annotator: assignment.user.name,
@@ -74,10 +90,16 @@ export async function action({ request, params }: Route.ActionArgs) {
     throw forbidden('You cannot review your own submission.');
   }
   if (assignment.reviewStatus !== 'PENDING') {
-    return data({ error: 'Someone already reviewed this submission.' }, { status: 409 });
+    return data({ error: REFUSED.not_pending }, { status: 409 });
   }
 
   const form = await request.formData();
+  if (form.get('intent') === 'hold') {
+    const held = await holdReview(assignment.id, current.user.id);
+    if (!held.ok) return data({ error: REFUSED[held.error] }, { status: 409 });
+    return redirect(`/review/${assignment.id}`);
+  }
+
   const parsed = parseReviewForm(form);
   if (!parsed.ok) return data({ error: parsed.error }, { status: 400 });
 
@@ -94,8 +116,12 @@ export async function action({ request, params }: Route.ActionArgs) {
     correctedAnswer = checked.answer as Prisma.InputJsonValue;
   }
 
-  await recordReview(assignment.id, current.user.id, { ...parsed.value, correctedAnswer });
-  const next = await nextPendingReview(assignment.projectId, current.user.id);
+  const recorded = await recordReview(assignment.id, current.user.id, {
+    ...parsed.value,
+    correctedAnswer,
+  });
+  if (!recorded.ok) return data({ error: REFUSED[recorded.error] }, { status: 409 });
+  const next = await reserveNextReview(assignment.projectId, current.user.id);
   return redirect(next ? `/review/${next.id}` : `/projects/${assignment.projectId}/review?done=1`);
 }
 
@@ -106,7 +132,7 @@ const DECISION_STYLE: Record<string, string> = {
 };
 
 export default function Review({ loaderData, actionData }: Route.ComponentProps) {
-  const { project, schema, assignment, task, history, ownWork } = loaderData;
+  const { project, schema, assignment, task, history, ownWork, hold, sampleNote } = loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -149,6 +175,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
           </span>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {sampleNote && <p className="text-sm text-slate-500">{sampleNote}.</p>}
         <Card>
           {fixing && (
             <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800">
@@ -168,11 +195,34 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
       <aside className="space-y-4">
         {ownWork ? (
           <Alert tone="info">This is your own submission, so someone else has to review it.</Alert>
-        ) : pending ? (
+        ) : !pending ? (
+          <Alert tone="info">Already reviewed.</Alert>
+        ) : hold && !hold.mine ? (
+          <Alert tone="info">
+            {hold.reviewer} is reviewing this submission. It frees up at{' '}
+            {formatDateTime(hold.until)} if they do not decide.
+          </Alert>
+        ) : !hold ? (
+          <Form
+            method="post"
+            className="space-y-3 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-slate-200"
+          >
+            <p className="text-slate-600">
+              Nobody is reviewing this submission. Reserve it so no other reviewer picks it up while
+              you look at it.
+            </p>
+            <Button name="intent" value="hold" disabled={navigation.state !== 'idle'}>
+              Review this submission
+            </Button>
+          </Form>
+        ) : (
           <Form
             method="post"
             className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
           >
+            <p className="text-xs text-slate-500">
+              Reserved for you until {formatDateTime(hold.until)}.
+            </p>
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
                 Quality score <span className="font-normal text-slate-400">(keys 1-5)</span>
@@ -251,8 +301,6 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
               )}
             </div>
           </Form>
-        ) : (
-          <Alert tone="info">Already reviewed.</Alert>
         )}
         {history.length > 0 && (
           <Card>
