@@ -7,6 +7,7 @@ import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { annotatorDisputeState, DISPUTE_REFUSALS, parseDisputeReason } from '~/domain/disputes';
+import { describeGoldAnswer, formatGoldScore, goldFeedback } from '~/domain/gold';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -40,16 +41,27 @@ async function loadReturned(assignmentId: string, userId: string) {
 export async function loader({ request, params }: Route.LoaderArgs) {
   const { user } = await requireUser(request);
   const assignment = await loadReturned(params.assignmentId, user.id);
-  if (assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
+  // their own gold submission, compared with the expected answer
+  const gold = goldFeedback(assignment);
+  if (!gold && assignment.reviewStatus !== 'SENT_BACK' && assignment.reviewStatus !== 'FIXED') {
     throw redirect('/my-work');
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
+  const schema = projectSchema(assignment.project);
   return {
-    mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
-    corrected: (fix?.correctedAnswer ?? null) as Answer | null,
+    mode: gold
+      ? ('gold' as const)
+      : assignment.reviewStatus === 'FIXED'
+        ? ('compare' as const)
+        : ('revise' as const),
+    corrected: (gold?.expected ?? fix?.correctedAnswer ?? null) as Answer | null,
+    goldCheck: gold && {
+      score: gold.score,
+      expected: describeGoldAnswer(schema, gold.expected),
+    },
     id: assignment.id,
     projectName: assignment.project.name,
-    schema: projectSchema(assignment.project),
+    schema,
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
     feedback: assignment.reviews[0]?.feedback ?? '',
@@ -115,13 +127,23 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
     />
   );
 
-  if (mode === 'compare') {
+  if (mode === 'compare' || mode === 'gold') {
+    const { goldCheck } = loaderData;
     return (
       <div className="space-y-4">
         <Link to="/my-work" className="text-sm text-indigo-700 hover:underline">
           ← My work
         </Link>
-        <h1 className="text-xl font-semibold">Reviewer correction: {projectName}</h1>
+        <h1 className="text-xl font-semibold">
+          {goldCheck ? 'Gold check' : 'Reviewer correction'}: {projectName}
+        </h1>
+        {goldCheck && (
+          <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
+            This was a gold task: it has a known answer and is mixed into the queue to measure
+            accuracy. You scored {formatGoldScore(goldCheck.score)}; the expected answer was{' '}
+            {goldCheck.expected}. Gold tasks are paid like any other task, whatever the score.
+          </p>
+        )}
         {feedback && (
           <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
             {feedback}
@@ -144,7 +166,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
           </Card>
           <Card>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Corrected
+              {goldCheck ? 'Expected answer' : 'Corrected'}
             </h2>
             <LabelingInterface
               schema={schema}

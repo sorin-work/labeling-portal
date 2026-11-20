@@ -5,6 +5,7 @@ import { Pagination } from '~/components/pagination';
 import { Badge, Button, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { shownReview } from '~/domain/disputes';
+import { formatGoldScore, goldFeedback } from '~/domain/gold';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -42,7 +43,15 @@ export async function loader({ request }: Route.LoaderArgs) {
     take: page.take,
     include: {
       project: true,
-      task: { select: { externalId: true, data: true } },
+      task: {
+        select: {
+          externalId: true,
+          data: true,
+          isGold: true,
+          goldAnswer: true,
+          goldRetiredAt: true,
+        },
+      },
       reviews: {
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -63,6 +72,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
       reviewStatus: a.reviewStatus,
+      // only the score, and only where the project shows gold feedback
+      goldScore: goldFeedback(a)?.score ?? null,
       // feedback and score of an overturned decision give way to the dispute's outcome
       ...shownReview(a.reviews.at(0)),
     })),
@@ -136,6 +147,11 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                   {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                   {dispute && <Badge tone={dispute.tone}>{dispute.label}</Badge>}
                   {item.qaScore !== null && <span>Quality {item.qaScore}/5</span>}
+                  {item.goldScore !== null && (
+                    <Link to={`/my-work/${item.id}`} className="text-indigo-700 hover:underline">
+                      Gold check {formatGoldScore(item.goldScore)}
+                    </Link>
+                  )}
                   <span>
                     {item.submittedAt ? formatRelative(item.submittedAt) : ''} ·{' '}
                     {formatDuration(item.activeSeconds)}
