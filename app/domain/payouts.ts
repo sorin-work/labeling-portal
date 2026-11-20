@@ -68,23 +68,15 @@ export function amountCents(
   return divideRounded(rateCents * seconds, 3600);
 }
 
-type Dated = {
-  reviewStatus: ReviewStatus | null;
-  submittedAt: Date | null;
-  reviewedAt: Date | null;
-};
-
 /**
- * The moment accepted work became payable, which is the date that puts it
- * into a pay period: the review that approved or fixed it, or the submission
- * when no review was needed. Null while the work is waiting for review or was
- * sent back. An accepted row without a review date falls back to its
- * submission, so that it is not left out of every period.
+ * The date a write gives the work when it leaves it with the review status
+ * `status` at the moment `at`. Work is payable from the moment it is
+ * accepted: a reviewer approved or fixed it, or it was submitted and needs no
+ * review. That date is stored (`Assignment.payableAt`) and puts the work into
+ * a pay period. Work that is waiting for review or was sent back has none.
  */
-export function payableAt(work: Dated): Date | null {
-  if (!isAccepted(work.reviewStatus)) return null;
-  if (work.reviewStatus === 'NOT_REQUIRED') return work.submittedAt;
-  return work.reviewedAt ?? work.submittedAt;
+export function payableSince(status: ReviewStatus, at: Date): Date | null {
+  return isAccepted(status) ? at : null;
 }
 
 /**

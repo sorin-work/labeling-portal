@@ -4,6 +4,7 @@ import { clampActiveSeconds, revisionSeconds } from '~/domain/active-time';
 import type { Answer } from '~/domain/answers';
 import { scoreAgainstGold } from '~/domain/gold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
+import { payableSince } from '~/domain/payouts';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma, utc } from '~/lib/db.server';
 
@@ -236,6 +237,7 @@ export async function submitAssignment(
         )
       : { review: false, sample: null };
 
+  const reviewStatus = sampling.review ? 'PENDING' : 'NOT_REQUIRED';
   const assignment = await prisma.$transaction(async (tx) => {
     // The rate is frozen in the write that submits the work, and it is read
     // here, in the same transaction, holding the project row: a settings save
@@ -252,9 +254,11 @@ export async function submitAssignment(
         submittedAt: now,
         rateCents: pay.rateCents,
         payMode: pay.payMode,
+        // work that needs no review is payable from this moment
+        payableAt: payableSince(reviewStatus, now),
         answer: input.answer,
         goldScore,
-        reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
+        reviewStatus,
         reviewSample: sampling.sample,
         activeSeconds: clampActiveSeconds(input.activeSeconds, found.assignment.claimedAt, now),
         ...NO_DRAFT,
@@ -350,6 +354,7 @@ export async function resubmitAssignment(
         reviewStatus: 'PENDING',
         submittedAt: now,
         reviewedAt: null,
+        payableAt: null,
         activeSeconds: { increment: revising },
         ...NO_DRAFT,
       },

@@ -209,42 +209,45 @@ model Task {
 
 /// One annotator's claim on a task, and later their answer.
 model Assignment {
-  id            String           @id @default(cuid())
-  projectId     String
-  taskId        String
-  userId        String
-  status        AssignmentStatus @default(ACTIVE)
-  claimedAt     DateTime         @default(now())
-  expiresAt     DateTime
+  id             String           @id @default(cuid())
+  projectId      String
+  taskId         String
+  userId         String
+  status         AssignmentStatus @default(ACTIVE)
+  claimedAt      DateTime         @default(now())
+  expiresAt      DateTime
   /// set when the annotator asked for more time (allowed once per claim)
-  extendedAt    DateTime?
-  submittedAt   DateTime?
+  extendedAt     DateTime?
+  submittedAt    DateTime?
   /// the project's rate and pay mode when the work was first submitted;
   /// payouts and earnings read these, never the project's current values
-  rateCents     Int?
-  payMode       PayMode?
-  skipReason    String?
-  answer        Json?
-  activeSeconds Int              @default(0)
+  rateCents      Int?
+  payMode        PayMode?
+  /// the moment the work became payable, which puts it into a pay period;
+  /// set by the write that accepts the work and empty while it is not accepted
+  payableAt      DateTime?
+  skipReason     String?
+  answer         Json?
+  activeSeconds  Int              @default(0)
   /// unfinished answer saved from the work or revise page, not validated
-  draft         Json?
+  draft          Json?
   /// working time that came with the last draft save
-  draftSeconds  Int              @default(0)
-  reviewStatus  ReviewStatus?
-  reviewedAt    DateTime?
+  draftSeconds   Int              @default(0)
+  reviewStatus   ReviewStatus?
+  reviewedAt     DateTime?
   /// decided once at submission when the project reviews a share; empty otherwise
-  reviewSample  ReviewSample?
+  reviewSample   ReviewSample?
   /// the reviewer who reserved this submission; the hold lapses after 15 minutes
   reviewHeldById String?
-  reviewHeldAt  DateTime?
+  reviewHeldAt   DateTime?
   /// 0..1 match against the gold answer, for gold tasks only
-  goldScore     Float?
-  reviews       Review[]
-  disputes      Dispute[]
-  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  task          Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reviewHeldBy  User?            @relation("ReviewHold", fields: [reviewHeldById], references: [id], onDelete: SetNull)
+  goldScore      Float?
+  reviews        Review[]
+  disputes       Dispute[]
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task           Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewHeldBy   User?            @relation("ReviewHold", fields: [reviewHeldById], references: [id], onDelete: SetNull)
 
   @@index([projectId, status])
   @@index([userId, status])
@@ -252,8 +255,8 @@ model Assignment {
   @@index([projectId, reviewStatus])
   @@index([userId, submittedAt])
   @@index([projectId, submittedAt])
-  @@index([userId, reviewedAt])
-  @@index([projectId, reviewedAt])
+  @@index([userId, payableAt])
+  @@index([projectId, payableAt])
 }
 
 model Review {

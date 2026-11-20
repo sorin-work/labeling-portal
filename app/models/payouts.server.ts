@@ -1,8 +1,9 @@
-import type { Prisma, ReviewStatus } from '@prisma/client';
+import type { Prisma, PrismaClient, ReviewStatus } from '@prisma/client';
 
-import { ACCEPTED_STATUSES } from '~/domain/outcome';
-import { computePayouts, payableAt, type PaidWork } from '~/domain/payouts';
+import { computePayouts, type PaidWork } from '~/domain/payouts';
 import { prisma } from '~/lib/db.server';
+
+type Db = PrismaClient | Prisma.TransactionClient;
 
 export type PayoutRange = { from: string; to: string };
 
@@ -19,9 +20,6 @@ const WORK_SELECT = {
   activeSeconds: true,
   rateCents: true,
   payMode: true,
-  reviewStatus: true,
-  submittedAt: true,
-  reviewedAt: true,
   user: { select: { id: true, name: true, email: true } },
   project: { select: { id: true, name: true } },
 } satisfies Prisma.AssignmentSelect;
@@ -51,29 +49,18 @@ function toPaidWork(row: WorkRow): PaidWork {
 }
 
 /**
- * Accepted work that became payable within the range. The date that counts
- * is `payableAt`: the review for work a reviewer approved or fixed, the
- * submission for work that needed no review. The query fetches everything
- * submitted or reviewed in the range and `payableAt` decides, so the rule
- * lives in one place.
+ * Accepted work that became payable within the range. The date is stored on
+ * the assignment (`payableAt`) by the write that accepted the work: the
+ * review that approved or fixed it, the submission when no review was needed,
+ * or the overturn of a send-back. Work that was accepted before the date was
+ * stored carries its submission date, which is what the reports went by then.
  */
-async function payableWork(where: Prisma.AssignmentWhereInput, range: PayoutRange) {
-  const { gte, lt } = bounds(range);
-  const rows = await prisma.assignment.findMany({
-    where: {
-      ...where,
-      status: 'SUBMITTED',
-      reviewStatus: { in: [...ACCEPTED_STATUSES] },
-      OR: [{ submittedAt: { gte, lt } }, { reviewedAt: { gte, lt } }],
-    },
+async function payableWork(db: Db, where: Prisma.AssignmentWhereInput, range: PayoutRange) {
+  const rows = await db.assignment.findMany({
+    where: { ...where, status: 'SUBMITTED', payableAt: bounds(range) },
     select: WORK_SELECT,
   });
-  return rows
-    .filter((row) => {
-      const payable = payableAt(row);
-      return payable !== null && payable >= gte && payable < lt;
-    })
-    .map(toPaidWork);
+  return rows.map(toPaidWork);
 }
 
 /**
@@ -82,14 +69,19 @@ async function payableWork(where: Prisma.AssignmentWhereInput, range: PayoutRang
  * `pending` counts work submitted in the range that is waiting for review or
  * was sent back, which has no payable date yet.
  */
-export async function payoutReport(orgId: string, range: PayoutRange, projectId?: string | null) {
+export async function payoutReport(
+  orgId: string,
+  range: PayoutRange,
+  projectId?: string | null,
+  db: Db = prisma,
+) {
   const scope: Prisma.AssignmentWhereInput = {
     project: { orgId },
     ...(projectId ? { projectId } : {}),
   };
   const [work, pending] = await Promise.all([
-    payableWork(scope, range),
-    prisma.assignment.count({
+    payableWork(db, scope, range),
+    db.assignment.count({
       where: {
         ...scope,
         status: 'SUBMITTED',
@@ -127,7 +119,7 @@ export async function earningsReport(orgId: string, userId: string, range: Payou
       select: WORK_SELECT,
     });
   const [payable, waiting, sentBack] = await Promise.all([
-    payableWork(scope, range),
+    payableWork(prisma, scope, range),
     notPayable('PENDING'),
     notPayable('SENT_BACK'),
   ]);

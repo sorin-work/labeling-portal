@@ -8,6 +8,7 @@ import type { Prisma, PrismaClient, ReviewSample, ReviewStatus } from '@prisma/c
 import type { Answer } from '../app/domain/answers';
 import { consensus } from '../app/domain/consensus';
 import { scoreAgainstGold } from '../app/domain/gold';
+import { payableSince } from '../app/domain/payouts';
 import { parseTaskSchema } from '../app/domain/task-schema';
 
 type Ids = { reviewer: string; annotators: string[] };
@@ -60,6 +61,9 @@ async function submit(
       submittedAt: input.submittedAt,
       rateCents: input.rateCents ?? project.rateCents,
       payMode: project.payMode,
+      // accepted work has the date it became payable; `review` moves it to
+      // the review for work a reviewer accepted
+      payableAt: payableSince(input.reviewStatus, input.submittedAt),
       activeSeconds: input.seconds,
       answer: input.answer as Prisma.InputJsonValue,
       reviewStatus: input.reviewStatus,
@@ -69,7 +73,10 @@ async function submit(
   });
 }
 
-/** A reviewer's decision. The submission gets the date of the review, as in the app. */
+/**
+ * A reviewer's decision. As in the app, the submission gets the date of the
+ * review, and from that date it is payable when the review accepted it.
+ */
 async function review(
   prisma: PrismaClient,
   data: Prisma.ReviewUncheckedCreateInput & { createdAt: Date },
@@ -77,7 +84,10 @@ async function review(
   await prisma.review.create({ data });
   await prisma.assignment.update({
     where: { id: data.assignmentId },
-    data: { reviewedAt: data.createdAt },
+    data: {
+      reviewedAt: data.createdAt,
+      payableAt: data.decision === 'SEND_BACK' ? null : data.createdAt,
+    },
   });
 }
 
