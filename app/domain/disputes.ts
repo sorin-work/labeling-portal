@@ -22,7 +22,7 @@ const DISPUTABLE: Partial<Record<ReviewStatus, ReviewDecision>> = {
 };
 
 export type DisputeRefusal =
-  'not_disputable' | 'own_decision' | 'already_disputed' | 'disabled' | 'too_late';
+  'not_disputable' | 'own_decision' | 'already_disputed' | 'disabled' | 'too_late' | 'no_resolver';
 
 export type DisputableInput = {
   reviewStatus: ReviewStatus | null;
@@ -36,12 +36,19 @@ export type DisputableInput = {
   } | null;
   openerId: string;
   windowDays: number;
+  /**
+   * how many people could settle a dispute on this decision: everyone who can
+   * review in the project, apart from the reviewer who decided and the annotator
+   */
+  resolvers: number;
 };
 
 /**
  * Why the annotator cannot dispute the latest decision on their submission,
  * or null when they can. Only work that was sent back or fixed qualifies, a
- * decision can be disputed once, and only inside the project's window.
+ * decision can be disputed once, only inside the project's window, and only
+ * while somebody is there who may settle it: a dispute nobody can settle
+ * would block the work for good.
  */
 export function disputeRefusal(input: DisputableInput, now: Date): DisputeRefusal | null {
   const { review } = input;
@@ -53,7 +60,8 @@ export function disputeRefusal(input: DisputableInput, now: Date): DisputeRefusa
   if (review.disputed) return 'already_disputed';
   const deadline = disputeDeadline(review.createdAt, input.windowDays);
   if (!deadline) return 'disabled';
-  return now > deadline ? 'too_late' : null;
+  if (now > deadline) return 'too_late';
+  return input.resolvers > 0 ? null : 'no_resolver';
 }
 
 export const DISPUTE_REFUSALS: Record<DisputeRefusal, string> = {
@@ -62,6 +70,8 @@ export const DISPUTE_REFUSALS: Record<DisputeRefusal, string> = {
   already_disputed: 'This decision has already been disputed.',
   disabled: 'This project does not take disputes.',
   too_late: 'The time to dispute this decision has passed.',
+  no_resolver:
+    'Nobody could settle a dispute on this decision: the reviewer who made it is the only other person who can review in this project. Ask a manager to add a reviewer, or revise the work.',
 };
 
 type DisputeRecord = {
@@ -88,6 +98,7 @@ export function annotatorDisputeState(
         })
       | null;
     windowDays: number;
+    resolvers: number;
   },
   now: Date,
 ) {
@@ -99,6 +110,7 @@ export function annotatorDisputeState(
       review: review && { ...review, disputed: dispute !== null },
       openerId: submission.annotatorId,
       windowDays,
+      resolvers: submission.resolvers,
     },
     now,
   );
@@ -112,7 +124,8 @@ export function annotatorDisputeState(
       resolvedAt: dispute.resolvedAt,
     },
     disputeUntil: review && !refusal ? disputeDeadline(review.createdAt, windowDays) : null,
-    disputeClosed: refusal === 'too_late' ? DISPUTE_REFUSALS.too_late : null,
+    disputeClosed:
+      refusal === 'too_late' || refusal === 'no_resolver' ? DISPUTE_REFUSALS[refusal] : null,
   };
 }
 

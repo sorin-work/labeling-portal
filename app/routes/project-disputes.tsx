@@ -72,7 +72,7 @@ function DisputeList({ projectId, rows }: { projectId: string; rows: Row[] }) {
               <Badge tone={badge.tone}>{badge.label}</Badge>
               <span>
                 {d.resolvedAt
-                  ? `${d.resolver ?? 'Someone'} · ${formatDateTime(d.resolvedAt)}`
+                  ? `${d.resolver ?? (d.status === 'WITHDRAWN' ? d.annotator : 'Someone')} · ${formatDateTime(d.resolvedAt)}`
                   : `Opened ${formatDateTime(d.openedAt)}`}
               </span>
               {d.status === 'OPEN' && !d.canResolve && <span>Someone else has to settle it</span>}

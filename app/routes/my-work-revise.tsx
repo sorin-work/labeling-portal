@@ -13,7 +13,7 @@ import { droppedNote, fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
-import { openDispute } from '~/models/disputes.server';
+import { countResolvers, openDispute, withdrawDispute } from '~/models/disputes.server';
 import { projectSchema } from '~/models/projects.server';
 import { resubmitAssignment } from '~/models/queue.server';
 
@@ -50,6 +50,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const schema = projectSchema(assignment.project);
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
+  const decision = assignment.reviews.at(0) ?? null;
   return {
     userId: user.id,
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
@@ -66,8 +67,11 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       {
         reviewStatus: assignment.reviewStatus,
         annotatorId: user.id,
-        review: assignment.reviews.at(0) ?? null,
+        review: decision,
         windowDays: assignment.project.disputeWindowDays,
+        resolvers: decision
+          ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
+          : 0,
       },
       new Date(),
     ),
@@ -85,6 +89,13 @@ export async function action({ request, params }: Route.ActionArgs) {
     if (!opened.ok) {
       if (opened.error === 'not_found') throw notFound('Submission not found');
       return data({ error: DISPUTE_REFUSALS[opened.error] }, { status: 409 });
+    }
+    return redirect(`/my-work/${assignment.id}`);
+  }
+  if (form.get('intent') === 'withdraw-dispute') {
+    const withdrawn = await withdrawDispute(assignment.id, user.id);
+    if (!withdrawn.ok) {
+      return data({ error: 'There is no open dispute to withdraw.' }, { status: 409 });
     }
     return redirect(`/my-work/${assignment.id}`);
   }
