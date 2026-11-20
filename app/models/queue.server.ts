@@ -1,12 +1,10 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
-import type { Answer } from '~/domain/answers';
-import { scoreAgainstGold } from '~/domain/gold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
-import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
+import { scoreGoldSubmission } from './gold.server';
 import { isAnnotatorFlagged } from './quality.server';
 import { refreshTaskStatus } from './tasks.server';
 
@@ -29,17 +27,21 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
 }
 
 /**
- * SQL condition on task `t`: open, not part of the qualification test, not
- * already claimed, done or skipped by this annotator, and (unless it is a gold
- * task) with fewer live claims and submissions than `overlap`.
+ * SQL condition on task `t`: open, not part of the qualification test, not a
+ * retired gold task, not already claimed, done or skipped by this annotator,
+ * and (unless it is a gold task) with fewer live claims and submissions than
+ * `overlap`. A gold task that was copied from a completed task is also kept
+ * from the people who worked on that original: seeing the same item twice
+ * would tell them it is gold.
  */
 function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     t.status = 'OPEN'
     AND NOT t."isQualification"
+    AND t."goldRetiredAt" IS NULL
     AND NOT EXISTS (
       SELECT 1 FROM "Assignment" mine
-      WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
+      WHERE mine."taskId" IN (t.id, t."goldSourceId") AND mine."userId" = ${userId}
         AND mine.status IN ('ACTIVE', 'SUBMITTED', 'SKIPPED')
     )
     AND (
@@ -213,17 +215,6 @@ export async function submitAssignment(
     where: { id: found.assignment.taskId },
     include: { project: { select: { schema: true } } },
   });
-  let goldScore: number | null = null;
-  if (task.isGold && task.goldAnswer) {
-    const schema = parseTaskSchema(task.project.schema);
-    if (schema.ok) {
-      goldScore = scoreAgainstGold(
-        schema.schema,
-        input.answer as Answer,
-        task.goldAnswer as Answer,
-      );
-    }
-  }
 
   // The sample is drawn here, once, and the outcome is stored. Nothing that
   // reads the submission later draws again.
@@ -238,6 +229,11 @@ export async function submitAssignment(
       : { review: false, sample: null };
 
   const assignment = await prisma.$transaction(async (tx) => {
+    // scored here, under a lock on the expected answer, so a manager's edit of
+    // it cannot fall between reading it and storing the score
+    const goldScore = task.isGold
+      ? await scoreGoldSubmission(tx, task.id, task.project.schema, input.answer)
+      : null;
     // only a claim that is still active is written, so a form posted twice
     // cannot replace the first outcome with a second draw
     const [submitted] = await tx.assignment.updateManyAndReturn({

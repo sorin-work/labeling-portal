@@ -62,7 +62,7 @@ export async function projectQuality(project: Project) {
           overturnedAt: true,
         },
       },
-      task: { select: { isGold: true } },
+      task: { select: { isGold: true, goldRetiredAt: true } },
     },
   });
 
@@ -109,7 +109,8 @@ export async function projectQuality(project: Project) {
     stats.submitted += 1;
     stats.seconds.push(a.activeSeconds);
     if (a.task.isGold) {
-      if (a.goldScore !== null) stats.gold.push(a.goldScore);
+      // the score on a retired gold task is kept but counts for nobody
+      if (a.goldScore !== null && !a.task.goldRetiredAt) stats.gold.push(a.goldScore);
       continue;
     }
     // a decision that a dispute overturned no longer counts for or against anyone
@@ -206,7 +207,7 @@ export async function isAnnotatorFlagged(projectId: string, userId: string): Pro
       userId,
       status: 'SUBMITTED',
       goldScore: { not: null },
-      task: { isGold: true },
+      task: { isGold: true, goldRetiredAt: null },
     },
     _avg: { goldScore: true },
     _count: { _all: true },

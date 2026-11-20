@@ -19,7 +19,7 @@ export async function myStats(userId: string, days = 30, now = new Date()): Prom
   const [byStatus, gold, time] = await Promise.all([
     prisma.assignment.groupBy({ by: ['reviewStatus'], where, _count: { _all: true } }),
     prisma.assignment.aggregate({
-      where: { ...where, goldScore: { not: null } },
+      where: { ...where, goldScore: { not: null }, task: { isGold: true, goldRetiredAt: null } },
       _avg: { goldScore: true },
     }),
     prisma.assignment.aggregate({ where, _sum: { activeSeconds: true } }),
