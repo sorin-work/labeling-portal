@@ -295,6 +295,13 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
             consensus lean towards it: high agreement here says less than on tasks without one.
             Suggestions are not answers and count nowhere else.
           </p>
+          {suggestions.goldStandsOut && (
+            <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+              Gold tasks can be told apart here: tasks have suggestions from the import file, and
+              gold tasks never take one. A suggestion rule (in Settings) gives gold tasks
+              suggestions like any other task.
+            </p>
+          )}
           {suggestions.againstGold.length > 0 && (
             <ul className="mb-3 text-sm">
               {suggestions.againstGold.map((g) => (
