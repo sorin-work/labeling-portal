@@ -1,14 +1,41 @@
-import type { Prisma } from '@prisma/client';
+import type { Batch, Prisma } from '@prisma/client';
 
 import type { ImportFormat, ImportRow } from '~/domain/import';
+import { diffSchema } from '~/domain/schema-diff';
+import { parseTaskSchema, type TaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
-/** Creates a batch and its tasks. Task positions continue after the project's last task. */
+export type CreateBatchResult = { ok: true; batch: Batch } | { ok: false; error: 'schema_changed' };
+
+/**
+ * Creates a batch and its tasks, all of them or none. Task positions continue
+ * after the project's last task.
+ *
+ * `schema` is the one the rows, and their gold answers, were validated
+ * against. The project row is held while the tasks are written, and the batch
+ * is refused when the saved schema is no longer that one. A settings save
+ * asks for a stronger lock on the same row, so it either waits for this import
+ * and then counts its gold answers, or it was first, and then the file has to
+ * be read again against the new schema.
+ */
 export async function createBatch(
   projectId: string,
-  input: { name: string; format: ImportFormat; rows: ImportRow[]; qualification?: boolean },
-) {
+  input: {
+    name: string;
+    format: ImportFormat;
+    rows: ImportRow[];
+    qualification?: boolean;
+    schema: TaskSchema;
+  },
+): Promise<CreateBatchResult> {
   return prisma.$transaction(async (tx) => {
+    const [project] = await tx.$queryRaw<Array<{ schema: unknown }>>`
+      SELECT schema FROM "Project" WHERE id = ${projectId} FOR SHARE`;
+    const saved = parseTaskSchema(project?.schema);
+    if (!saved.ok || diffSchema(saved.schema, input.schema).length > 0) {
+      return { ok: false, error: 'schema_changed' };
+    }
+
     const last = await tx.task.aggregate({ where: { projectId }, _max: { position: true } });
     const start = (last._max.position ?? 0) + 1;
     const batch = await tx.batch.create({
@@ -26,7 +53,7 @@ export async function createBatch(
         goldAnswer: row.gold === undefined ? undefined : (row.gold as Prisma.InputJsonValue),
       })),
     });
-    return batch;
+    return { ok: true, batch };
   });
 }
 

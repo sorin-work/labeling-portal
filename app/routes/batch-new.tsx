@@ -1,19 +1,28 @@
 import { data, Form, Link, useNavigation } from 'react-router';
 
 import { Alert, Button, Card, Field, Input } from '~/components/ui';
-import { detectFormat, parseImport, type ImportError } from '~/domain/import';
+import { MAX_IMPORT_BYTES, readImportFile, type ImportError } from '~/domain/import';
 import { requiredFields } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
 import { redirectWithFlash } from '~/lib/flash.server';
+import { readBoundedForm } from '~/lib/upload.server';
 import { logActivity } from '~/models/activity.server';
 import { createBatch } from '~/models/batches.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-new';
 
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** Room for the form's other fields and the multipart framing around the file. */
+const FORM_OVERHEAD_BYTES = 64 * 1024;
 
-type ActionResult = { error?: string; errors?: ImportError[]; validRows?: number };
+type ActionResult = {
+  error?: string;
+  errors?: ImportError[];
+  /** problems beyond the listed ones */
+  more?: number;
+  unit?: 'line' | 'item';
+  validRows?: number;
+};
 
 export function meta() {
   return [{ title: 'Import tasks · Labeling Portal' }];
@@ -25,6 +34,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return { projectId: project.id, fields: requiredFields(projectSchema(project)) };
 }
 
+/**
+ * Wires the upload to the reader in `domain/import.ts` and stores what it
+ * returns. A file is imported completely or not at all.
+ */
 export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'manageProjects');
@@ -35,65 +48,63 @@ export async function action({ request, params }: Route.ActionArgs) {
     );
   }
 
-  const form = await request.formData();
+  const form = await readBoundedForm(request, MAX_IMPORT_BYTES + FORM_OVERHEAD_BYTES);
+  if (form === 'too_large') {
+    return data<ActionResult>({ error: 'Files can be at most 5 MB.' }, { status: 413 });
+  }
   const file = form.get('file');
   if (!(file instanceof File) || file.size === 0) {
-    return data<ActionResult>({ error: 'Choose a CSV or JSONL file to upload.' }, { status: 400 });
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return data<ActionResult>({ error: 'Files can be at most 5 MB.' }, { status: 400 });
-  }
-
-  const text = await file.text();
-  // xlsx, zip and other binary files decode with NUL bytes or replacement chars
-  if (text.includes('\u0000') || text.slice(0, 2000).includes('\uFFFD')) {
     return data<ActionResult>(
-      { error: 'That does not look like a CSV or JSONL file. Export spreadsheets as CSV first.' },
+      { error: 'Choose a CSV, TSV, JSON or JSON Lines file to upload.' },
       { status: 400 },
     );
   }
-  const format = detectFormat(file.name, text);
-  const result = parseImport(text, format, projectSchema(project));
-  const skipInvalid = form.get('skipInvalid') === 'on';
-  const qualification = form.get('qualification') === 'on';
-  if (qualification) {
-    for (const row of result.rows.filter((r) => r.gold === undefined)) {
-      result.errors.push({
-        line: row.line,
-        message: 'Qualification questions need a _gold answer',
-      });
-    }
-    result.rows = result.rows.filter((r) => r.gold !== undefined);
-    result.errors.sort((a, b) => a.line - b.line);
-  }
 
-  if (result.rows.length === 0 || (result.errors.length > 0 && !skipInvalid)) {
+  const schema = projectSchema(project);
+  const qualification = form.get('qualification') === 'on';
+  const outcome = readImportFile(new Uint8Array(await file.arrayBuffer()), file.name, schema, {
+    qualification,
+  });
+  if (!outcome.ok) {
     return data<ActionResult>(
       {
-        error:
-          result.rows.length === 0
-            ? 'No valid tasks were found in the file.'
-            : 'Some rows have problems. Fix them, or tick "skip invalid rows" to import the rest.',
-        errors: result.errors.slice(0, 50),
-        validRows: result.rows.length,
+        error: outcome.message,
+        errors: outcome.errors,
+        more: outcome.more,
+        unit: outcome.unit,
+        validRows: outcome.validRows,
       },
       { status: 400 },
     );
   }
 
   const name = String(form.get('name') ?? '').trim() || file.name.replace(/\.[^.]+$/, '');
-  const batch = await createBatch(project.id, { name, format, rows: result.rows, qualification });
+  const created = await createBatch(project.id, {
+    name,
+    format: outcome.format,
+    rows: outcome.rows,
+    qualification,
+    schema,
+  });
+  if (!created.ok) {
+    return data<ActionResult>(
+      {
+        error:
+          'The project\u2019s schema was changed while the file was being read. Nothing was imported. Upload the file again.',
+      },
+      { status: 409 },
+    );
+  }
   await logActivity({
     projectId: project.id,
     actorId: current.user.id,
     action: 'batch.imported',
-    detail: { batchId: batch.id, name, tasks: result.rows.length, qualification },
+    detail: { batchId: created.batch.id, name, tasks: outcome.rows.length, qualification },
   });
-  const skipped = result.errors.length ? `, skipped ${result.errors.length} invalid rows` : '';
   return redirectWithFlash(
     request,
-    `/projects/${project.id}/batches/${batch.id}`,
-    `Imported ${result.rows.length} tasks${skipped}.`,
+    `/projects/${project.id}/batches/${created.batch.id}`,
+    `Imported ${outcome.rows.length} tasks.`,
   );
 }
 
@@ -101,6 +112,8 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
   const { projectId, fields } = loaderData;
   const navigation = useNavigation();
   const result = actionData as ActionResult | undefined;
+  const more = result?.more ?? 0;
+  const problems = (result?.errors?.length ?? 0) + more;
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -109,25 +122,36 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
         {result?.errors && result.errors.length > 0 && (
           <div className="rounded-md bg-white p-4 text-sm ring-1 ring-rose-200">
             <p className="mb-2 font-medium text-rose-700">
-              {result.errors.length} problem{result.errors.length === 1 ? '' : 's'}
-              {result.validRows ? `, ${result.validRows} rows are fine` : ''}
+              {problems} problem{problems === 1 ? '' : 's'}
+              {result.validRows
+                ? `, ${result.validRows === 1 ? '1 row is' : `${result.validRows} rows are`} fine`
+                : ''}
             </p>
             <ul className="max-h-60 space-y-1 overflow-y-auto font-mono text-xs">
               {result.errors.map((e, i) => (
                 <li key={i}>
-                  {e.line > 0 && <span className="text-slate-400">line {e.line}: </span>}
+                  {e.line > 0 && (
+                    <span className="text-slate-400">
+                      {result.unit ?? 'line'} {e.line}:{' '}
+                    </span>
+                  )}
                   {e.message}
                 </li>
               ))}
+              {more > 0 && <li className="text-slate-500">and {more} more</li>}
             </ul>
           </div>
         )}
-        <Field label="File" htmlFor="file" hint="CSV with a header row, or JSON Lines (.jsonl).">
+        <Field
+          label="File"
+          htmlFor="file"
+          hint="CSV or TSV with a header row, JSON Lines (.jsonl), or a JSON array (.json). Up to 5,000 rows and 5 MB."
+        >
           <input
             id="file"
             name="file"
             type="file"
-            accept=".csv,.jsonl,.ndjson,text/csv,application/x-ndjson"
+            accept=".csv,.tsv,.jsonl,.ndjson,.json,text/csv,text/tab-separated-values,application/json,application/x-ndjson"
             className="block w-full text-sm"
             required
           />
@@ -135,10 +159,6 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
         <Field label="Batch name" htmlFor="name" hint="Defaults to the file name.">
           <Input id="name" name="name" />
         </Field>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" name="skipInvalid" />
-          Skip invalid rows and import the rest
-        </label>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" name="qualification" />
           This batch is the qualification test (every row needs a <code>_gold</code> answer)
@@ -171,6 +191,14 @@ export default function NewBatch({ loaderData, actionData }: Route.ComponentProp
         <p className="mt-2">
           Add a <code className="font-mono">_gold</code> column with the correct answer to make a
           row a gold task.
+        </p>
+        <p className="mt-2">
+          A file is imported completely or not at all. One row with a problem stops the import, and
+          the problems are listed with their lines.
+        </p>
+        <p className="mt-2">
+          A JSON Lines or CSV export of this portal can be imported too: each task comes back with
+          its data, and its consensus answer as the gold answer.
         </p>
         <p className="mt-3 flex gap-3">
           <a
