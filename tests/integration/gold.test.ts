@@ -746,7 +746,10 @@ describe('what an annotator can tell about gold', () => {
     const other = await createMember(s.org.id, 'ANNOTATOR');
     expect(statusOf(await detail(await cookieFor(other, s.org.id)))).toBe(404);
 
+    expect((await myStats(ann.id)).goldAccuracy).toBe(0);
     await prisma.project.update({ where: { id: s.project.id }, data: { goldFeedback: false } });
+    // not even the accuracy on the dashboard moves, or it would give the task away
+    expect((await myStats(ann.id)).goldAccuracy).toBeNull();
     const hidden = await list();
     expect(
       payload<{ items: Array<{ goldScore: number | null }> }>(hidden).items[0].goldScore,
