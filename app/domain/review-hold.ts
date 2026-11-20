@@ -1,7 +1,25 @@
-/** How long a reviewer keeps a submission to themselves without deciding. */
+/** How long a hold lasts from the moment it was taken or last renewed. */
 export const REVIEW_HOLD_MINUTES = 15;
 
 const HOLD_MS = REVIEW_HOLD_MINUTES * 60_000;
+
+/**
+ * How often the review page renews the reviewer's hold while they work, so a
+ * long review or fix does not lose the submission to the next reviewer.
+ */
+export const HOLD_RENEW_MINUTES = 5;
+
+/**
+ * Whether the review page should renew the hold at this check: only for a
+ * reviewer who has the page in front of them and touched it since the last
+ * check. A tab left open stops renewing, and its hold lapses.
+ */
+export function shouldRenewHold(
+  page: { visible: boolean; lastInputAt: number },
+  now: number,
+): boolean {
+  return page.visible && now - page.lastInputAt <= HOLD_RENEW_MINUTES * 60_000;
+}
 
 /** Holds taken at or before this moment have lapsed. */
 export function holdCutoff(now: Date): Date {

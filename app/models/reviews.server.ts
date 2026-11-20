@@ -175,6 +175,30 @@ export async function holdReview(
   });
 }
 
+/**
+ * Gives the reviewer who holds a submission another full period. The review
+ * page asks for this while the reviewer is working, and a posted decision
+ * that does not validate does the same. One conditional write: it only
+ * touches a waiting submission whose hold is still theirs, so it cannot take
+ * a submission back from a reviewer who reserved it in the meantime.
+ */
+export async function renewReviewHold(
+  assignmentId: string,
+  reviewerId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const renewed = await prisma.assignment.updateMany({
+    where: {
+      id: assignmentId,
+      status: 'SUBMITTED',
+      reviewStatus: 'PENDING',
+      reviewHeldById: reviewerId,
+    },
+    data: { reviewHeldAt: now },
+  });
+  return renewed.count > 0;
+}
+
 export type RecordedReview =
   { ok: true; review: Review; assignment: Assignment } | { ok: false; error: ReviewRefusal };
 

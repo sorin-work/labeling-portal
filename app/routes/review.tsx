@@ -1,14 +1,19 @@
 import type { Prisma } from '@prisma/client';
-import { useRef, useState } from 'react';
-import { data, Form, Link, redirect, useNavigation } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { data, Form, Link, redirect, useFetcher, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
 import { useHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
-import { formatDuration } from '~/components/use-active-time';
+import { formatDuration, useLastInput } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { parseReviewForm } from '~/domain/review-form';
-import { activeHold, REVIEW_HOLD_MINUTES } from '~/domain/review-hold';
+import {
+  activeHold,
+  HOLD_RENEW_MINUTES,
+  REVIEW_HOLD_MINUTES,
+  shouldRenewHold,
+} from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -18,6 +23,7 @@ import { projectSchema, requireProject } from '~/models/projects.server';
 import {
   holdReview,
   recordReview,
+  renewReviewHold,
   reserveNextReview,
   type ReviewRefusal,
 } from '~/models/reviews.server';
@@ -99,7 +105,16 @@ export async function action({ request, params }: Route.ActionArgs) {
     if (!held.ok) return data({ error: REFUSED[held.error] }, { status: 409 });
     return redirect(`/review/${assignment.id}`);
   }
+  // The page posts this while the reviewer is working. When the hold is no
+  // longer theirs the page reloads its data and shows who has it now.
+  if (form.get('intent') === 'renew') {
+    const renewed = await renewReviewHold(assignment.id, current.user.id);
+    return data({ error: null }, { status: renewed ? 200 : 409 });
+  }
 
+  // a decision that does not validate below still shows the reviewer is at
+  // work, so their hold starts over; a stored decision clears it
+  await renewReviewHold(assignment.id, current.user.id);
   const parsed = parseReviewForm(form);
   if (!parsed.ok) return data({ error: parsed.error }, { status: 400 });
 
@@ -131,6 +146,36 @@ const DECISION_STYLE: Record<string, string> = {
   FIX: 'text-sky-700',
 };
 
+/**
+ * Keeps the reviewer's hold alive while they work on the page, and returns a
+ * function that renews it at once (starting a fix is the long case).
+ */
+function useHoldRenewal(holding: boolean) {
+  const fetcher = useFetcher();
+  const lastInput = useLastInput();
+  // the timer below must not start over on every render, so it goes through a
+  // ref to whatever the fetcher's submit currently is
+  const submit = useRef(fetcher.submit);
+  useEffect(() => {
+    submit.current = fetcher.submit;
+  });
+  const renew = useCallback(() => submit.current({ intent: 'renew' }, { method: 'post' }), []);
+
+  useEffect(() => {
+    if (!holding) return;
+    const timer = window.setInterval(() => {
+      const page = {
+        visible: document.visibilityState === 'visible',
+        lastInputAt: lastInput.current,
+      };
+      if (shouldRenewHold(page, Date.now())) renew();
+    }, HOLD_RENEW_MINUTES * 60_000);
+    return () => window.clearInterval(timer);
+  }, [holding, lastInput, renew]);
+
+  return renew;
+}
+
 export default function Review({ loaderData, actionData }: Route.ComponentProps) {
   const { project, schema, assignment, task, history, ownWork, hold, sampleNote } = loaderData;
   const [score, setScore] = useState<number | null>(null);
@@ -154,6 +199,7 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
     return false;
   });
   const pending = assignment.reviewStatus === 'PENDING';
+  const renewHold = useHoldRenewal(pending && !ownWork && hold?.mine === true);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -221,7 +267,8 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
             className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
           >
             <p className="text-xs text-slate-500">
-              Reserved for you until {formatDateTime(hold.until)}.
+              Reserved for you until {formatDateTime(hold.until)}, and for longer while you keep
+              working on it.
             </p>
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
@@ -294,7 +341,14 @@ export default function Review({ loaderData, actionData }: Route.ComponentProps)
                   >
                     Send back
                   </Button>
-                  <Button type="button" variant="ghost" onClick={() => setFixing(true)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setFixing(true);
+                      renewHold();
+                    }}
+                  >
                     Fix it myself
                   </Button>
                 </>
