@@ -21,6 +21,10 @@ Approval, sent back and QA score only describe the reviewed part of someone's
 work. With review sampling (below) or a backlog in the review queue that can
 be a small part, which is what the Reviewed column is for.
 
+A decision that a dispute overturned counts for nobody: it is left out of
+Reviewed, Approval, Sent back and QA score, and out of the reviewer's own
+numbers on their dashboard, which show it as "Overturned" instead.
+
 Click a name for that person's recent work in the project. The table can be
 sorted by any column and downloaded as CSV.
 

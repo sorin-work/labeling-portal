@@ -28,6 +28,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Batch` / `Task`       | Imported rows. Tasks can be gold (honeypots) or qualification items  |
 | `Assignment`           | One annotator's claim on a task and, once submitted, their answer    |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
+| `Dispute`              | An annotator's objection to one review decision, and its outcome     |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -48,7 +49,8 @@ tests/integration/  loaders and actions against a real PostgreSQL
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
    A submission is reserved for one reviewer while they look at it (see
    "Reviewer reservations" below). Sent-back work can be revised and
-   resubmitted by the annotator, and always returns to review.
+   resubmitted by the annotator, and always returns to review. Instead of
+   revising, the annotator can dispute the decision (see "Disputes" below).
 5. When `overlap` submissions are accepted the task is complete and the
    accepted answers are merged into a consensus with an agreement score.
 
@@ -97,6 +99,47 @@ counting; there is no background job that clears it.
   hold.
 - Dates in the raw statement are written as UTC explicitly, because a bare
   parameter would be converted to the database session's time zone.
+
+## Disputes
+
+An annotator who thinks a send-back or a correction is wrong can dispute it
+from `/my-work/:assignmentId`, with a reason. Approvals and gold scores cannot
+be disputed.
+
+- **Opening** (`openDispute` in `app/models/disputes.server.ts`): only the
+  annotator whose work it is, only on the latest decision while the work is
+  sent back or fixed, once per decision (`Dispute.reviewId` is unique), and
+  only within `Project.disputeWindowDays` of the review (14 by default, 0
+  turns disputes off). The dispute keeps a copy of the answer as it stood.
+- **Revise or dispute, never both.** Opening a dispute and `resubmitAssignment`
+  both start by locking the submission row, so the second one waits and then
+  sees what the first did: a revision is refused while a dispute is open, and
+  a dispute is refused once the work is back in review.
+- **Settling** (`resolveDispute`): anyone who can review in the project,
+  except the reviewer who made the decision and the annotator who did the
+  work, with a note. The rules are checked in the model, not only on the page.
+  It is one transaction. The dispute is closed with a write that requires it
+  to be open, so of two people settling at once one gets a 409.
+- **Upheld** changes nothing but the dispute. The annotator sees the note and
+  can revise again.
+- **Overturned** takes the decision back in the same transaction:
+  - the `Review` row is kept exactly as it was and gets `overturnedAt`;
+  - the submission becomes `APPROVED` and `refreshTaskStatus` runs, so the
+    consensus is rebuilt from the annotator's own answer (`finalAnswer` skips
+    overturned corrections) and the task may complete;
+  - an overturned send-back gets `reviewedAt` set to the time of the overturn:
+    the work becomes payable now and never in a period that was already paid.
+    An overturned fix was accepted and payable since the review, so its
+    `reviewedAt` stays;
+  - if the submission is not in the state the decision left it in, the
+    transaction throws and nothing is changed.
+- **Who reads an overturned review.** `standingReviews` in
+  `app/domain/outcome.ts` leaves it out, and with it the quality page
+  (reviewed, approval, sent back, QA score), the reviewer's own numbers (which
+  get an "overturned" count instead), the corrected answer and the `qa_score`
+  in the export. "My work", the revise page and the annotator page show the
+  outcome of the dispute in place of the review's feedback and score. The
+  histories on the review page and the task page keep the row and mark it.
 
 ## Quality
 

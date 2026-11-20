@@ -14,6 +14,12 @@
   decision on a submission someone else holds is refused. Two reviewers asking
   or deciding at the same moment can no longer end up on the same submission
 - Quality page and its CSV: share of each annotator's work that was reviewed
+- Disputes: an annotator can contest a send-back or a correction, once per
+  decision and within a time limit set on the project. Anyone who can review,
+  except the reviewer who decided, upholds or overturns it with a note. An
+  overturned decision no longer counts in the consensus, the export, the
+  quality numbers or the reviewer's stats, and the work counts as approved.
+  Sent-back work cannot be revised while its dispute is open
 
 ## 1.0.0 - 2026-11-08
 
