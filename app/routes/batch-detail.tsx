@@ -21,7 +21,7 @@ import {
 } from '~/models/batches.server';
 import { logActivity } from '~/models/activity.server';
 import { openBatches, promoteToGold } from '~/models/gold.server';
-import { resetRuleSuggestions, startPrelabel } from '~/models/prelabel.server';
+import { continuePrelabel, resetRuleSuggestions, startPrelabel } from '~/models/prelabel.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
@@ -126,7 +126,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
   const project = await requireProject(current, params.projectId, 'manageProjects');
   const form = await request.formData();
-  if (form.get('intent') === 'prelabel') {
+  const intent = form.get('intent');
+  if (intent === 'prelabel-continue' || intent === 'prelabel-restart') {
     const batch = await prisma.batch.findFirst({
       where: { id: params.batchId, projectId: project.id },
     });
@@ -134,15 +135,20 @@ export async function action({ request, params }: Route.ActionArgs) {
     if (project.prelabel === null) {
       return data({ error: 'The project has no suggestion rule.' }, { status: 400 });
     }
-    // what the rule suggested on tasks nobody has started yet is taken back,
-    // and the rule as it is now runs again, after this request
-    const reset = await resetRuleSuggestions(batch.id);
-    await logActivity(prisma, {
-      projectId: project.id,
-      actorId: current.user.id,
-      action: 'batch.prelabel',
-      detail: { batchId: batch.id, name: batch.name, reset },
-    });
+    if (intent === 'prelabel-continue') {
+      // after a run stopped at its time limit: the tasks still to do, nothing taken back
+      await continuePrelabel(batch.id);
+    } else {
+      // after the rule changed: what it suggested on tasks nobody has been
+      // handed is taken back, and the rule as it is now runs again
+      const reset = await resetRuleSuggestions(batch.id);
+      await logActivity(prisma, {
+        projectId: project.id,
+        actorId: current.user.id,
+        action: 'batch.prelabel',
+        detail: { batchId: batch.id, name: batch.name, reset },
+      });
+    }
     startPrelabel(batch.id);
     return redirectWithFlash(
       request,
@@ -272,9 +278,21 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
               : (batch.prelabelNote ?? 'the rule has not run over this batch.')}
           </span>
           {loaderData.hasRule && batch.prelabelState !== 'PENDING' && (
-            <Button name="intent" value="prelabel" variant="secondary" className="ml-auto">
-              Run the rule again
-            </Button>
+            <span className="ml-auto flex gap-2">
+              {(batch.prelabelState === 'TIMED_OUT' || batch.prelabelState === 'FAILED') && (
+                <Button name="intent" value="prelabel-continue" variant="secondary">
+                  Continue
+                </Button>
+              )}
+              <Button
+                name="intent"
+                value="prelabel-restart"
+                variant="ghost"
+                title="Takes back what the rule suggested on tasks nobody has been handed, and runs the rule as it is now"
+              >
+                Run again from scratch
+              </Button>
+            </span>
           )}
         </Form>
       )}

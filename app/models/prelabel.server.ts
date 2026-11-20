@@ -11,11 +11,13 @@ import { prisma } from '~/lib/db.server';
  * request that imported the batch: the import marks the batch `PENDING` and
  * `startPrelabel` runs it after the response has gone, in the same process.
  * A run stops after `PRELABEL_TIME_LIMIT_MS` and says so on the batch; what it
- * did is kept, and "Run again" on the batch page goes on from there. A batch
+ * did is kept, and "Continue" on the batch page goes on from there. One task
+ * costs a bounded amount of work (see `findTerms`), so the limit holds. A batch
  * that was left `PENDING` by a restart is picked up when its page is opened.
  *
- * Only tasks that have no suggestion yet are touched (a file's `_prediction`
- * wins over the rule), and never qualification questions. A rule that finds
+ * Only tasks that have no suggestion yet and that nobody has been handed are
+ * touched (a file's `_prediction` wins over the rule), and never
+ * qualification questions. A rule that finds
  * nothing for a task still marks it, so it is not tried again.
  */
 
@@ -90,11 +92,14 @@ export async function runPrelabel(
   let tried = 0;
   let after = 0;
   for (;;) {
+    // tasks nobody has been handed yet: someone who has the task open keeps
+    // seeing what they saw
     const tasks = await prisma.task.findMany({
       where: {
         batchId,
         isQualification: false,
         suggestionSource: null,
+        assignments: { none: {} },
         position: { gt: after },
       },
       orderBy: { position: 'asc' },
@@ -102,25 +107,27 @@ export async function runPrelabel(
       select: { id: true, position: true, data: true },
     });
     if (tasks.length === 0) break;
+    const made: Array<{ id: string; answer: unknown }> = [];
+    let stopped = false;
     for (const task of tasks) {
       if (clock() >= deadline) {
-        return finish(
-          { state: 'TIMED_OUT', suggested, tried },
-          `Stopped after ${tried} tasks, at the time limit. Run it again to go on.`,
-        );
+        stopped = true;
+        break;
       }
-      const answer = suggest(schema.schema, task.data as Record<string, unknown>, config);
-      // only where nothing has been suggested in the meantime
-      await prisma.task.updateMany({
-        where: { id: task.id, suggestionSource: null },
-        data: {
-          suggestion: answer === null ? undefined : (answer as Prisma.InputJsonValue),
-          suggestionSource: config.rule,
-        },
+      made.push({
+        id: task.id,
+        answer: suggest(schema.schema, task.data as Record<string, unknown>, config),
       });
-      tried += 1;
-      if (answer !== null) suggested += 1;
       after = task.position;
+    }
+    const written = await writeSuggestions(made, config.rule);
+    tried += written.tried;
+    suggested += written.suggested;
+    if (stopped) {
+      return finish(
+        { state: 'TIMED_OUT', suggested, tried },
+        `Stopped after ${tried} tasks, at the time limit. Continue to go on from there.`,
+      );
     }
   }
   return finish(
@@ -130,24 +137,66 @@ export async function runPrelabel(
 }
 
 /**
- * Takes back what the rule suggested on tasks nobody has started yet, so a
- * changed rule can run again. Suggestions from the file stay, and so does
- * every suggestion someone has already seen.
+ * Writes what a run made, in the lock order of the rest of the app: the task
+ * rows by id first, then a statement that checks, under those locks, that the
+ * task still has no suggestion and nobody has been handed it. A claim that
+ * got there first keeps the task as its annotator saw it.
+ */
+async function writeSuggestions(
+  made: ReadonlyArray<{ id: string; answer: unknown }>,
+  source: string,
+): Promise<{ tried: number; suggested: number }> {
+  if (made.length === 0) return { tried: 0, suggested: 0 };
+  return prisma.$transaction(async (tx) => {
+    const ids = made.map((m) => m.id);
+    await tx.$queryRaw`SELECT id FROM "Task" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
+    let tried = 0;
+    let suggested = 0;
+    for (const { id, answer } of made) {
+      const json = answer === null ? null : JSON.stringify(answer);
+      const count = await tx.$executeRaw`
+        UPDATE "Task" SET suggestion = ${json}::jsonb, "suggestionSource" = ${source}
+        WHERE id = ${id} AND "suggestionSource" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM "Assignment" a WHERE a."taskId" = "Task".id)`;
+      if (count > 0) {
+        tried += 1;
+        if (answer !== null) suggested += 1;
+      }
+    }
+    return { tried, suggested };
+  });
+}
+
+/**
+ * For "Run again from scratch" after the rule changed: takes back what the
+ * rule suggested on tasks nobody has been handed, so the rule as it is now
+ * suggests again. A file's predictions stay, and so does every suggestion
+ * someone has seen. Same lock order as `writeSuggestions`.
  */
 export async function resetRuleSuggestions(batchId: string): Promise<number> {
-  const reset = await prisma.task.updateMany({
-    where: {
-      batchId,
-      suggestionSource: { not: null, notIn: ['file'] },
-      assignments: { none: {} },
-    },
-    data: { suggestion: Prisma.DbNull, suggestionSource: null },
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM "Task"
+      WHERE "batchId" = ${batchId} AND "suggestionSource" IS NOT NULL AND "suggestionSource" <> 'file'
+      ORDER BY id FOR UPDATE`;
+    const reset = await tx.$executeRaw`
+      UPDATE "Task" SET suggestion = NULL, "suggestionSource" = NULL
+      WHERE "batchId" = ${batchId} AND "suggestionSource" IS NOT NULL AND "suggestionSource" <> 'file'
+        AND NOT EXISTS (SELECT 1 FROM "Assignment" a WHERE a."taskId" = "Task".id)`;
+    await tx.batch.update({
+      where: { id: batchId },
+      data: { prelabelState: 'PENDING', prelabelNote: null },
+    });
+    return reset;
   });
+}
+
+/** For "Continue" after a run stopped at its time limit: goes on with the tasks still to do. */
+export async function continuePrelabel(batchId: string): Promise<void> {
   await prisma.batch.update({
     where: { id: batchId },
     data: { prelabelState: 'PENDING', prelabelNote: null },
   });
-  return reset.count;
 }
 
 export type SuggestionQuality = {
@@ -165,6 +214,11 @@ export type SuggestionQuality = {
   }>;
   /** the suggestions on gold tasks scored against the gold answers, by where they came from */
   againstGold: Array<{ source: string; tasks: number; score: number }>;
+  /**
+   * Regular tasks have suggestions from the file and the project has no rule,
+   * while there are gold tasks: those have none, so they can be told apart.
+   */
+  goldStandsOut: boolean;
 };
 
 /**
@@ -175,6 +229,7 @@ export type SuggestionQuality = {
 export async function suggestionQuality(project: {
   id: string;
   schema: Prisma.JsonValue;
+  prelabel: Prisma.JsonValue;
 }): Promise<SuggestionQuality> {
   const schema = parseTaskSchema(project.schema);
   const [tasks, submissions, gold] = await Promise.all([
@@ -227,8 +282,15 @@ export async function suggestionQuality(project: {
     }
   }
 
+  const [fromFile, goldTasks] = await Promise.all([
+    prisma.task.count({
+      where: { projectId: project.id, isGold: false, suggestionSource: 'file' },
+    }),
+    prisma.task.count({ where: { projectId: project.id, isGold: true, goldRetiredAt: null } }),
+  ]);
   return {
     tasks,
+    goldStandsOut: fromFile > 0 && goldTasks > 0 && project.prelabel === null,
     annotators: [...people.values()]
       .map(({ seconds, ...row }) => ({
         ...row,
