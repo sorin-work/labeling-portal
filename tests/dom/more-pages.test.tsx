@@ -50,6 +50,7 @@ function review(kind: Kind): Data<typeof reviewLoader> {
       activeSeconds: 95,
       reviewStatus: 'PENDING',
       answer: answers[kind] as never,
+      suggestionUse: 'unchanged',
     },
     task: { id: 't1', externalId: 'row-7', data: KINDS[kind].data },
     history: [
@@ -243,6 +244,16 @@ const settings: Data<typeof settingsLoader> = {
     scored: {},
     dimensions: new Map(),
   },
+  prelabel: {
+    text: '{"rule":"phrases","entities":{"PERSON":["Ada"]}}',
+    rules: [
+      {
+        name: 'phrases',
+        title: 'Phrases per entity type',
+        example: '{"rule":"phrases","entities":{"PERSON":["Ada Lovelace"]}}',
+      },
+    ],
+  },
 };
 
 const annotator = (userId: string, name: string, flagged: boolean) => ({
@@ -283,6 +294,11 @@ const quality: Data<typeof qualityLoader> = {
     { day: '2026-11-18', submitted: 5, accepted: 4 },
     { day: '2026-11-19', submitted: 7, accepted: 6 },
   ],
+  suggestions: {
+    tasks: 4,
+    annotators: [{ userId: 'u1', name: 'Ann', withSuggestion: 4, unchanged: 3, avgSeconds: 40 }],
+    againstGold: [{ source: 'keywords', tasks: 2, score: 0.5 }],
+  },
   lowestGold: [
     {
       taskId: 't1',

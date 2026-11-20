@@ -29,6 +29,7 @@ function workData(kind: Kind, id = 'a1'): Awaited<ReturnType<typeof workLoader>>
     schema,
     task: { ref: `ref-${id}`, batch: 'Batch 1', data },
     doneToday: id === 'a1' ? 3 : 4,
+    suggestion: null,
   };
 }
 
@@ -78,6 +79,32 @@ describe('work page', () => {
     });
     expect(submit).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: 'Skip…' })).toHaveProperty('disabled', false);
+  });
+
+  it('shows a suggestion as a suggestion, and hands in nothing until it is taken', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage({
+      path: '/work/:assignmentId',
+      url: '/work/a1',
+      Component: Work,
+      loaderData: {
+        ...workData('text_classification'),
+        suggestion: { answer: { labels: ['negative'] }, text: 'negative' },
+      },
+    });
+    const submit = await screen.findByRole('button', { name: 'Submit and next' });
+    expect(screen.getByText(/^Suggestion/).closest('div')?.textContent).toContain('negative');
+    // nothing is filled in: no label is picked and submit is off
+    expect(screen.getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(submit).toHaveProperty('disabled', true);
+    await expectAccessible();
+
+    await user.click(screen.getByRole('button', { name: 'Start from the suggestion' }));
+    expect(screen.getByRole('radio', { name: /negative/ })).toHaveProperty('checked', true);
+    expect(submit).toHaveProperty('disabled', false);
+    const hidden = container.querySelector<HTMLInputElement>('input[name=fromSuggestion]');
+    expect(hidden?.value).toBe('1');
+    expect(screen.getByText(/You started from the suggestion/)).toBeTruthy();
   });
 
   it('opens the skip form and gives focus back when it closes', async () => {
