@@ -8,7 +8,7 @@ import { MAX_BATCH_PRIORITY, parseBatchPriority } from '~/domain/queue-order';
 import { refSuffix } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDate, formatDateTime, TASK_STATUS_BADGES, titleCase } from '~/lib/format';
+import { formatDate, formatDateTime, TASK_STATUS_BADGES } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
