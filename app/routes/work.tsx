@@ -26,6 +26,7 @@ import { withoutImportId } from '~/domain/import';
 import { renderMarkdown } from '~/domain/markdown';
 import { assignmentRef } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
+import { userTag } from '~/lib/user-tag.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
 import { projectSchema } from '~/models/projects.server';
@@ -86,7 +87,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project.instructionsUpdatedAt > lastSubmission.submittedAt,
   );
   return {
-    userId: user.id,
+    // the key of unsaved work in the tab; the user's id does not leave the server
+    userTag: userTag(user.id),
     instructionsChanged,
     assignment: {
       id: assignment.id,
@@ -216,7 +218,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const [activeSeconds, raiseActiveSeconds] = useActiveTime(assignment.draftSeconds);
   const draftState = useDraftSave({
     url: `/work/${assignment.id}/draft`,
-    user: loaderData.userId,
+    user: loaderData.userTag,
     answer,
     seconds: activeSeconds,
     restored: assignment.draft !== null,

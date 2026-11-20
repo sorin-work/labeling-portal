@@ -79,6 +79,12 @@ enum DisputeStatus {
   WITHDRAWN
 }
 
+/// How the queue orders the tasks of a batch.
+enum QueueOrder {
+  IMPORT
+  SHUFFLED
+}
+
 enum PayMode {
   PER_TASK
   HOURLY
@@ -92,12 +98,13 @@ enum Role {
 }
 
 model Organization {
-  id          String       @id @default(cuid())
+  id          String             @id @default(cuid())
   name        String
-  slug        String       @unique
-  createdAt   DateTime     @default(now())
+  slug        String             @unique
+  createdAt   DateTime           @default(now())
   memberships Membership[]
   projects    Project[]
+  credited    CreditedInterval[]
 }
 
 model User {
@@ -116,21 +123,36 @@ model User {
   goldRevisions         GoldRevision[]
   qualificationAttempts QualificationAttempt[]
   activity              Activity[]
+  credited              CreditedInterval[]
 }
 
 model Membership {
-  id            String       @id @default(cuid())
-  orgId         String
-  userId        String
-  role          Role
-  createdAt     DateTime     @default(now())
-  /// up to when this person's working time has been credited, for any task;
-  /// time for the next submission counts from here, so no minute is paid twice
-  creditedUntil DateTime?
-  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String       @id @default(cuid())
+  orgId     String
+  userId    String
+  role      Role
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, userId])
+  @@index([userId])
+}
+
+/// A stretch of a person's time that has been credited to some piece of
+/// work in an organisation. Credits never overlap these, so no minute is paid
+/// twice. Kept by organisation and user, not by membership, so removing and
+/// adding someone again does not forget what was credited.
+model CreditedInterval {
+  id     String       @id @default(cuid())
+  orgId  String
+  userId String
+  start  DateTime
+  end    DateTime
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, userId, end])
   @@index([userId])
 }
 
@@ -153,6 +175,10 @@ model Project {
   disputeWindowDays        Int                    @default(14)
   /// annotators see their score and the expected answer of a gold task once they have submitted it
   goldFeedback             Boolean                @default(true)
+  /// import order, or an order of its own for every annotator
+  queueOrder               QueueOrder             @default(IMPORT)
+  /// about one gold task in every N; empty leaves gold where its position puts it
+  goldEvery                Int?
   qualificationRequired    Boolean                @default(false)
   qualificationPassPercent Int                    @default(80)
   payMode                  PayMode                @default(PER_TASK)
@@ -167,8 +193,17 @@ model Project {
   assignments              Assignment[]
   qualificationAttempts    QualificationAttempt[]
   activity                 Activity[]
+  queueSecret              QueueSecret?
 
   @@index([orgId])
+}
+
+/// The key of the hashes that decide gold timing and the shuffled order of a
+/// project. A table of its own, so that loading a project never loads it.
+model QueueSecret {
+  projectId String  @id
+  secret    String  @default(dbgenerated("encode(gen_random_bytes(32), 'hex'::text)"))
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model ProjectMember {
@@ -189,6 +224,10 @@ model Batch {
   projectId String
   name      String
   format    ImportFormat
+  /// batches with a higher number are handed out first
+  priority  Int          @default(0)
+  /// set while nothing from this batch is handed out
+  pausedAt  DateTime?
   createdAt DateTime     @default(now())
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks     Task[]
@@ -197,37 +236,38 @@ model Batch {
 }
 
 model Task {
-  id              String       @id @default(cuid())
+  id              String         @id @default(cuid())
   projectId       String
   batchId         String
   externalId      String?
   position        Int
   data            Json
-  status          TaskStatus   @default(OPEN)
+  status          TaskStatus     @default(OPEN)
   /// merged answer of the accepted submissions, set when the task completes
   consensus       Json?
   agreement       Float?
   /// honeypot task with a known answer, scored automatically
-  isGold          Boolean      @default(false)
+  isGold          Boolean        @default(false)
   /// part of the qualification test, never handed out in the queue
-  isQualification Boolean      @default(false)
+  isQualification Boolean        @default(false)
   goldAnswer      Json?
   /// set when a manager retired this gold task: not handed out any more, its scores do not count
   goldRetiredAt   DateTime?
   /// the completed task this gold task was copied from
   goldSourceId    String?
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime       @default(now())
   completedAt     DateTime?
-  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  batch           Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  goldSource      Task?        @relation("GoldCopy", fields: [goldSourceId], references: [id], onDelete: SetNull)
-  goldCopies      Task[]       @relation("GoldCopy")
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  batch           Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  goldSource      Task?          @relation("GoldCopy", fields: [goldSourceId], references: [id], onDelete: SetNull)
+  goldCopies      Task[]         @relation("GoldCopy")
   goldRevisions   GoldRevision[]
   assignments     Assignment[]
 
   @@index([projectId, status, position])
   @@index([batchId, position])
-  @@index([batchId, status])
+  @@index([batchId, status, position])
+  @@index([batchId, status, isGold, position])
   @@index([goldSourceId])
 }
 

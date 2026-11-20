@@ -1,7 +1,17 @@
 import { Prisma, type Assignment, type PayMode, type Project } from '@prisma/client';
 
-import { clampActiveSeconds, creditTime, revisionCap, revisionSeconds } from '~/domain/active-time';
+import {
+  clampActiveSeconds,
+  creditHorizon,
+  creditTime,
+  mergeIntervals,
+  revisionCap,
+  revisionSeconds,
+  type Credit,
+  type Interval,
+} from '~/domain/active-time';
 import { payableSince } from '~/domain/payouts';
+import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { prisma, utc } from '~/lib/db.server';
 
@@ -33,18 +43,24 @@ export function findActiveAssignment(projectId: string, userId: string, now = ne
 
 /**
  * SQL condition on task `t`: open, not part of the qualification test, not a
- * retired gold task, not already claimed, done or skipped by this annotator,
- * and (unless it is a gold task) with fewer live claims and submissions than
- * `overlap`. A completed task and the gold tasks copied from it are one
- * group: someone who has labeled, skipped or holds any task of the group gets
- * none of the others, because seeing the same item twice would tell them it
- * is gold.
+ * retired gold task, not in a paused batch, not already claimed, done or
+ * skipped by this annotator, and (unless it is a gold task) with fewer live
+ * claims and submissions than `overlap`. A completed task and the gold tasks
+ * copied from it are one group: someone who has labeled, skipped or holds any
+ * task of the group gets none of the others, because seeing the same item
+ * twice would tell them it is gold.
+ *
+ * This is the whole rule for "may this annotator be given this task". The
+ * pick, the check under the lock and the count on the dashboard all use it.
  */
 function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     t.status = 'OPEN'
     AND NOT t."isQualification"
     AND t."goldRetiredAt" IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM "Batch" held WHERE held.id = t."batchId" AND held."pausedAt" IS NOT NULL
+    )
     AND NOT EXISTS (
       SELECT 1 FROM "Assignment" mine
       WHERE mine."taskId" = t.id AND mine."userId" = ${userId}
@@ -68,15 +84,183 @@ function eligibleFor(userId: string, now: Date, overlap: Prisma.Sql): Prisma.Sql
   )`;
 }
 
-/** Next task the annotator may work on, in import order. */
-async function nextCandidate(project: Project, userId: string, now: Date) {
-  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-    SELECT t.id
-    FROM "Task" t
-    WHERE t."projectId" = ${project.id}
-      AND ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)}
-    ORDER BY t.position
+export type PickOptions = {
+  project: Project;
+  userId: string;
+  now: Date;
+  /**
+   * The project's queue secret (`queueSecretFor`). The shuffled order and the
+   * gold draw are HMACs keyed with it, so nothing an annotator sees (ids,
+   * times, which of their tasks were gold) tells them what comes next.
+   */
+  secret: string;
+  /** wait for tasks another annotator is claiming right now instead of passing over them */
+  wait?: boolean;
+};
+
+/**
+ * The project's queue secret, made on first use for a project created after
+ * the migration. It stays on the server: it is in a table of its own, which
+ * no loader reads.
+ */
+export async function queueSecretFor(
+  db: Prisma.TransactionClient,
+  projectId: string,
+): Promise<string> {
+  const read = () =>
+    db.$queryRaw<Array<{ secret: string }>>`
+      SELECT secret FROM "QueueSecret" WHERE "projectId" = ${projectId}`;
+  let rows = await read();
+  if (rows.length === 0) {
+    await db.$executeRaw`
+      INSERT INTO "QueueSecret" ("projectId") VALUES (${projectId})
+      ON CONFLICT ("projectId") DO NOTHING`;
+    rows = await read();
+  }
+  return rows[0].secret;
+}
+
+/** A 32-bit number from an HMAC of `text` keyed with the secret, as SQL. */
+function keyedHash(text: Prisma.Sql, secret: string): Prisma.Sql {
+  return Prisma.sql`('x' || substr(encode(hmac((${text})::text, ${secret}::text, 'sha256'), 'hex'), 1, 8))::bit(32)::bigint`;
+}
+
+/**
+ * "Is a gold task due for this annotator?", as CTEs. Each claim is a draw
+ * with a chance of 1 in N (`goldDraw`): an HMAC of the annotator and their
+ * latest submission or skip, keyed with the project's secret. So the answer
+ * is the same on a reload, new after every task they hand in or skip, and
+ * independent of what came before. It is never due for the first task of a
+ * session, nor when the cap of recent gold tasks is reached.
+ */
+function goldDueCtes(options: Omit<PickOptions, 'wait'>, goldEvery: number): Prisma.Sql {
+  const { project, userId, now, secret } = options;
+  const { below, window, max } = goldDraw(goldEvery);
+  const sessionStart = addMinutes(now, -SESSION_GAP_MINUTES);
+  return Prisma.sql`
+    WITH recent AS (
+      SELECT a."submittedAt", g."isGold"
+      FROM "Assignment" a
+      JOIN "Task" g ON g.id = a."taskId"
+      WHERE a."userId" = ${userId} AND a."projectId" = ${project.id}
+        AND a.status = 'SUBMITTED' AND a."submittedAt" IS NOT NULL
+      ORDER BY a."submittedAt" DESC, a.id DESC
+      LIMIT ${window}
+    ),
+    latest AS (
+      SELECT COALESCE((
+        SELECT a.id FROM "Assignment" a
+        WHERE a."userId" = ${userId} AND a."projectId" = ${project.id}
+          AND a.status IN ('SUBMITTED', 'SKIPPED')
+        ORDER BY a."claimedAt" DESC, a.id DESC
+        LIMIT 1
+      ), '') AS id
+    ),
+    spacing AS (
+      SELECT (
+        ${keyedHash(Prisma.sql`'gold:' || ${userId} || ':' || latest.id`, secret)} < ${below}
+        AND (SELECT count(*) FROM recent r WHERE r."isGold") < ${max}
+        AND NOT COALESCE((SELECT max(r."submittedAt") FROM recent r) <= ${utc(sessionStart)}, true)
+      ) AS due
+      FROM latest
+    )`;
+}
+
+/**
+ * The statement that decides which task an annotator gets next, and locks it.
+ * Everything about the order is in here, in one statement:
+ *
+ * 1. With gold spacing on, the kind of task that is wanted now (gold when one
+ *    is due, a regular task otherwise) comes first and the other kind second,
+ *    so the queue never runs dry while something eligible is left.
+ * 2. Batches that are not paused, the highest priority first, then in import
+ *    order (by their first position).
+ * 3. Inside a batch, by position or, in a shuffled project, by an HMAC of
+ *    the annotator and the task keyed with the project's secret: an order of
+ *    their own for everyone, always the same one for the same person, and
+ *    not one they can work out.
+ *
+ * The three levels are nested lateral joins with `LIMIT 1`. PostgreSQL runs
+ * them as nested loops and stops at the first row, so only the batches up to
+ * the one that has an eligible task are looked at, and only the task that is
+ * picked gets locked. The statement has no `ORDER BY` at the top on purpose:
+ * that would sort the output and so visit, and lock, a task in every batch.
+ *
+ * `FOR UPDATE SKIP LOCKED` passes over tasks another annotator is claiming at
+ * this very moment. The caller still checks the task again before it claims
+ * it: whether a slot is free is a count over other people's claims, and this
+ * statement may have counted before one of them was committed.
+ */
+export function nextTaskSql(options: PickOptions): Prisma.Sql {
+  const { project, userId, now, secret, wait = false } = options;
+  const lock = wait ? Prisma.sql`FOR UPDATE OF t` : Prisma.sql`FOR UPDATE OF t SKIP LOCKED`;
+  const eligible = eligibleFor(userId, now, Prisma.sql`${project.overlap}`);
+  const spaced = project.goldEvery !== null;
+
+  // the first eligible task of batch `b` (of kind `c` when gold is spaced)
+  const inBatch =
+    project.queueOrder === 'SHUFFLED'
+      ? Prisma.sql`
+          SELECT t.id
+          FROM (
+            SELECT s.id, hmac('order:' || ${userId} || ':' || s.id, ${secret}::text, 'sha256') AS shuffled
+            FROM "Task" s
+            WHERE s."batchId" = b.id AND s.status = 'OPEN'
+              ${spaced ? Prisma.sql`AND s."isGold" = c.gold` : Prisma.empty}
+            ORDER BY shuffled
+          ) s
+          JOIN "Task" t ON t.id = s.id
+          WHERE ${eligible}
+          ORDER BY s.shuffled
+          LIMIT 1
+          ${lock}`
+      : Prisma.sql`
+          SELECT t.id
+          FROM "Task" t
+          WHERE t."batchId" = b.id
+            ${spaced ? Prisma.sql`AND t."isGold" = c.gold` : Prisma.empty}
+            AND ${eligible}
+          ORDER BY t.position, t.id
+          LIMIT 1
+          ${lock}`;
+
+  const inProject = Prisma.sql`
+    SELECT task.id
+    FROM (
+      SELECT b.id
+      FROM "Batch" b
+      WHERE b."projectId" = ${project.id} AND b."pausedAt" IS NULL
+      ORDER BY
+        b.priority DESC,
+        (SELECT min(f.position) FROM "Task" f WHERE f."batchId" = b.id) NULLS LAST,
+        b.id
+    ) b
+    CROSS JOIN LATERAL (${inBatch}) task
     LIMIT 1`;
+
+  if (!spaced) return inProject;
+  return Prisma.sql`
+    ${goldDueCtes({ project, userId, now, secret }, project.goldEvery ?? 0)}
+    SELECT pick.id
+    FROM (
+      SELECT want.gold
+      FROM spacing, (VALUES (true), (false)) AS want(gold)
+      ORDER BY (want.gold = spacing.due) DESC
+    ) c
+    CROSS JOIN LATERAL (${inProject}) pick
+    LIMIT 1`;
+}
+
+/**
+ * Picks the task the annotator gets next and locks its row for the rest of
+ * the transaction, or returns null when there is none. The same inputs and
+ * the same secret give the same task.
+ */
+export async function pickNextTask(
+  tx: Prisma.TransactionClient,
+  options: PickOptions,
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(nextTaskSql(options));
   return rows[0]?.id ?? null;
 }
 
@@ -109,7 +293,10 @@ export async function countAvailable(
   return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
 }
 
-/** Gives the annotator their current claim, or claims the next available task. */
+/**
+ * Gives the annotator their current claim, or claims the next available task.
+ * Which task that is, is `nextTaskSql`.
+ */
 export async function claimNextTask(
   project: Project,
   userId: string,
@@ -126,15 +313,18 @@ export async function claimNextTask(
     if (!member?.qualifiedAt) return { ok: false, reason: 'unqualified' };
   }
 
-  // Two people can pick the same candidate at the same moment. Lock the task
-  // row, check it is still eligible and only then claim it; if someone else
-  // got there first, look for the next candidate.
+  const pick = { project, userId, now, secret: await queueSecretFor(prisma, project.id) };
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
-    const taskId = await nextCandidate(project, userId, now);
-    if (!taskId) return { ok: false, reason: 'empty' };
-
-    const assignment = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE`;
+    const outcome = await prisma.$transaction(async (tx) => {
+      // The pick locks the task and passes over tasks that are being claimed
+      // by someone else right now. Only when that leaves nothing does it wait
+      // for those: a task with two slots may still have one for us.
+      const taskId =
+        (await pickNextTask(tx, pick)) ?? (await pickNextTask(tx, { ...pick, wait: true }));
+      if (!taskId) return 'empty' as const;
+      // With the row locked, look again in a statement of its own. The pick
+      // counted the task's claims in its snapshot, and a claim that was
+      // committed between that count and our lock is only visible now.
       const [check] = await tx.$queryRaw<Array<{ eligible: boolean }>>`
         SELECT ${eligibleFor(userId, now, Prisma.sql`${project.overlap}`)} AS eligible
         FROM "Task" t WHERE t.id = ${taskId}`;
@@ -149,7 +339,8 @@ export async function claimNextTask(
         },
       });
     });
-    if (assignment) return { ok: true, assignment, resumed: false };
+    if (outcome === 'empty') return { ok: false, reason: 'empty' };
+    if (outcome) return { ok: true, assignment: outcome, resumed: false };
   }
   return { ok: false, reason: 'empty' };
 }
@@ -166,36 +357,52 @@ async function ownActive(assignmentId: string, userId: string) {
 export { clampActiveSeconds };
 
 /**
- * Up to when a person's working time has been credited, read with a lock on
- * their membership that lasts until the transaction ends. Every credit goes
- * through here, so two submissions of one person are credited one after the
- * other and the second sees what the first took. Null when the person has no
- * membership in the organisation: then there is nothing to hold the moment,
- * and nothing is credited.
+ * A person's working clock in an organisation: the stretches of their time
+ * already credited, read after a lock on their membership that lasts until
+ * the transaction ends. Every credit goes through here, so two submissions of
+ * one person are credited one after the other and the second sees what the
+ * first took. The stretches are kept by organisation and user, so removing
+ * and adding someone again keeps them. Null when the person has no
+ * membership: then nothing is credited.
  */
-type WorkClock = { id: string; creditedUntil: Date | null } | null;
-
 async function lockWorkClock(
   tx: Prisma.TransactionClient,
   orgId: string,
   userId: string,
+  now: Date,
 ): Promise<WorkClock> {
-  const rows = await tx.$queryRaw<Array<NonNullable<WorkClock>>>`
-    SELECT id, "creditedUntil" FROM "Membership"
-    WHERE "orgId" = ${orgId} AND "userId" = ${userId} FOR UPDATE`;
-  return rows[0] ?? null;
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "Membership"
+    WHERE "orgId" = ${orgId} AND "userId" = ${userId} FOR NO KEY UPDATE`;
+  if (rows.length === 0) return null;
+  const credited = await tx.creditedInterval.findMany({
+    where: { orgId, userId, end: { gt: creditHorizon(now) } },
+    select: { start: true, end: true },
+  });
+  return { orgId, userId, credited };
 }
 
-/** Moves the clock to where a credit ended. A credit of nothing leaves it where it was. */
-async function advanceWorkClock(
+type WorkClock = { orgId: string; userId: string; credited: Interval[] } | null;
+
+/**
+ * Stores what a credit took. The person's stretches are written back merged,
+ * and those that end before the horizon, which no credit can reach any more,
+ * are removed, so the table holds a few rows per person.
+ */
+async function recordCredit(
   tx: Prisma.TransactionClient,
   clock: WorkClock,
-  credit: { seconds: number; creditedUntil: Date | null },
+  credit: Credit,
+  now: Date,
 ) {
-  if (!clock || credit.seconds === 0) return;
-  await tx.membership.update({
-    where: { id: clock.id },
-    data: { creditedUntil: credit.creditedUntil },
+  if (!clock || credit.pieces.length === 0) return;
+  const { orgId, userId } = clock;
+  const merged = mergeIntervals([...clock.credited, ...credit.pieces]);
+  await tx.creditedInterval.deleteMany({ where: { orgId, userId } });
+  await tx.creditedInterval.createMany({
+    data: merged
+      .filter((interval) => interval.end > creditHorizon(now))
+      .map((interval) => ({ orgId, userId, ...interval })),
   });
 }
 
@@ -273,14 +480,14 @@ export async function submitAssignment(
   const reviewStatus = sampling.review ? 'PENDING' : 'NOT_REQUIRED';
   const assignment = await prisma.$transaction(async (tx) => {
     // The person's clock first, in every transaction that credits time: the
-    // working time of this claim counts from where their time was last
-    // credited, so the same minutes are not paid on two pieces of work.
-    const clock = await lockWorkClock(tx, task.project.orgId, userId);
+    // claim is credited only the minutes of its window that no other work of
+    // theirs has been credited, so the same minutes are not paid twice.
+    const clock = await lockWorkClock(tx, task.project.orgId, userId, now);
     const credit = creditTime({
       reported: clock ? input.activeSeconds : 0,
       start: found.assignment.claimedAt,
       now,
-      creditedUntil: clock?.creditedUntil ?? null,
+      credited: clock?.credited ?? [],
     });
     // scored here, under a lock on the expected answer, so a manager's edit of
     // it cannot fall between reading it and storing the score
@@ -312,7 +519,7 @@ export async function submitAssignment(
         ...NO_DRAFT,
       },
     });
-    if (submitted) await advanceWorkClock(tx, clock, credit);
+    if (submitted) await recordCredit(tx, clock, credit, now);
     // work that no reviewer will see is accepted at once and can complete the
     // task, in the same transaction as the write that accepts it
     if (submitted && !sampling.review && !task.isGold) {
@@ -383,7 +590,7 @@ export async function resubmitAssignment(
       reviewStatus: 'SENT_BACK',
     };
     const current = await tx.assignment.findFirst({ where: sentBack, select: REVISION_FIELDS });
-    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId) : null;
+    const clock = current ? await lockWorkClock(tx, current.project.orgId, userId, now) : null;
     // the page counts on from the time saved with the draft, so the form has
     // at least that much; the larger one counts if it does not
     const reported = Number.isFinite(input.activeSeconds) ? input.activeSeconds : 0;
@@ -393,10 +600,10 @@ export async function resubmitAssignment(
             reported: Math.max(reported, current.draftSeconds),
             start: revisingSince(current, now),
             now,
-            creditedUntil: clock.creditedUntil,
+            credited: clock.credited,
             cap: revisionCap(limitSeconds(current), current.activeSeconds),
           })
-        : { seconds: 0, creditedUntil: null };
+        : { seconds: 0, pieces: [] };
     const result = await tx.assignment.updateMany({
       // still sent back: a form posted twice adds its time only once
       where: sentBack,
@@ -410,7 +617,7 @@ export async function resubmitAssignment(
         ...NO_DRAFT,
       },
     });
-    if (result.count > 0) await advanceWorkClock(tx, clock, credit);
+    if (result.count > 0) await recordCredit(tx, clock, credit, now);
     if (result.count === 0) {
       const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
       return { ok: false, error: exists ? 'not_active' : 'not_found' };

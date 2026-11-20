@@ -58,6 +58,15 @@
   layouts where the digits need Shift and on the number pad. On the
   qualification test they act on one question, the one that was clicked or
   holds the focus, and that question is marked
+- Queue order: a batch has a priority and can be paused from its page
+  (higher numbers are handed out first; a paused batch hands out nothing new,
+  claims on it can be finished, and resuming continues where it was). A
+  project can hand out tasks in import order or shuffled, in an order of each
+  annotator's own that stays the same for them. "Gold spacing" makes each task
+  an annotator gets gold with a chance of 1 in N, per annotator, never as the
+  first task of a session, keyed with a secret per project so the timing
+  cannot be worked out. The dashboard count leaves paused batches out.
+  With the default settings the order is the same as before
 - Boxes can be moved by dragging and resized from eight handles, and with the
   keyboard: Tab walks through the boxes, the arrows move the one that has
   focus (Shift for ten pixels), `r` makes them resize it, `n` puts a new box
@@ -114,10 +123,11 @@
   paid on hourly projects. It is saved with the revision draft, so a reload
   does not lose it. A revision is credited at most the project's time limit,
   and a task at most three time limits in all. A person's time is credited
-  once: time for any submission or revision counts from where their time was
-  last credited (`Membership.creditedUntil`), so several sent-back
-  submissions handed in together, or a revision made while a claim is held,
-  do not pay the same minutes twice
+  once: the stretches of their time already credited are kept, and any
+  submission or revision is credited only the time of its own window that no
+  other work took, so several sent-back submissions handed in together, or a
+  revision made while a claim is held, do not pay the same minutes twice,
+  whatever order they are handed in
 - New export formats: YOLO and Pascal VOC (a zip with one file per image) for
   box projects and CoNLL BIO tags for entity projects
 - Exports name annotators by a pseudonym that is stable within a project.

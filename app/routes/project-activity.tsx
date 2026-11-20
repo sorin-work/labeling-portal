@@ -35,6 +35,12 @@ function describe(action: string, detail: Detail, names: Map<string, string>): s
       return `imported ${d.tasks} tasks as “${d.name}”${d.qualification ? ' (qualification test)' : ''}`;
     case 'batch.deleted':
       return `deleted a batch of ${d.tasks} tasks`;
+    case 'batch.priority':
+      return `set the priority of “${d.name}” to ${d.to} (it was ${d.from})`;
+    case 'batch.paused':
+      return `paused “${d.name}”: nothing from it is handed out`;
+    case 'batch.resumed':
+      return `resumed “${d.name}”`;
     case 'member.added':
       return `added ${names.get(String(d.userId)) ?? 'someone'} to the project`;
     case 'member.removed':
