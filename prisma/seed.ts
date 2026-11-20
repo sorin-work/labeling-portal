@@ -158,8 +158,8 @@ async function main() {
       schema: {
         kind: 'image_classification',
         imageField: 'image_url',
-        labels: ['person', 'car', 'empty street'],
-        multiple: true,
+        labels: ['people', 'cars', 'people and cars', 'empty street'],
+        multiple: false,
       },
       overlap: 2,
       timeLimitMinutes: 10,

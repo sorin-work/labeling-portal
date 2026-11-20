@@ -165,10 +165,11 @@ Draw a tight box around every **car** and **person** you can see.
 - Skip objects smaller than about 10 pixels.`,
   scenes: `# Street scene check
 
-Look at the whole picture and pick **every** label that fits.
+Look at the whole picture and pick the **one** label that fits.
 
-- **person**: at least one person can be seen, even partly.
-- **car**: at least one car can be seen, even partly.
+- **people**: at least one person, and no car, can be seen, even partly.
+- **cars**: at least one car, and no person.
+- **people and cars**: both.
 - **empty street**: neither.
 
 If the picture does not load, skip the task with "Content is broken or unreadable".`,
