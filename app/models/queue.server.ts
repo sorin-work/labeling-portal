@@ -1,4 +1,4 @@
-import { Prisma, type Assignment, type Project } from '@prisma/client';
+import { Prisma, type Assignment, type PayMode, type Project } from '@prisma/client';
 
 import { clampActiveSeconds, revisionSeconds } from '~/domain/active-time';
 import type { Answer } from '~/domain/answers';
@@ -210,7 +210,7 @@ export async function submitAssignment(
   // gold tasks are scored against their known answer instead of being reviewed
   const task = await prisma.task.findUniqueOrThrow({
     where: { id: found.assignment.taskId },
-    include: { project: { select: { schema: true, rateCents: true, payMode: true } } },
+    include: { project: { select: { schema: true } } },
   });
   let goldScore: number | null = null;
   if (task.isGold && task.goldAnswer) {
@@ -237,6 +237,12 @@ export async function submitAssignment(
       : { review: false, sample: null };
 
   const assignment = await prisma.$transaction(async (tx) => {
+    // The rate is frozen in the write that submits the work, and it is read
+    // here, in the same transaction, holding the project row: a settings save
+    // that changes the rate either waits for this submission or is seen by it.
+    const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
+      SELECT "rateCents", "payMode" FROM "Project"
+      WHERE id = ${found.assignment.projectId} FOR SHARE`;
     // only a claim that is still active is written, so a form posted twice
     // cannot replace the first outcome with a second draw
     const [submitted] = await tx.assignment.updateManyAndReturn({
@@ -244,10 +250,8 @@ export async function submitAssignment(
       data: {
         status: 'SUBMITTED',
         submittedAt: now,
-        // the rate is frozen here, in the write that submits the work: a
-        // later change of the project's rate does not reprice it
-        rateCents: task.project.rateCents,
-        payMode: task.project.payMode,
+        rateCents: pay.rateCents,
+        payMode: pay.payMode,
         answer: input.answer,
         goldScore,
         reviewStatus: sampling.review ? 'PENDING' : 'NOT_REQUIRED',
