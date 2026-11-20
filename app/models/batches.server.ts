@@ -16,18 +16,24 @@ export type CreateBatchResult =
       /** an earlier upload with the same Idempotency-Key made it; nothing new was written */
       repeated: boolean;
     }
-  | { ok: false; error: 'schema_changed' };
+  | { ok: false; error: 'schema_changed' | 'key_reused' };
 
-/** The batch an earlier upload with this key made, as its first result said. */
-async function earlierBatch(
+/**
+ * The batch an earlier upload with this key made, as its first result said,
+ * when the body was the same. The same key with another body is refused: the
+ * file it carries would otherwise be dropped without a word.
+ */
+export async function earlierBatch(
   db: Prisma.TransactionClient | typeof prisma,
   projectId: string,
   key: string,
+  hash: string | null,
 ): Promise<CreateBatchResult | null> {
   const batch = await db.batch.findUnique({
     where: { projectId_idempotencyKey: { projectId, idempotencyKey: key } },
   });
   if (!batch) return null;
+  if (batch.idempotencyHash !== hash) return { ok: false, error: 'key_reused' };
   const tasks = await db.task.count({ where: { batchId: batch.id } });
   return { ok: true, batch, tasks, repeated: true };
 }
@@ -58,6 +64,8 @@ export async function createBatch(
      * gets the batch the first one made instead of a second copy.
      */
     idempotencyKey?: string | null;
+    /** the SHA-256 of the upload's body, kept with the key */
+    idempotencyHash?: string | null;
     /** for the audit trail: the import page or the API */
     via?: 'page' | 'api';
   },
@@ -69,7 +77,7 @@ export async function createBatch(
     // two uploads with the same key at once: the second one's insert breaks
     // the unique key, and it answers with the first one's batch
     if (key && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const earlier = await earlierBatch(prisma, projectId, key);
+      const earlier = await earlierBatch(prisma, projectId, key, input.idempotencyHash ?? null);
       if (earlier) return earlier;
     }
     throw error;
@@ -83,7 +91,7 @@ async function writeBatch(
 ): Promise<CreateBatchResult> {
   return prisma.$transaction(async (tx) => {
     if (key) {
-      const earlier = await earlierBatch(tx, projectId, key);
+      const earlier = await earlierBatch(tx, projectId, key, input.idempotencyHash ?? null);
       if (earlier) return earlier;
     }
     const [project] = await tx.$queryRaw<Array<{ schema: unknown }>>`
@@ -96,7 +104,13 @@ async function writeBatch(
     const last = await tx.task.aggregate({ where: { projectId }, _max: { position: true } });
     const start = (last._max.position ?? 0) + 1;
     const batch = await tx.batch.create({
-      data: { projectId, name: input.name, format: input.format, idempotencyKey: key },
+      data: {
+        projectId,
+        name: input.name,
+        format: input.format,
+        idempotencyKey: key,
+        idempotencyHash: key ? (input.idempotencyHash ?? null) : null,
+      },
     });
     await tx.task.createMany({
       data: input.rows.map((row, i) => ({

@@ -240,6 +240,8 @@ model Batch {
   pausedAt       DateTime?
   /// the Idempotency-Key of the API upload that made it; a repeat gets this batch
   idempotencyKey String?
+  /// the SHA-256 of that upload's body; the same key with another body is refused
+  idempotencyHash String?
   createdAt      DateTime     @default(now())
   project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks          Task[]

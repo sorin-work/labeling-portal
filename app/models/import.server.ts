@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto';
+
 import type { Batch } from '@prisma/client';
 
 import { readImportFile, type ImportError } from '~/domain/import';
 import type { CurrentUser } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
 import { internalImageHosts } from '~/lib/env.server';
 
-import { createBatch } from './batches.server';
+import { createBatch, earlierBatch, type CreateBatchResult } from './batches.server';
 import { projectSchema, requireProject } from './projects.server';
 
 export const SCHEMA_CHANGED =
@@ -14,7 +17,7 @@ export type ImportFileResult =
   | { ok: true; batch: Batch; tasks: number; repeated: boolean }
   | {
       ok: false;
-      status: 400 | 409;
+      status: 400 | 409 | 422;
       error: string;
       errors?: ImportError[];
       /** problems beyond the listed ones */
@@ -42,6 +45,13 @@ export async function importFile(
   },
 ): Promise<ImportFileResult> {
   const project = await requireProject(current, projectId, 'manageProjects');
+  const key = input.idempotencyKey ?? null;
+  const hash = key ? createHash('sha256').update(input.bytes).digest('hex') : null;
+  // a repeat is answered before the file is read again
+  if (key) {
+    const earlier = await earlierBatch(prisma, project.id, key, hash);
+    if (earlier) return settled(earlier);
+  }
   if (project.status === 'ARCHIVED') {
     return { ok: false, status: 400, error: 'Archived projects cannot take new tasks.' };
   }
@@ -70,9 +80,21 @@ export async function importFile(
     qualification,
     schema,
     actorId: current.user.id,
-    idempotencyKey: input.idempotencyKey ?? null,
+    idempotencyKey: key,
+    idempotencyHash: hash,
     via: input.via ?? 'page',
   });
-  if (!created.ok) return { ok: false, status: 409, error: SCHEMA_CHANGED };
-  return created;
+  return settled(created);
+}
+
+function settled(result: CreateBatchResult): ImportFileResult {
+  if (result.ok) return result;
+  if (result.error === 'key_reused') {
+    return {
+      ok: false,
+      status: 422,
+      error: 'This Idempotency-Key was used for another file. Use a new key for a new file.',
+    };
+  }
+  return { ok: false, status: 409, error: SCHEMA_CHANGED };
 }

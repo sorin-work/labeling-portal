@@ -1,7 +1,9 @@
 -- Tokens for the JSON API, kept as hashes, and the Idempotency-Key of an
--- upload on the batch it made. Existing batches have no key.
+-- upload, with the SHA-256 of its body, on the batch it made. Existing
+-- batches have no key.
 -- AlterTable
-ALTER TABLE "Batch" ADD COLUMN     "idempotencyKey" TEXT;
+ALTER TABLE "Batch" ADD COLUMN     "idempotencyKey" TEXT,
+ADD COLUMN     "idempotencyHash" TEXT;
 
 -- CreateTable
 CREATE TABLE "ApiToken" (
