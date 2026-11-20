@@ -4,6 +4,7 @@ import { Alert, Button, Card, Field, Input } from '~/components/ui';
 import { MAX_IMPORT_BYTES, readImportFile, type ImportError } from '~/domain/import';
 import { requiredFields } from '~/domain/task-schema';
 import { requireUser } from '~/lib/auth.server';
+import { internalImageHosts } from '~/lib/env.server';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { readBoundedForm } from '~/lib/upload.server';
 import { logActivity } from '~/models/activity.server';
@@ -64,6 +65,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   const qualification = form.get('qualification') === 'on';
   const outcome = readImportFile(new Uint8Array(await file.arrayBuffer()), file.name, schema, {
     qualification,
+    internalImageHosts: internalImageHosts(),
   });
   if (!outcome.ok) {
     return data<ActionResult>(

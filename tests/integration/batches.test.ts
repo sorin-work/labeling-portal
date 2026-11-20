@@ -280,6 +280,41 @@ describe('batch import', () => {
     }
   });
 
+  it('refuses an internal image host unless the installation lists it', async () => {
+    const { org, cookie } = await setup();
+    const boxes = await createTestProject(org.id, { schema: SCHEMA_TEMPLATES.bbox });
+    const upload = () =>
+      run(
+        importAction,
+        makeRequest(`/projects/${boxes.id}/batches/new`, {
+          cookie,
+          form: {
+            file: new File(
+              [
+                '{"image_url":"http://169.254.169.254/a.jpg"}\n{"image_url":"http://intranet/b.jpg"}\n',
+              ],
+              'internal.jsonl',
+            ),
+          },
+        }),
+        { projectId: boxes.id },
+      );
+    const before = process.env.INTERNAL_IMAGE_HOSTS;
+    try {
+      delete process.env.INTERNAL_IMAGE_HOSTS;
+      const refused = await upload();
+      expect(statusOf(refused)).toBe(400);
+      expect(payload<Refusal>(refused).errors.map((e) => e.line)).toEqual([1, 2]);
+
+      process.env.INTERNAL_IMAGE_HOSTS = ' Intranet , 169.254.169.254';
+      expect(statusOf(await upload())).toBe(302);
+      expect(await prisma.task.count()).toBe(2);
+    } finally {
+      if (before === undefined) delete process.env.INTERNAL_IMAGE_HOSTS;
+      else process.env.INTERNAL_IMAGE_HOSTS = before;
+    }
+  });
+
   it('checks gold answers like any answer, and a schema edit counts them', async () => {
     const { org, cookie } = await setup();
     const project = await createTestProject(org.id, {

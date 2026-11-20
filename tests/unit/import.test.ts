@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import {
   detectFormat,
   isImageRef,
+  isInternalHost,
   MAX_IMPORT_BYTES,
+  MAX_JSON_DEPTH,
   MAX_IMPORT_ROWS,
   MAX_REPORTED_ERRORS,
   parseImport,
@@ -418,7 +420,9 @@ describe('image addresses', () => {
     if (result.ok) return;
     expect(result.errors.map((e) => e.line)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     for (const error of result.errors) {
-      expect(error.message).toBe('image_url must be an http(s) URL or a path starting with /');
+      expect(error.message).toBe(
+        'image_url must be a public http(s) URL or a path starting with /',
+      );
     }
     for (const address of [
       ' https://a.test/x.jpg',
@@ -439,5 +443,140 @@ describe('gold answers and the schema', () => {
     expect(parseImport(row, 'JSONL', { ...pairwise, allowTie: false }).errors).toEqual([
       { line: 1, message: 'Gold answer: Ties are not allowed here' },
     ]);
+  });
+});
+
+describe('image addresses inside a network', () => {
+  const boxes = SCHEMA_TEMPLATES.bbox;
+  const internal = [
+    'http://127.0.0.1/a.jpg',
+    'http://127.1/a.jpg',
+    'http://0x7f.1/a.jpg',
+    'http://2130706433/a.jpg',
+    'http://localhost/a.jpg',
+    'http://LOCALHOST./a.jpg',
+    'http://intranet/a.jpg',
+    'http://printer.local/a.jpg',
+    'http://app.localhost/a.jpg',
+    'http://10.1.2.3/a.jpg',
+    'http://172.16.0.1/a.jpg',
+    'http://192.168.1.10/a.jpg',
+    'http://169.254.169.254/latest/meta-data',
+    'http://100.64.0.1/a.jpg',
+    'http://0.0.0.0/a.jpg',
+    'http://[::1]/a.jpg',
+    'http://[::]/a.jpg',
+    'http://[fe80::1]/a.jpg',
+    'http://[fd00::1]/a.jpg',
+    'http://[::ffff:127.0.0.1]/a.jpg',
+    'http://[2002:7f00:1::]/a.jpg',
+    'http://[2001:db8::1]/a.jpg',
+  ];
+
+  it('refuses loopback, private, link-local and reserved addresses and local names', () => {
+    for (const address of internal) expect(isImageRef(address), address).toBe(false);
+  });
+
+  it('takes public addresses and names', () => {
+    for (const address of [
+      'https://cdn.example.test/a.jpg',
+      'http://8.8.8.8/a.jpg',
+      'http://172.32.0.1/a.jpg',
+      'http://[2606:4700::1111]/a.jpg',
+      'https://localhost.example.com/a.jpg',
+    ]) {
+      expect(isImageRef(address), address).toBe(true);
+    }
+    expect(isInternalHost('images.example.test')).toBe(false);
+  });
+
+  it('takes an internal host only when the installation lists it', () => {
+    expect(isImageRef('http://images.internal:8080/a.jpg', ['images.internal'])).toBe(true);
+    expect(isImageRef('http://10.0.0.5/a.jpg', ['10.0.0.5'])).toBe(true);
+    expect(isImageRef('http://10.0.0.6/a.jpg', ['10.0.0.5'])).toBe(false);
+    const row = '{"image_url":"http://10.0.0.5/a.jpg"}';
+    expect(parseImport(row, 'JSONL', boxes).errors).toEqual([
+      { line: 1, message: 'image_url must be a public http(s) URL or a path starting with /' },
+    ]);
+    expect(parseImport(row, 'JSONL', boxes, { internalImageHosts: ['10.0.0.5'] }).errors).toEqual(
+      [],
+    );
+  });
+});
+
+describe('a quoted field that is never closed', () => {
+  it('is refused on the line where it opened, with one column', () => {
+    const result = parseImport('text\nfirst\n"second\nthird\nfourth\n', 'CSV', classification);
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([
+      { line: 3, message: 'A quoted field starts here and is never closed' },
+    ]);
+  });
+
+  it('is refused on the line where it opened, with two columns', () => {
+    const result = parseImport('id,text\n1,one\n2,"two\n3,three\n', 'CSV', classification);
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([
+      { line: 3, message: 'A quoted field starts here and is never closed' },
+    ]);
+  });
+});
+
+describe('values nested too deep', () => {
+  const deep = (levels: number) => '['.repeat(levels) + ']'.repeat(levels);
+
+  it('are refused with their line in json lines and json arrays', () => {
+    const lines = `{"text":"fine"}\n{"text":"x","extra":${deep(200_000)}}\n`;
+    expect(parseImport(lines, 'JSONL', classification).errors).toEqual([
+      { line: 2, message: `Nested more than ${MAX_JSON_DEPTH} levels deep` },
+    ]);
+    const array = `[{"text":"fine"},{"text":"x","extra":${deep(MAX_JSON_DEPTH)}}]`;
+    expect(parseImport(array, 'JSON', classification).errors).toEqual([
+      { line: 2, message: `Nested more than ${MAX_JSON_DEPTH} levels deep` },
+    ]);
+    // just within the limit
+    const fits = `[{"text":"x","extra":${deep(MAX_JSON_DEPTH - 1)}}]`;
+    expect(parseImport(fits, 'JSON', classification).errors).toEqual([]);
+  });
+
+  it('are refused when a row holds too many values', () => {
+    const many = JSON.stringify({ text: 'x', extra: Array.from({ length: 10_001 }, () => 1) });
+    expect(parseImport(many, 'JSONL', classification).errors).toEqual([
+      { line: 1, message: 'Holds more than 10000 values' },
+    ]);
+  });
+
+  it('are refused in the columns of a re-imported csv export', () => {
+    const header = 'task_id,external_id,annotator,answer,data';
+    const cell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const csv = [
+      header,
+      `t1,,ann_1,${cell('{"labels":["positive"]}')},${cell(`{"text":"a","x":${deep(100)}}`)}`,
+      `t2,,consensus,${cell(`{"labels":${deep(100)}}`)},${cell('{"text":"b"}')}`,
+    ].join('\n');
+    expect(parseImport(csv, 'CSV', classification).errors).toEqual([
+      { line: 2, message: `The data column: Nested more than ${MAX_JSON_DEPTH} levels deep` },
+      { line: 3, message: `The answer column: Nested more than ${MAX_JSON_DEPTH} levels deep` },
+    ]);
+  });
+});
+
+describe('a gold answer in a re-imported csv export', () => {
+  it('is reported on the row it came from, not on the first row of its task', () => {
+    const cell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const data = cell('{"text":"a"}');
+    const csv = [
+      'task_id,external_id,annotator,answer,data',
+      `t1,,ann_1,${cell('{"labels":["positive"]}')},${data}`,
+      `t1,,ann_2,${cell('{"labels":["negative"]}')},${data}`,
+      `t1,,consensus,${cell('{"labels":["nonsense"]}')},${data}`,
+      `t2,,ann_1,${cell('{"labels":["positive"]}')},${cell('{"text":"b"}')}`,
+      `t2,,consensus,${cell('{"labels":["positive"]}')},${cell('{"text":"b"}')}`,
+    ].join('\n');
+    const result = parseImport(csv, 'CSV', classification);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].line).toBe(4);
+    expect(result.errors[0].message).toMatch(/^Gold answer: /);
+    expect(result.rows.map((row) => row.line)).toEqual([5]);
   });
 });

@@ -16,3 +16,22 @@ export function cookieSecure(): boolean {
   if (flag === 'false') return false;
   return process.env.NODE_ENV === 'production';
 }
+
+/**
+ * Hosts inside the network that box projects may load images from, from
+ * `INTERNAL_IMAGE_HOSTS` (comma separated, for example
+ * `images.internal,10.0.0.5`). Empty by default: an image address on a
+ * loopback, private or link-local address or a local name is refused.
+ */
+export function internalImageHosts(): string[] {
+  return (process.env.INTERNAL_IMAGE_HOSTS ?? '')
+    .split(',')
+    .map((host) =>
+      host
+        .trim()
+        .toLowerCase()
+        .replace(/^\[|\]$/g, '')
+        .replace(/\.$/, ''),
+    )
+    .filter(Boolean);
+}
