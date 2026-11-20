@@ -67,5 +67,8 @@ against the task schema, because an unfinished answer is not a valid one yet.
 | 413    | `{"ok":false,"error":"too_large"}`             | `draft` is over 200 KB                   |
 | 404    | `{"ok":false,"error":"not_found"}`             | no such assignment, or not yours         |
 | 409    | `{"ok":false,"error":"not_active"}`, `expired` | submitted, skipped, released or too late |
+| 403    | `{"ok":false,"error":"cross_origin"}`          | the request came from another site       |
 
-Without a session the answer is the usual redirect to the sign-in page.
+Without a session the answer is the usual redirect to the sign-in page. The
+`Origin` header (or `Referer` without it) has to be this app's own origin, the
+same rule React Router applies to page actions.

@@ -139,10 +139,14 @@ More detail: [architecture](docs/architecture.md),
   fifteen minutes. Restarting the app clears the counter.
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project.
-- **"Draft not saved" next to the working time**: the claim ran out of time,
-  the task was finished in another tab, or the session ended. What is on the
-  screen is still there and can be submitted. "Draft not saved yet" means a
-  save did not reach the server and is tried again by itself.
+- **"Draft not saved" next to the working time**: saving has stopped for this
+  task, and what is on the screen can no longer be handed in. Either the claim
+  ran out of time (submitting takes you back to the project and the task
+  returns to the queue), or the task was already submitted, skipped or released
+  in another tab (submitting answers "This task is no longer yours"), or you
+  were signed out (the next click leads to the sign-in page). "Draft not saved
+  yet" is different: one save did not reach the server and is tried again by
+  itself.
 - **The demo data did not appear**: the seed only runs when `SEED_DEMO=true`
   and skips itself if the demo organisation already exists. Remove the volume
   with `docker compose down -v` to start over.

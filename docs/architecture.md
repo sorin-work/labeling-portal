@@ -63,12 +63,20 @@ time counts on from the saved value.
   is stored without `validateAnswer` and only checked for size. Submitting
   validates as before. When a draft is read back, `fitDraft` in
   `app/domain/drafts.ts` keeps what still fits the task schema and drops the
-  rest, so a stored draft cannot break the page after a schema change.
+  rest: unknown labels, spans outside the text, boxes outside the image or
+  under `minBoxSize`. A stored draft therefore cannot break the page or block
+  the submit after a schema change, and the page says how many parts were
+  left out.
 - The draft ends with the claim: submitting, skipping, releasing and running
   out of time all clear it.
 - The same task in two tabs: the last save wins, and only the submit counts.
   A tab that was only looked at sends no answer, so it cannot overwrite the
-  draft of the tab that was worked in. The saved working time never goes down.
+  draft of the tab that was worked in. The saved working time never goes down
+  (`GREATEST` in the one statement that writes it).
+- Saving pauses only while the page's own submit, skip or release is on its
+  way. If that hand-in fails, saving goes on. Leaving through a link saves on
+  the way out, and the sign-out button saves before its own request is sent,
+  while the session is still there.
 - Revising sent-back work keeps its draft in the same column. That assignment
   is `SUBMITTED`, so the guard is "sent back", and resubmitting clears it.
 - The qualification test has no row to keep a draft on. Its answers stay in
@@ -78,12 +86,19 @@ time counts on from the saved value.
   what the server has not confirmed in `sessionStorage`, and the next page
   takes it from there. What can still be lost is the last couple of seconds
   before a crash (up to ten while typing without a pause).
+- Everything in `sessionStorage` is filed under the user's id and names the
+  user inside, and a copy that belongs to someone else is not read. Signing
+  out removes all of it, and handing in the qualification test removes that
+  test's answers. Nothing waits for the next person on a shared computer.
 - The save is a plain `fetch` to a small resource route (see
   [routes](routes.md)), not a fetcher. A fetcher whose request fails puts the
   error page in place of the task, and the unsaved answer would go with it.
-- The work page is rendered under `key={assignment.id}`. "Submit and next"
-  stays on the same route, and without the key React would keep the previous
-  task's answer and seconds and save them as the next task's draft.
+  React Router checks the origin of page actions but not of resource routes,
+  so these two routes do it themselves (`requireSameOrigin`).
+- The work page and the revise page are rendered under a key (the assignment
+  id). "Submit and next" and the browser's back button stay on the same
+  route, and without the key React would keep the previous task's answer and
+  seconds and save them as the next task's draft.
 
 ## Quality
 
