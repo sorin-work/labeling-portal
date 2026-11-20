@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { toCsvExport, toJsonl } from '~/domain/export';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { adjudicateTask, sendToAdjudication } from '~/models/adjudication.server';
-import { loadExportTasks } from '~/models/export.server';
+import type { ExportTask } from '~/domain/export';
+import { exportTasks } from '~/models/export.server';
 import { payoutReport } from '~/models/payouts.server';
 import { claimNextTask } from '~/models/queue.server';
 import { refreshTaskStatus } from '~/models/tasks.server';
@@ -57,6 +58,18 @@ async function setup(
 async function label(projectId: string, people: Array<{ id: string }>, labels: string[]) {
   for (const [i, l] of labels.entries())
     await submitWork({ id: projectId }, people[i].id, answer(l));
+}
+
+async function loadExport(project: Parameters<typeof exportTasks>[0], scope: 'all' | 'complete') {
+  const tasks: ExportTask[] = [];
+  for await (const task of exportTasks(project, {
+    scope,
+    annotators: 'email',
+    needs: 'annotations',
+  })) {
+    tasks.push(task);
+  }
+  return tasks;
 }
 
 const state = (taskId: string) => prisma.task.findUniqueOrThrow({ where: { id: taskId } });
@@ -254,7 +267,7 @@ describe('low agreement: extras and adjudication', () => {
 
     const schema = parseTaskSchema(project.schema);
     if (!schema.ok) throw new Error('schema');
-    const lines = toJsonl(schema.schema, await loadExportTasks(project, 'complete'))
+    const lines = toJsonl(schema.schema, await loadExport(project, 'complete'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as { task_id: string; consensus_source: string });
@@ -297,7 +310,10 @@ describe('low agreement: extras and adjudication', () => {
     await submitWork(fresh, people[1].id, answer('positive'));
     // the reviewer accepts one and turns the other into a different answer
     await prisma.$transaction(async (tx) => {
-      await tx.assignment.update({ where: { id: first.id }, data: { reviewStatus: 'FIXED' } });
+      await tx.assignment.update({
+        where: { id: first.id },
+        data: { reviewStatus: 'FIXED', payableAt: new Date() },
+      });
       await tx.review.create({
         data: {
           assignmentId: first.id,
@@ -308,7 +324,7 @@ describe('low agreement: extras and adjudication', () => {
       });
       await tx.assignment.updateMany({
         where: { taskId: task.id, id: { not: first.id } },
-        data: { reviewStatus: 'APPROVED' },
+        data: { reviewStatus: 'APPROVED', payableAt: new Date() },
       });
       await refreshTaskStatus(task.id, tx);
     });
@@ -340,6 +356,9 @@ describe('low agreement: extras and adjudication', () => {
         submittedAt: new Date(),
         answer: answer('positive'),
         reviewStatus: 'NOT_REQUIRED',
+        payableAt: new Date(),
+        rateCents: 0,
+        payMode: 'PER_TASK',
       },
     });
     expect(
@@ -362,7 +381,7 @@ describe('low agreement: extras and adjudication', () => {
     await label(project.id, people, ['positive', 'negative']);
     const schema = parseTaskSchema(project.schema);
     if (!schema.ok) throw new Error('schema');
-    const tasks = await loadExportTasks(project, 'all');
+    const tasks = await loadExport(project, 'all');
     const [line] = toJsonl(schema.schema, tasks).trim().split('\n');
     expect(JSON.parse(line)).toMatchObject({
       status: 'adjudication',
@@ -371,7 +390,9 @@ describe('low agreement: extras and adjudication', () => {
     });
     const rows = toCsvExport(schema.schema, tasks).trim().split('\r\n').slice(1);
     expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.startsWith(`${task.id},t1,batch,adjudication,`))).toBe(true);
+    expect(
+      rows.every((r) => r.startsWith(`${task.id},t1,batch,`) && r.endsWith(',adjudication')),
+    ).toBe(true);
     expect(rows.some((r) => r.includes(',consensus,'))).toBe(false);
   });
 

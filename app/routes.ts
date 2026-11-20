@@ -18,6 +18,7 @@ export default [
     route('review/:assignmentId', 'routes/review.tsx'),
     route('my-work', 'routes/my-work.tsx'),
     route('payouts', 'routes/payouts.tsx'),
+    route('earnings', 'routes/earnings.tsx'),
     route('people', 'routes/people.tsx'),
     route('account', 'routes/account.tsx'),
     route('my-work/:assignmentId', 'routes/my-work-revise.tsx'),

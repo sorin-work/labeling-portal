@@ -7,6 +7,7 @@ import { DraftNote } from '~/components/draft-note';
 import { KeyboardHelp } from '~/components/keyboard-help';
 import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
+import { useActiveTime } from '~/components/use-active-time';
 import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { annotatorDisputeState, DISPUTE_REFUSALS, parseDisputeReason } from '~/domain/disputes';
@@ -57,14 +58,27 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // changes that were under way before a reload
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   const decision = assignment.reviews.at(0) ?? null;
+  const disputes = annotatorDisputeState(
+    {
+      reviewStatus: assignment.reviewStatus,
+      annotatorId: user.id,
+      review: decision,
+      windowDays: assignment.project.disputeWindowDays,
+      resolvers: decision
+        ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
+        : 0,
+    },
+    new Date(),
+  );
+  const mode = gold
+    ? ('gold' as const)
+    : assignment.reviewStatus === 'FIXED'
+      ? ('compare' as const)
+      : ('revise' as const);
   return {
     // the key of unsaved work in the tab; the user's id does not leave the server
     userTag: userTag(user.id),
-    mode: gold
-      ? ('gold' as const)
-      : assignment.reviewStatus === 'FIXED'
-        ? ('compare' as const)
-        : ('revise' as const),
+    mode,
     corrected: (gold?.expected ?? fix?.correctedAnswer ?? null) as Answer | null,
     goldCheck: gold && {
       score: gold.score,
@@ -77,19 +91,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     answer: assignment.answer as Answer,
     draft: draft.answer,
     draftNote: droppedNote(schema, draft.dropped),
+    draftSeconds: assignment.draftSeconds,
     feedback: assignment.reviews[0]?.feedback ?? '',
-    ...annotatorDisputeState(
-      {
-        reviewStatus: assignment.reviewStatus,
-        annotatorId: user.id,
-        review: decision,
-        windowDays: assignment.project.disputeWindowDays,
-        resolvers: decision
-          ? await countResolvers(assignment.project, [decision.reviewerId, user.id])
-          : 0,
-      },
-      new Date(),
-    ),
+    ...disputes,
+    // The answer can only change, and the draft be saved, on a revision that
+    // is not disputed. While a dispute is open the page is read-only and the
+    // draft route refuses saves, so the page does not send any.
+    editable: mode === 'revise' && disputes.dispute?.status !== 'OPEN',
   };
 }
 
@@ -121,11 +129,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     parseAnswerJson(form.get('answer')),
   );
   if (!checked.ok) return data({ error: checked.error }, { status: 400 });
-  const result = await resubmitAssignment(
-    assignment.id,
-    user.id,
-    checked.answer as Prisma.InputJsonValue,
-  );
+  const result = await resubmitAssignment(assignment.id, user.id, {
+    answer: checked.answer as Prisma.InputJsonValue,
+    activeSeconds: Number(form.get('activeSeconds') ?? 0),
+  });
   if (!result.ok) {
     const error =
       result.error === 'disputed'
@@ -149,7 +156,10 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
-  const disputeOpen = loaderData.dispute?.status === 'OPEN';
+  // revising is work too: on an hourly project this time is paid. It is
+  // saved with the draft, so a reload does not start the count again
+  const { editable } = loaderData;
+  const [activeSeconds, raiseActiveSeconds] = useActiveTime(loaderData.draftSeconds, editable);
   const disputePanel = (
     <DisputePanel
       dispute={loaderData.dispute}
@@ -163,9 +173,14 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
     url: `/my-work/${loaderData.id}/draft`,
     user: loaderData.userTag,
     answer: value,
+    // only a revision has time to keep; a correction is just looked at
+    seconds: mode === 'revise' ? activeSeconds : 0,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
+    // a withdrawn dispute reloads this page's data, and saving starts then
+    paused: !editable,
     onRecover: (unsaved) => {
+      raiseActiveSeconds(unsaved.seconds);
       const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
       if (fitted) setValue(fitted);
     },
@@ -246,15 +261,16 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
         <LabelingInterface
           schema={schema}
           data={taskData}
-          value={disputeOpen ? answer : value}
+          value={editable ? value : answer}
           onChange={setValue}
-          readOnly={disputeOpen}
+          readOnly={!editable}
           viewKey={loaderData.id}
         />
       </Card>
-      {!disputeOpen && (
+      {editable && (
         <Form method="post" className="flex items-center gap-3">
           <input type="hidden" name="answer" value={JSON.stringify(value)} />
+          <input type="hidden" name="activeSeconds" value={activeSeconds} />
           <Button type="submit" disabled={navigation.state !== 'idle'}>
             Resubmit for review
           </Button>

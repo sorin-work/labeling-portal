@@ -181,7 +181,8 @@ When a task has as many accepted answers as the project's overlap, they are
 merged:
 
 - Classification and pairwise: majority vote (no answer on a tie); rubric
-  scores are averaged, for the dimensions the rubric has now.
+  scores are averaged, for the dimensions the rubric has now and over the
+  answers that have a score for them.
 - Entities: spans marked by a majority of annotators.
 - Boxes: boxes clustered by label and overlap; clusters drawn by a majority are
   averaged.

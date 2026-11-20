@@ -199,9 +199,11 @@ export async function resolveDispute(
       },
       data: {
         reviewStatus: 'APPROVED',
-        // a revision that was started before the dispute is of no use any more
+        // a revision that was started before the dispute is of no use any
+        // more, and neither is the time that was saved with it
         draft: Prisma.DbNull,
-        ...(sentBack ? { reviewedAt: now } : {}),
+        draftSeconds: 0,
+        ...(sentBack ? { reviewedAt: now, payableAt: now } : {}),
       },
     });
     // nothing may change a submission while its dispute is open; if something

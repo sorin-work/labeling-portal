@@ -9,10 +9,12 @@
   entity type or box label that answers use, turning off `multiple` or
   `allowTie` while answers depend on them, and a new rubric dimension that
   scored answers lack. It shows what an edit would do while typing, and the
-  error points to "Duplicate project" for a redesign
+  error says where the answers are stored and points to "Duplicate project"
+  for a redesign
 - A saved schema edit is recorded in the activity log with the schema before
   and after, and the activity tab says what changed
-- Pairwise consensus averages only the dimensions of the current rubric
+- Pairwise consensus averages only the dimensions of the current rubric,
+  over the answers that have a score for them
 
 ### Importing and labeling
 
@@ -21,6 +23,24 @@
   and a reload continues from there. Revising sent-back work keeps a draft the
   same way; the qualification test keeps its answers in the browser tab. What
   is kept in the tab belongs to one user and is removed on sign-out
+- Import reads tab-separated files, semicolon CSV files and JSON arrays next
+  to CSV and JSON Lines, and takes a quote inside a field as text
+- A file is imported completely or not at all. The option to skip invalid
+  rows is gone; the refusal lists the first 20 problems and counts the rest
+- An upload is cut off at 5 MB instead of being read first, and zip and gzip
+  files are refused without being unpacked
+- Image addresses for box projects have to be http or https URLs or a path on
+  the portal; `//host` addresses are refused now. The server never fetches
+  them. Addresses inside a network (loopback, private, link-local and
+  reserved IP addresses, names without a dot or under `.local`) are refused
+  too, unless the installation lists the host in `INTERNAL_IMAGE_HOSTS`
+- An import is refused when a quoted field is never closed (naming the line
+  where it opened), or when a row nests more than 32 levels deep or holds more
+  than 10,000 values. A bad gold answer in a re-imported CSV export is
+  reported on its own row
+- A gold answer for a comparison may only be a tie where the schema allows
+  ties, and a batch is refused when the schema changed while its file was
+  read
 - Shortcuts for every action, all from one key map: a key for every label (1
   to 9, 0 for the tenth, then letters, shown on the buttons), pairwise rubrics
   that can be typed (digits walk the score rows, the arrows choose inside a
@@ -95,6 +115,52 @@
   `adjudicated`), the CSV export a `task_status` column, the quality page counts both, and batch pages filter by the
   new status. Existing projects are unchanged and completed tasks are never
   reopened
+
+### Pay and export
+
+- Earnings page: everyone sees their own pay for a date range, split into
+  what is payable, what is waiting for review and what was sent back, with
+  the rules it is counted by
+- The rate and pay mode are frozen on a submission when it is made. Changing
+  a project's rate no longer reprices earlier work, and a project whose rate
+  changed shows one line per rate on the payouts page and in its CSV.
+  Submissions from before this change were given their project's rate of the
+  day of the upgrade
+- Work now counts in the period it became payable: the day a reviewer
+  approved or fixed it, or the day it was submitted when no review was
+  needed. Before, it counted on the day it was submitted
+- Time spent revising sent-back work is added to the active time, which is
+  paid on hourly projects. It is saved with the revision draft, so a reload
+  does not lose it. A revision is credited at most the project's time limit,
+  and a task at most three time limits in all. A person's time is credited
+  once: the stretches of their time already credited are kept, and any
+  submission or revision is credited only the time of its own window that no
+  other work took, so several sent-back submissions handed in together, or a
+  revision made while a claim is held, do not pay the same minutes twice,
+  whatever order they are handed in
+- New export formats: YOLO and Pascal VOC (a zip with one file per image) for
+  box projects and CoNLL BIO tags for entity projects
+- Exports name annotators by a pseudonym that is stable within a project.
+  `annotators=email` in the download address gives the email address as
+  before
+- Exports are written as a stream, task by task, so a large project no longer
+  has to fit in memory
+- The CSV export has three more columns at the end (`submitted_at`, `answer`,
+  `data`), and a cell that starts with `=`, `+`, `-` or `@` gets a quote in
+  front so that a spreadsheet does not run it. The payout and quality CSV
+  files are guarded the same way
+- The JSON Lines and CSV exports can be imported again: tasks come back with
+  their data and external id, and the consensus as the gold answer
+
+**Upgrade note.** The day work became payable is stored from this version on
+(`Assignment.payableAt`). The migration sets it to the submission date for
+every piece of work that is already accepted when the migration runs, so
+every past pay report is unchanged: a period that was paid shows the same
+total as before, and nothing in it is owed again. Work accepted after the
+upgrade gets the new rule: the review date, the submission date where no
+review was needed, or the date of the overturn for a send-back that a dispute
+overturned. Work submitted before the upgrade and approved after it counts in
+the period of its approval.
 
 ### Operations
 

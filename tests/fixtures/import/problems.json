@@ -1,0 +1,6 @@
+[
+  { "id": "a", "text": "Fine" },
+  "not an object",
+  { "id": "c" },
+  { "id": "a", "text": "Same id as item 1" }
+]

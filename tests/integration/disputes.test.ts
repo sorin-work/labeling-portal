@@ -186,7 +186,10 @@ describe('opening a dispute', () => {
 
     const [opened, revised] = await Promise.all([
       openDispute(s.submission.id, s.ann.id, 'I was right'),
-      resubmitAssignment(s.submission.id, s.ann.id, { labels: ['negative'] }),
+      resubmitAssignment(s.submission.id, s.ann.id, {
+        answer: { labels: ['negative'] },
+        activeSeconds: 0,
+      }),
     ]);
 
     expect([opened.ok, revised.ok].filter(Boolean)).toHaveLength(1);
@@ -225,7 +228,10 @@ describe('opening a dispute', () => {
     let revising: ReturnType<typeof resubmitAssignment> | undefined;
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Assignment" WHERE id = ${id} FOR UPDATE`;
-      revising = resubmitAssignment(id, s.ann.id, { labels: ['negative'] });
+      revising = resubmitAssignment(id, s.ann.id, {
+        answer: { labels: ['negative'] },
+        activeSeconds: 0,
+      });
       await pause();
       await tx.dispute.create({
         data: {
@@ -345,7 +351,12 @@ describe('settling a dispute', () => {
       qaScore: 2,
       dispute: { status: 'UPHELD', resolution: 'The complaint is the main point of the review.' },
     });
-    expect(await resubmitAssignment(s.submission.id, s.ann.id, { labels: ['negative'] })).toEqual({
+    expect(
+      await resubmitAssignment(s.submission.id, s.ann.id, {
+        answer: { labels: ['negative'] },
+        activeSeconds: 0,
+      }),
+    ).toEqual({
       ok: true,
     });
   });
@@ -377,13 +388,20 @@ describe('settling a dispute', () => {
 
     const task = await prisma.task.findUniqueOrThrow({ where: { id: s.task.id } });
     expect(task).toMatchObject({ status: 'COMPLETE', consensus: { labels: ['positive'] } });
-    // The report still selects by the day of submission, so that is where the
-    // work shows up today. It follows `reviewedAt` once the report goes by
-    // the day work became payable (roadmap item 5).
-    const day = s.submission.submittedAt!.toISOString().slice(0, 10);
-    const report = await payoutReport(s.org.id, { from: day, to: day });
-    expect(report.lines).toMatchObject([{ name: 'Ann', tasks: 1 }]);
-    expect(report.pending).toBe(0);
+    // The report goes by the day work became payable, which for an overturned
+    // send-back is the day of the overturn: it shows there once, and never in
+    // the period it was submitted in, which may be paid already.
+    const day = (date: Date) => date.toISOString().slice(0, 10);
+    const submitted = day(s.submission.submittedAt!);
+    const overturned = day(overturnedAt);
+    expect(overturned).not.toBe(submitted);
+    const earlier = await payoutReport(s.org.id, { from: submitted, to: submitted });
+    expect(earlier).toMatchObject({ lines: [], totalCents: 0, pending: 0 });
+    const later = await payoutReport(s.org.id, { from: overturned, to: overturned });
+    expect(later.lines).toMatchObject([{ name: 'Ann', tasks: 1 }]);
+    const whole = await payoutReport(s.org.id, { from: submitted, to: overturned });
+    expect(whole.lines).toMatchObject([{ name: 'Ann', tasks: 1 }]);
+    expect(whole.pending).toBe(0);
 
     // the overturned decision counts for nobody
     const quality = await projectQuality(s.project);
@@ -501,14 +519,17 @@ describe('settling a dispute', () => {
   it('keeps the disputed answer as stored work that a schema edit must respect', async () => {
     const s = await disputed();
     // while the submission still says the same, it is one stored answer, not two
-    expect((await schemaUsage(s.project.id)).names.get('positive')).toBe(1);
+    expect((await schemaUsage(s.project.id)).names.get('positive')).toEqual({ submission: 1 });
     await settle(s, s.disputeId, s.cookies.second, { intent: 'uphold', resolution: 'Stands' });
-    await resubmitAssignment(s.submission.id, s.ann.id, { labels: ['negative'] });
+    await resubmitAssignment(s.submission.id, s.ann.id, {
+      answer: { labels: ['negative'] },
+      activeSeconds: 0,
+    });
 
     // the submission no longer says "positive"; the dispute record still does
     const usage = await schemaUsage(s.project.id);
-    expect(usage.names.get('positive')).toBe(1);
-    expect(usage.names.get('negative')).toBe(1);
+    expect(usage.names.get('positive')).toEqual({ dispute: 1 });
+    expect(usage.names.get('negative')).toEqual({ submission: 1 });
   });
 
   it('lists disputes for reviewers with the open count on the tab', async () => {
@@ -581,7 +602,12 @@ describe('a dispute always has a way out', () => {
       disputeClosed: expect.stringMatching(/Nobody could/),
     });
     // the work is not held up: it can still be revised
-    expect(await resubmitAssignment(submission.id, ann.id, { labels: ['negative'] })).toEqual({
+    expect(
+      await resubmitAssignment(submission.id, ann.id, {
+        answer: { labels: ['negative'] },
+        activeSeconds: 0,
+      }),
+    ).toEqual({
       ok: true,
     });
 
@@ -690,14 +716,18 @@ describe('a dispute always has a way out', () => {
     const s = await setup();
     await sendBack(s);
     const draft = { labels: ['negative'] };
-    expect(await saveRevisionDraft(s.submission.id, s.ann.id, draft)).toEqual({ ok: true });
+    expect(await saveRevisionDraft(s.submission.id, s.ann.id, { draft, activeSeconds: 0 })).toEqual(
+      { ok: true, draftSeconds: 0 },
+    );
     await dispute(s);
 
     // revising is refused while the dispute is open, and so is saving a revision
-    expect(await saveRevisionDraft(s.submission.id, s.ann.id, { labels: ['positive'] })).toEqual({
-      ok: false,
-      error: 'disputed',
-    });
+    expect(
+      await saveRevisionDraft(s.submission.id, s.ann.id, {
+        draft: { labels: ['positive'] },
+        activeSeconds: 0,
+      }),
+    ).toEqual({ ok: false, error: 'disputed' });
     const request = makeRequest(`/my-work/${s.submission.id}/draft`, {
       cookie: s.cookies.ann,
       form: { draft: '{"labels":["positive"]}' },

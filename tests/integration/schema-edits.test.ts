@@ -83,6 +83,8 @@ describe('schemaUsage', () => {
         taskId: t1.id,
         userId: ann.id,
         status: 'SUBMITTED',
+        rateCents: 0,
+        payMode: 'PER_TASK',
         expiresAt: new Date(),
         answer: { labels: ['a', 'b'] },
         reviewStatus: 'PENDING',
@@ -99,20 +101,30 @@ describe('schemaUsage', () => {
       where: { id: t2.id },
       data: { isGold: true, goldAnswer: { labels: ['d'] } },
     });
-    // QualificationAttempt.answers is kept as it was posted: a label twice is
-    // one label, and entries that are not answers are skipped
+    // QualificationAttempt.answers is kept as it was posted. Only the entry
+    // of a test question counts, and a label posted twice is one label. The
+    // rest of the map was never validated: an entry under a made-up key or
+    // under the id of a regular task, and values that are not answers
+    await prisma.task.update({ where: { id: t3.id }, data: { isQualification: true } });
     await prisma.qualificationAttempt.create({
       data: {
         projectId: project.id,
         userId: ann.id,
         scorePercent: 0,
         passed: false,
-        answers: { [t3.id]: { labels: ['e', 'e'] }, junk: 'text', more: ['f'], none: null },
+        answers: {
+          [t3.id]: { labels: ['e', 'e'] },
+          extra: { labels: ['f', 'a'] },
+          [t1.id]: { labels: ['f', 'b'] },
+          junk: 'text',
+          more: ['f'],
+          none: null,
+        },
       },
     });
     // a claim without an answer, and another project's work, are not counted
     await prisma.assignment.create({
-      data: { projectId: project.id, taskId: t3.id, userId: ann.id, expiresAt: new Date() },
+      data: { projectId: project.id, taskId: t2.id, userId: ann.id, expiresAt: new Date() },
     });
     const other = await createTestProject(org.id, { schema, reviewRequired: false });
     await createTasks(other.id, [{ text: 'x' }]);
@@ -120,17 +132,17 @@ describe('schemaUsage', () => {
 
     expect(await schemaUsage(project.id)).toEqual({
       tasks: 3,
-      answers: 5,
+      answers: { submission: 1, correction: 1, gold: 1, consensus: 1, qualification: 1 },
       names: new Map([
-        ['a', 1],
-        ['b', 1],
-        ['c', 2],
-        ['d', 1],
-        ['e', 1],
+        ['a', { submission: 1 }],
+        ['b', { submission: 1 }],
+        ['c', { correction: 1, consensus: 1 }],
+        ['d', { gold: 1 }],
+        ['e', { qualification: 1 }],
       ]),
-      multiLabel: 1,
-      ties: 0,
-      scored: 0,
+      multiLabel: { submission: 1 },
+      ties: {},
+      scored: {},
       dimensions: new Map(),
     } satisfies SchemaUsage);
   });
@@ -147,6 +159,8 @@ describe('schemaUsage', () => {
           taskId,
           userId: ann.id,
           status: 'SUBMITTED',
+          rateCents: 0,
+          payMode: 'PER_TASK',
           expiresAt: new Date(),
           answer,
         },
@@ -170,15 +184,15 @@ describe('schemaUsage', () => {
 
     expect(await schemaUsage(project.id)).toEqual({
       tasks: 3,
-      answers: 4,
+      answers: { submission: 3, gold: 1 },
       names: new Map(),
-      multiLabel: 0,
-      ties: 2,
-      scored: 3,
+      multiLabel: {},
+      ties: { submission: 1, gold: 1 },
+      scored: { submission: 3 },
       dimensions: new Map([
-        ['helpfulness', 3],
-        ['accuracy', 3],
-        ['safety', 2],
+        ['helpfulness', { submission: 3 }],
+        ['accuracy', { submission: 3 }],
+        ['safety', { submission: 2 }],
       ]),
     } satisfies SchemaUsage);
   });
@@ -196,8 +210,8 @@ describe('schemaUsage', () => {
     // consensus repeats the single accepted answer
     expect((await schemaUsage(project.id)).names).toEqual(
       new Map([
-        ['PERSON', 2],
-        ['LOCATION', 2],
+        ['PERSON', { submission: 1, consensus: 1 }],
+        ['LOCATION', { submission: 1, consensus: 1 }],
       ]),
     );
 
@@ -214,7 +228,7 @@ describe('schemaUsage', () => {
         { x: 50, y: 50, w: 10, h: 10, label: 'car' },
       ],
     });
-    expect((await schemaUsage(boxes.id)).names).toEqual(new Map([['car', 1]]));
+    expect((await schemaUsage(boxes.id)).names).toEqual(new Map([['car', { submission: 1 }]]));
   });
 });
 
@@ -238,7 +252,8 @@ describe('schema edits once work exists', () => {
     // the submission and the consensus it produced both use the label
     expect(body.errors?.schema).toBe(
       'Not saved. This would break work that already exists: ' +
-        'the label “neutral” cannot be removed or renamed while 2 stored answers use it. ' +
+        'the label “neutral” cannot be removed or renamed while 2 stored answers use it ' +
+        '(1 submission, 1 consensus answer). ' +
         REDESIGN_HINT,
     );
     expect(await stored()).toEqual(sentiment);
@@ -250,7 +265,7 @@ describe('schema edits once work exists', () => {
     const page = payload<{ usage: SchemaUsage }>(
       await run(settingsLoader, makeRequest(path, { cookie }), { projectId: project.id }),
     );
-    expect(page.usage.names.get('neutral')).toBe(2);
+    expect(page.usage.names.get('neutral')).toEqual({ submission: 1, consensus: 1 });
     expect(page.usage.tasks).toBe(2);
   });
 
@@ -351,9 +366,58 @@ describe('schema edits once work exists', () => {
     const result = await save(sentiment);
     expect(statusOf(result)).toBe(400);
     expect(payload<Saved>(result).errors?.schema).toContain(
-      '“multiple” cannot be turned off while 2 stored answers have more than one label',
+      '“multiple” cannot be turned off while 2 stored answers have more than one label (1 submission, 1 consensus answer)',
     );
     expect(await stored()).toEqual(multi);
+  });
+
+  it('does not make claims, imports or activity entries wait for a save', async () => {
+    const { project, save, stored } = await setup(sentiment);
+    const next = { ...sentiment, labels: [...sentiment.labels, 'spam'] };
+
+    await prisma.$transaction(async (tx) => {
+      // what an insert that points at the project holds on its row until it
+      // commits; a save that asked for FOR UPDATE would wait for it, and it
+      // would wait for the save
+      await tx.$queryRaw`SELECT id FROM "Project" WHERE id = ${project.id} FOR KEY SHARE`;
+      expect(payload<Saved>(await save(next)).saved).toBe(true);
+    });
+
+    expect(await stored()).toEqual(next);
+  });
+
+  it('is not blocked by what a hand-made test attempt adds to its answers', async () => {
+    const multi = { ...sentiment, multiple: true };
+    const { ann, project, save, stored } = await setup(multi);
+    const [question] = await createTasks(project.id, [{ text: 'one' }]);
+    await prisma.task.update({
+      where: { id: question.id },
+      data: { isQualification: true, goldAnswer: { labels: ['positive'] } },
+    });
+    // the answer to the question was validated, the extra entry never was
+    await prisma.qualificationAttempt.create({
+      data: {
+        projectId: project.id,
+        userId: ann.id,
+        scorePercent: 100,
+        passed: true,
+        answers: {
+          [question.id]: { labels: ['positive'] },
+          extra: { labels: ['neutral', 'negative'] },
+        },
+      },
+    });
+
+    const next = { ...sentiment, labels: ['positive', 'other'] };
+    expect(payload<Saved>(await save(next)).saved).toBe(true);
+    expect(await stored()).toEqual(next);
+
+    // the validated answer still counts
+    const result = await save({ ...next, labels: ['other', 'another'] });
+    expect(statusOf(result)).toBe(400);
+    expect(payload<Saved>(result).errors?.schema).toContain(
+      'the label “positive” cannot be removed or renamed while 2 stored answers use it (1 gold answer, 1 qualification answer)',
+    );
   });
 
   it('refuses a new rubric dimension and ties turned off, and warns about a removed one', async () => {
@@ -378,14 +442,14 @@ describe('schema edits once work exists', () => {
     expect(statusOf(added)).toBe(400);
     // the submission and its consensus have scores; the gold answer has none
     expect(payload<Saved>(added).errors?.schema).toContain(
-      'the rubric dimension “tone” cannot be added while 2 stored answers have no score for it',
+      'the rubric dimension “tone” cannot be added while 2 stored answers have no score for it (1 submission, 1 consensus answer)',
     );
 
     // only the gold answer is a tie, and that is enough
     const noTies = await save({ ...rubric, allowTie: false });
     expect(statusOf(noTies)).toBe(400);
     expect(payload<Saved>(noTies).errors?.schema).toContain(
-      '“allowTie” cannot be turned off while 1 stored answer is a tie',
+      '“allowTie” cannot be turned off while 1 stored answer is a tie (1 gold answer)',
     );
     expect(await stored()).toEqual(rubric);
 

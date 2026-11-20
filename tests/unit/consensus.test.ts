@@ -69,6 +69,25 @@ describe('pairwiseConsensus', () => {
     expect(pairwiseConsensus([vote('A', 4, 2), vote('B', 2, 4)]).answer).toBeNull();
   });
 
+  it('averages a dimension over the answers that scored it', () => {
+    // "tone" was added to the rubric after the first answer was given
+    const scored = (tone: number): PairwiseAnswer => ({
+      preference: 'A',
+      scores: { a: { help: 4, tone }, b: { help: 2, tone } },
+      rationale: 'because',
+    });
+    const result = pairwiseConsensus(
+      [vote('A', 4, 2), scored(4), scored(5)],
+      ['help', 'tone', 'style'],
+    );
+    expect(result.answer).toEqual({
+      preference: 'A',
+      // not (0 + 4 + 5) / 3, and nothing for "style", which nobody scored
+      scores: { a: { help: 4, tone: 4.5 }, b: { help: 2, tone: 4.5 } },
+      rationale: '',
+    });
+  });
+
   it('leaves out the scores of a dimension the schema no longer has', () => {
     const old: PairwiseAnswer = {
       preference: 'A',

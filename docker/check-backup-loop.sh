@@ -295,6 +295,19 @@ expect 1 4
 [ -e "$BACKUP_DIR/labeling-20261340T250000Z.dump" ] || fail "the dump with the impossible date was removed"
 grep "WARNING" "$STATE/log" | grep -q -F "labeling-20261340T250000Z.dump" || fail "the log does not name it"
 
+# Busybox date rolls 31 February over to 3 March instead of refusing it. Read
+# that way, this dump would be the oldest of the four, and pruning would take
+# it. GNU date refuses the date outright; both must leave it alone.
+begin "a dump dated 31 February is not taken for 3 March and pruned"
+echo "old" >"$BACKUP_DIR/labeling-20260231T000000Z.dump"
+old_dump $((-4 * DAY)) >/dev/null
+old_dump $((-3 * DAY)) >/dev/null
+old_dump $((-2 * DAY)) >/dev/null
+run_loop
+expect 1 4
+[ -e "$BACKUP_DIR/labeling-20260231T000000Z.dump" ] || fail "the dump dated 31 February was removed"
+grep "WARNING" "$STATE/log" | grep -q -F "labeling-20260231T000000Z.dump" || fail "the log does not name it"
+
 begin "pg_dump fails: a pause after every attempt, nothing removed"
 old_dump $((-4 * DAY)) >/dev/null
 old_dump $((-3 * DAY)) >/dev/null

@@ -1,0 +1,4 @@
+id,image_url,width,height
+ok-http,http://images.example.test/a.jpg,640,480
+ok-https,https://images.example.test/b.jpg,640,480
+ok-path,/demo/street-1.svg,640,480

@@ -1,17 +1,62 @@
 /**
- * Small CSV reader/writer (RFC 4180 style): comma separated, fields may be
- * wrapped in double quotes and then contain commas and line breaks.
+ * Small CSV reader/writer (RFC 4180 style): fields are separated by a comma
+ * (or another delimiter for reading), may be wrapped in double quotes and can
+ * then contain the delimiter and line breaks.
  */
 
-export type CsvTable = { header: string[]; rows: Array<{ line: number; values: string[] }> };
+export type CsvTable = {
+  header: string[];
+  rows: Array<{ line: number; values: string[] }>;
+  /**
+   * The line where a quoted field opened that is still open at the end of the
+   * file, or null. Such a field has taken in everything after it, so the
+   * rows are not to be trusted.
+   */
+  openQuoteLine: number | null;
+};
+
+type Scan = { records: Array<{ line: number; values: string[] }>; openQuoteLine: number | null };
+
+export type Delimiter = ',' | ';' | '\t';
+
+/**
+ * Tells a comma file from the semicolon files spreadsheet programs write in
+ * many locales: whichever of the two splits the header line into more fields
+ * wins, and a tie goes to the comma. Delimiters inside quotes do not count.
+ */
+export function sniffDelimiter(text: string): ',' | ';' {
+  const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  let commas = 0;
+  let semicolons = 0;
+  let inQuotes = false;
+  for (const ch of input) {
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (inQuotes) continue;
+    else if (ch === '\n' || ch === '\r') break;
+    else if (ch === ',') commas += 1;
+    else if (ch === ';') semicolons += 1;
+  }
+  return semicolons > commas ? ';' : ',';
+}
 
 /** Splits CSV text into records. Each record remembers the line it started on. */
-export function parseCsvRecords(text: string): Array<{ line: number; values: string[] }> {
+export function parseCsvRecords(
+  text: string,
+  delimiter: Delimiter = ',',
+): Array<{ line: number; values: string[] }> {
+  return scanCsv(text, delimiter).records;
+}
+
+function scanCsv(text: string, delimiter: Delimiter): Scan {
   const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const records: Array<{ line: number; values: string[] }> = [];
   let field = '';
   let values: string[] = [];
   let inQuotes = false;
+  // a quote only opens a quoted field at the start of a field; in the middle
+  // of one, as in `5" disk`, it is an ordinary character
+  let quoted = false;
+  let quoteLine = 1;
   let line = 1;
   let recordLine = 1;
   let sawAnything = false;
@@ -21,6 +66,7 @@ export function parseCsvRecords(text: string): Array<{ line: number; values: str
     if (values.length > 1 || values[0] !== '') records.push({ line: recordLine, values });
     values = [];
     field = '';
+    quoted = false;
     sawAnything = false;
   };
 
@@ -39,12 +85,15 @@ export function parseCsvRecords(text: string): Array<{ line: number; values: str
       }
       continue;
     }
-    if (ch === '"') {
+    if (ch === '"' && field === '' && !quoted) {
       inQuotes = true;
+      quoted = true;
+      quoteLine = line;
       sawAnything = true;
-    } else if (ch === ',') {
+    } else if (ch === delimiter) {
       values.push(field);
       field = '';
+      quoted = false;
       sawAnything = true;
     } else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && input[i + 1] === '\n') i += 1;
@@ -57,25 +106,61 @@ export function parseCsvRecords(text: string): Array<{ line: number; values: str
     }
   }
   if (sawAnything || field !== '' || values.length > 0) endRecord();
-  return records;
+  return { records, openQuoteLine: inQuotes ? quoteLine : null };
 }
 
-export function parseCsv(text: string): CsvTable {
-  const records = parseCsvRecords(text);
-  if (records.length === 0) return { header: [], rows: [] };
+export function parseCsv(text: string, delimiter: Delimiter = ','): CsvTable {
+  const { records, openQuoteLine } = scanCsv(text, delimiter);
+  if (records.length === 0) return { header: [], rows: [], openQuoteLine };
   const [first, ...rest] = records;
-  return { header: first.values.map((h) => h.trim()), rows: rest };
+  return { header: first.values.map((h) => h.trim()), rows: rest, openQuoteLine };
 }
 
 function escapeField(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+/**
+ * A spreadsheet program runs a cell that starts with = + - or @ (or a tab or
+ * carriage return in front of one) as a formula, and exports hold text that
+ * other people wrote. A single quote in front makes the cell plain text.
+ * Text that already starts with quotes and then such a character gets one
+ * more, so that taking one quote off again always gives the original back.
+ * Only text is guarded: a number is passed as a number and written as it is.
+ */
+const NEEDS_GUARD = /^'*[=+\-@\t\r]/;
+const IS_GUARDED = /^'+[=+\-@\t\r]/;
+
+export function guardFormula(value: string): string {
+  return NEEDS_GUARD.test(value) ? `'${value}` : value;
+}
+
+/** Takes the guard off again, for reading back a file this app exported. */
+export function unguardFormula(value: string): string {
+  return IS_GUARDED.test(value) ? value.slice(1) : value;
+}
+
+export type CsvCell = string | number | null | undefined;
+
+/**
+ * One CSV line, with its line ending. Text cells are guarded against being
+ * run as formulas unless `formulas` is "keep", which is only right for a file
+ * that is meant to be imported again as it is, like the example import file.
+ */
+export function toCsvLine(row: CsvCell[], formulas: 'guard' | 'keep' = 'guard'): string {
+  const cells = row.map((value) => {
+    if (value == null) return '';
+    if (typeof value === 'number') return String(value);
+    return escapeField(formulas === 'guard' ? guardFormula(value) : value);
+  });
+  return `${cells.join(',')}\r\n`;
+}
+
 /** Serialises rows to CSV text with a header line. */
-export function toCsv(header: string[], rows: Array<Array<string | number | null | undefined>>) {
-  const lines = [header.map(escapeField).join(',')];
-  for (const row of rows) {
-    lines.push(row.map((value) => escapeField(value == null ? '' : String(value))).join(','));
-  }
-  return lines.join('\r\n') + '\r\n';
+export function toCsv(
+  header: string[],
+  rows: CsvCell[][],
+  formulas: 'guard' | 'keep' = 'guard',
+): string {
+  return toCsvLine(header, formulas) + rows.map((row) => toCsvLine(row, formulas)).join('');
 }

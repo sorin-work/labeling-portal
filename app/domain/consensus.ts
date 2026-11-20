@@ -60,6 +60,10 @@ export function classificationConsensus(
  * `dimensions` are the rubric keys of the schema. With them the merged scores
  * hold exactly the current rubric, so the scores of a dimension that was
  * removed from the schema are not averaged into new consensus answers.
+ *
+ * A score is the mean over the answers that have one. An answer from before
+ * a dimension was added to the rubric has none, and counting it as 0 would
+ * pull the mean down. A dimension nobody scored is left out.
  */
 export function pairwiseConsensus(answers: PairwiseAnswer[], dimensions?: string[]): Consensus {
   const n = answers.length;
@@ -70,9 +74,15 @@ export function pairwiseConsensus(answers: PairwiseAnswer[], dimensions?: string
 
   const mean = (side: 'a' | 'b') => {
     const keys = dimensions ?? Object.keys(answers[0].scores[side]);
-    return Object.fromEntries(
-      keys.map((k) => [k, round(answers.reduce((s, a) => s + (a.scores[side][k] ?? 0), 0) / n)]),
-    );
+    const means: Record<string, number> = {};
+    for (const key of keys) {
+      const scores = answers
+        .map((a) => a.scores[side][key])
+        .filter((score) => typeof score === 'number');
+      if (scores.length === 0) continue;
+      means[key] = round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+    }
+    return means;
   };
 
   return {
