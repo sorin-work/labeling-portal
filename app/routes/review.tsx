@@ -7,6 +7,7 @@ import { KeyboardHelp } from '~/components/keyboard-help';
 import { useHotkeyPage, usePageHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
 import { formatDuration, useLastInput } from '~/components/use-active-time';
+import { noImplicitSubmit } from '~/components/no-implicit-submit';
 import { useRestoreFocus } from '~/components/use-dialog-focus';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { decisionsOpen, pageShortcut } from '~/domain/hotkeys';
@@ -318,6 +319,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
         ) : (
           <Form
             method="post"
+            onKeyDown={noImplicitSubmit}
             className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
           >
             <p className="text-xs text-slate-500">
