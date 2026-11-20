@@ -13,7 +13,13 @@ export async function resetDb() {
     WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
   if (rows.length === 0) return;
   const tables = rows.map((r) => `"public"."${r.tablename}"`).join(', ');
-  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`);
+  // The audit trail refuses TRUNCATE. The tests own their database, so they
+  // switch that guard off for the reset and on again in the same transaction.
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe(`ALTER TABLE "Activity" DISABLE TRIGGER "Activity_no_truncate"`),
+    prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`),
+    prisma.$executeRawUnsafe(`ALTER TABLE "Activity" ENABLE TRIGGER "Activity_no_truncate"`),
+  ]);
 }
 
 let counter = 0;

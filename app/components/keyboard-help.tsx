@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import { helpSections, type Page } from '~/domain/hotkeys';
 import type { TaskSchema } from '~/domain/task-schema';
 
 import { useHotkeyDialog, usePageHotkeys } from './labeling/use-hotkeys';
+import { useDialogFocus } from './use-dialog-focus';
 
 /**
  * "?" opens the list of keyboard shortcuts for this page and this project's
@@ -12,7 +13,11 @@ import { useHotkeyDialog, usePageHotkeys } from './labeling/use-hotkeys';
  */
 export function KeyboardHelp({ page, schema }: { page: Page | null; schema: TaskSchema }) {
   const [open, setOpen] = useState(false);
+  const dialog = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useHotkeyDialog(open);
+  // focus goes into the list and stays there until it closes, then goes back
+  useDialogFocus(open, dialog);
   usePageHotkeys((action) => {
     if (action === 'help') setOpen(true);
     else if (action === 'closeHelp') setOpen(false);
@@ -32,11 +37,26 @@ export function KeyboardHelp({ page, schema }: { page: Page | null; schema: Task
       </button>
       {open && (
         <div
+          ref={dialog}
           role="dialog"
-          aria-label="Keyboard shortcuts"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
           className="fixed bottom-4 left-4 z-40 max-h-[80vh] w-96 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg bg-white p-4 text-sm shadow-xl ring-1 ring-slate-200"
         >
-          <h2 className="mb-2 font-semibold">Keyboard shortcuts</h2>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 id={titleId} className="font-semibold">
+              Keyboard shortcuts
+            </h2>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded px-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              aria-label="Close the list of shortcuts"
+            >
+              ×
+            </button>
+          </div>
           {helpSections(page, schema).map((section) => (
             <section key={section.title} className="mt-3 first:mt-0">
               <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">

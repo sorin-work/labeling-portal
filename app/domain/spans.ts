@@ -66,3 +66,82 @@ export function segmentText(text: string, spans: Span[]): Segment[] {
   }
   return segments;
 }
+
+// ---------- marking spans with the keyboard ----------
+
+export type Range = { start: number; end: number };
+
+/**
+ * The steps of the keyboard cursor in a text: words (letters and digits,
+ * with an apostrophe or hyphen inside) and single punctuation marks, so
+ * "London." is two steps and the full stop is never part of a place name by
+ * accident.
+ */
+export function wordRanges(text: string): Range[] {
+  return [...text.matchAll(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]/gu)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }));
+}
+
+/**
+ * Where the cursor is, as word positions: `anchor` stays put while Shift
+ * extends, `focus` moves with the arrow keys. Both are the same when one word
+ * is selected.
+ */
+export type WordCursor = { anchor: number; focus: number };
+
+/** The word that holds an offset, or the next one after it. */
+export function wordAt(words: readonly Range[], offset: number): number {
+  const index = words.findIndex((w) => w.end > offset);
+  return index === -1 ? Math.max(0, words.length - 1) : index;
+}
+
+/** Moves the cursor `by` words. With `extend` the selection grows or shrinks instead. */
+export function moveCursor(
+  words: readonly Range[],
+  cursor: WordCursor,
+  by: number,
+  extend: boolean,
+): WordCursor {
+  const focus = Math.min(Math.max(cursor.focus + by, 0), Math.max(0, words.length - 1));
+  return { anchor: extend ? cursor.anchor : focus, focus };
+}
+
+/** The characters the cursor selects, from the first selected word to the last. */
+export function cursorRange(words: readonly Range[], cursor: WordCursor): Range | null {
+  const from = words[Math.min(cursor.anchor, cursor.focus)];
+  const to = words[Math.max(cursor.anchor, cursor.focus)];
+  return from && to ? { start: from.start, end: to.end } : null;
+}
+
+/** Cuts the pieces of `segmentText` at the edges of a range, so the range can be drawn. */
+export function splitAtRange(
+  segments: readonly Segment[],
+  range: Range | null,
+): Array<Segment & { inRange: boolean }> {
+  return segments.flatMap((segment) => {
+    if (!range || segment.span || range.end <= segment.start || range.start >= segment.end) {
+      const inRange =
+        range !== null &&
+        segment.span !== null &&
+        segment.start < range.end &&
+        segment.end > range.start;
+      return [{ ...segment, inRange }];
+    }
+    const cuts = [
+      segment.start,
+      Math.max(segment.start, range.start),
+      Math.min(segment.end, range.end),
+      segment.end,
+    ];
+    return [0, 1, 2]
+      .map((i) => ({ start: cuts[i], end: cuts[i + 1], inRange: i === 1 }))
+      .filter((piece) => piece.end > piece.start)
+      .map((piece) => ({
+        ...piece,
+        span: null,
+        text: segment.text.slice(piece.start - segment.start, piece.end - segment.start),
+      }));
+  });
+}

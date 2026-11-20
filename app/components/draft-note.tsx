@@ -18,17 +18,28 @@ const NOTES: Record<Exclude<DraftState, 'idle'>, { text: string; title: string }
   },
 };
 
-/** Says whether the answer in progress is safe on the server. */
+/**
+ * Says whether the answer in progress is safe on the server. Only trouble is
+ * said aloud: a screen reader that announced every save would talk over the
+ * work.
+ */
 export function DraftNote({ state }: { state: DraftState }) {
-  if (state === 'idle') return null;
-  const note = NOTES[state];
+  const note = state === 'idle' ? null : NOTES[state];
   const trouble = state === 'failed' || state === 'stopped';
   return (
-    <span
-      className={cx('text-xs', trouble ? 'text-amber-700' : 'text-slate-500')}
-      title={note.title}
-    >
-      {note.text}
-    </span>
+    <>
+      <span role="status" className="sr-only">
+        {trouble && note ? `${note.text}. ${note.title}` : ''}
+      </span>
+      {note && (
+        <span
+          className={cx('text-xs', trouble ? 'text-amber-700' : 'text-slate-500')}
+          title={note.title}
+          aria-hidden={trouble || undefined}
+        >
+          {note.text}
+        </span>
+      )}
+    </>
   );
 }

@@ -320,6 +320,13 @@ describe('schema edits once work exists', () => {
     });
   });
 
+  it('writes no entry for a save that changes nothing', async () => {
+    const { project, save } = await setup(sentiment);
+    const result = await save(sentiment);
+    expect(payload<Saved>(result).saved).toBe(true);
+    expect(await prisma.activity.count({ where: { projectId: project.id } })).toBe(0);
+  });
+
   it('refuses a field rename or another kind once tasks exist, even without answers', async () => {
     const { project, save, stored } = await setup(sentiment, 'DRAFT');
 

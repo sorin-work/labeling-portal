@@ -74,7 +74,7 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 const CHANGE_STYLE: Record<SchemaChange['impact'], string> = {
   safe: 'text-slate-600',
   warning: 'text-amber-700',
-  breaking: 'text-rose-600',
+  breaking: 'text-rose-700',
 };
 
 /** What the typed schema changes compared with the saved one, before the save. */
@@ -83,7 +83,7 @@ function SchemaChanges({ changes }: { changes: SchemaChange[] }) {
   const blocked = changes.some((change) => change.impact === 'breaking');
   return (
     <div className="rounded-md p-3 text-xs ring-1 ring-slate-200" aria-live="polite">
-      <p className={cx('font-medium', blocked ? 'text-rose-600' : 'text-slate-700')}>
+      <p className={cx('font-medium', blocked ? 'text-rose-700' : 'text-slate-700')}>
         {blocked
           ? 'This edit cannot be saved because it would break work that already exists:'
           : 'Compared with the saved schema:'}
@@ -163,7 +163,7 @@ export function ProjectForm({
           spellCheck={false}
         />
         {errors?.schema ? (
-          <p className="text-xs text-rose-600" role="alert">
+          <p className="text-xs text-rose-700" role="alert">
             {errors.schema}
           </p>
         ) : checked.ok ? (
@@ -192,13 +192,13 @@ export function ProjectForm({
             onChange={(event) => setInstructions(event.target.value)}
           />
           <div className="max-h-80 overflow-y-auto rounded-md bg-white p-3 ring-1 ring-slate-200">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
               Preview
             </div>
             {instructions.trim() ? (
               <MarkdownBody html={renderMarkdown(instructions)} />
             ) : (
-              <p className="text-sm text-slate-400">Nothing to preview yet.</p>
+              <p className="text-sm text-slate-500">Nothing to preview yet.</p>
             )}
           </div>
         </div>

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  cursorRange,
+  moveCursor,
+  splitAtRange,
+  wordAt,
+  wordRanges,
   addSpan,
   relabelSpan,
   removeSpan,
@@ -97,5 +102,79 @@ describe('relabelSpan', () => {
       { start: 24, end: 28, label: 'ORG' },
     ]);
     expect(relabelSpan(spans, { start: 1, end: 2 }, 'ORG')).toEqual(spans);
+  });
+});
+
+describe('the keyboard cursor', () => {
+  const text = "Ada Lovelace was born in London, in 1815. O'Brien's well-known.";
+  const words = wordRanges(text);
+  const said = (r: { start: number; end: number } | null) =>
+    r ? text.slice(r.start, r.end) : null;
+
+  it('steps over words and single punctuation marks', () => {
+    expect(words.map((w) => said(w))).toEqual([
+      'Ada',
+      'Lovelace',
+      'was',
+      'born',
+      'in',
+      'London',
+      ',',
+      'in',
+      '1815',
+      '.',
+      "O'Brien's",
+      'well-known',
+      '.',
+    ]);
+    expect(wordRanges('  ')).toEqual([]);
+  });
+
+  it('moves word by word and stops at both ends', () => {
+    let cursor = { anchor: 0, focus: 0 };
+    cursor = moveCursor(words, cursor, -1, false);
+    expect(cursor).toEqual({ anchor: 0, focus: 0 });
+    cursor = moveCursor(words, cursor, 1, false);
+    expect(said(cursorRange(words, cursor))).toBe('Lovelace');
+    cursor = moveCursor(words, { anchor: 12, focus: 12 }, 1, false);
+    expect(cursor).toEqual({ anchor: 12, focus: 12 });
+  });
+
+  it('extends with Shift in either direction, and shrinks back', () => {
+    let cursor = moveCursor(words, { anchor: 0, focus: 0 }, 1, true);
+    expect(said(cursorRange(words, cursor))).toBe('Ada Lovelace');
+    cursor = moveCursor(words, { anchor: 5, focus: 5 }, -2, true);
+    expect(said(cursorRange(words, cursor))).toBe('born in London');
+    cursor = moveCursor(words, cursor, 1, true);
+    expect(said(cursorRange(words, cursor))).toBe('in London');
+    // a plain arrow collapses the selection onto the moving end
+    expect(moveCursor(words, cursor, 0, false)).toEqual({ anchor: 4, focus: 4 });
+  });
+
+  it('starts on the word that holds an offset', () => {
+    expect(wordAt(words, 0)).toBe(0);
+    expect(wordAt(words, 3)).toBe(1); // the space after "Ada": the next word
+    expect(wordAt(words, text.length)).toBe(words.length - 1);
+    expect(wordAt([], 4)).toBe(0);
+    expect(cursorRange([], { anchor: 0, focus: 0 })).toBeNull();
+  });
+
+  it('cuts the text pieces at the cursor so it can be drawn', () => {
+    const spans = [{ start: 0, end: 12, label: 'PERSON' }];
+    const range = cursorRange(words, { anchor: 3, focus: 5 })!;
+    const pieces = splitAtRange(segmentText(text, spans), range);
+    expect(pieces.map((p) => [p.text, p.inRange])).toEqual([
+      ['Ada Lovelace', false],
+      [' was ', false],
+      ['born in London', true],
+      [text.slice(range.end), false],
+    ]);
+    // a span the cursor touches is drawn as selected, and never cut
+    const over = splitAtRange(segmentText(text, spans), { start: 4, end: 16 });
+    expect(over.map((p) => [p.text, p.inRange])).toEqual([
+      ['Ada Lovelace', true],
+      [' was', true],
+      [text.slice(16), false],
+    ]);
   });
 });

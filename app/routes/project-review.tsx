@@ -139,7 +139,7 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
                         className="block truncate hover:text-indigo-700"
                       >
                         {item.externalId && (
-                          <span className="mr-2 font-mono text-xs text-slate-400">
+                          <span className="mr-2 font-mono text-xs text-slate-500">
                             {item.externalId}
                           </span>
                         )}

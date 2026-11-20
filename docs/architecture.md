@@ -43,7 +43,14 @@ tests/integration/  loaders and actions against a real PostgreSQL
    submissions than the project's overlap) in the order described in "Which
    task comes next" below. The task row is locked while the claim is created.
 2. The claim expires after the project's time limit. In the last two minutes
-   the annotator can ask for more time once, which adds another full limit.
+   the annotator can ask for more time, up to three times per claim
+   (`MAX_EXTENSIONS` in `domain/time-limit.ts`), and each time adds another
+   full limit. Three leaves room for people who need longer and keeps one
+   person from sitting on a task for ever. `extendAssignment` refuses a
+   request outside the last two minutes (`inExtendWindow`), so extensions
+   cannot be stacked, and only updates the claim as it read it, so two
+   requests at once count once. However many extensions a claim got, its
+   first submission is credited at most two limits (see "Pay").
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. A text without
@@ -403,6 +410,68 @@ one tab stop each, the arrows choose, and a typed digit scores the row that
 has focus (or the first empty one) and moves to the next, A then B for each
 dimension.
 
+## Accessibility
+
+What a keyboard or screen reader user gets, and where it is checked.
+
+- **Every action has a keyboard path.** Entity spans: Tab to the text, the
+  left and right arrows walk it word by word (`wordRanges` in
+  `domain/spans.ts`: words, and punctuation marks on their own), Shift with
+  an arrow selects one word more or less, Enter marks the selection with the
+  active type. These keys only act while the text has focus. Boxes: see
+  "Boxes on an image" below; the list under the picture says every box with
+  its label and position, and picking one there gives it focus on the
+  picture, where the arrows, the label keys and Delete work on it. A box's
+  label can also be changed in the list.
+- **Radio groups are real radio buttons**: the labels of a single-label
+  classification (checkboxes for multi-label), the pairwise preference, the
+  pairwise score rows and the reviewer's quality score. One tab stop per
+  group, the arrows choose, and the hotkeys still work while one has focus.
+  A chosen label or preference also shows a tick, not only a colour.
+- **Focus.** After a navigation focus goes to `<main id="main">`
+  (`app-layout.tsx`), unless the page put it somewhere itself. After "Submit
+  and next" it goes to the next task, and a live region says the task's
+  reference and the count for today. The list of shortcuts is a modal
+  dialog: focus moves into it, Tab stays inside, and closing it puts focus
+  back. The skip form and the armed approval give focus back the same way
+  (`use-dialog-focus.ts`), unless the person moved it on themselves. Every
+  focusable element shows the `:focus-visible` ring from `app.css`;
+  visually hidden radio buttons draw it on their visible part, and a box on
+  the picture draws a dashed ring, since SVG shows no outline.
+- **What is said aloud.** One live region per interface: the word or words
+  under the entity cursor and what was marked or removed; a box added,
+  moved, resized, relabelled or removed, undo and redo, the zoom. The
+  countdown says the time left at 10, 5 and 1 minutes and when it is up
+  (`timeAnnouncement`); two minutes belongs to the warning, which is an
+  alert. A draft that could not be saved is said; a save that worked is not.
+- **Colour.** Text is at least 4.5:1 on its background. `text-slate-400` is
+  gone (2.6:1 on white); hints and meta text use `text-slate-500`, and red
+  text is `rose-700`. The chart on the quality page and the gold flag are
+  also there in words.
+- **Checked by tests.** `tests/dom` runs in jsdom with Testing Library and
+  `vitest-axe` (the `dom` project in `vitest.config.ts`): the four
+  interfaces, editable and read-only; the work page for every kind; review,
+  revise (both modes), qualification test and task page for every kind;
+  project settings, quality, payouts and earnings; the list of shortcuts and the skip
+  form. Every page renders inside the real app layout, and `tests/dom/axe.ts`
+  is the one place where an axe rule may be switched off, each with its
+  reason. The only one is `color-contrast`, because jsdom computes no
+  colours: `tests/unit/contrast.test.ts` reads Tailwind's palette from the
+  theme the stylesheet imports, finds every text colour class in `app/` and
+  the background it sits on, in every state the class string names (a
+  hover or focus background is checked with the text colour in effect then):
+  its own class string first, else a parent background listed for that file,
+  else the page and card surfaces. It works the ratios out
+  (`domain/contrast.ts`). It also checks the focus ring (3:1) and the text on
+  the default entity colours. Small key tests in `tests/dom` cover the
+  entity cursor, the radio groups, the shortcut list, the box list and the
+  next task.
+- **Not checked by machine.** Anything that needs layout: the size of
+  targets, reflow at 400% zoom, and the colours a schema gives its entity
+  types or what is under a box on an image. Box labels on the picture are
+  drawn in the label's colour over the image and cannot be checked; the list
+  under the picture is the readable version.
+
 ## Boxes on an image
 
 `app/components/labeling/bounding-boxes.tsx` wires the pointer and the keys to
@@ -512,13 +581,18 @@ turns an entry into the sentence both pages show, and covers every action.
   all. Changes that turn out to change nothing (adding someone who is already
   on the project, the same role again) write nothing. A download is recorded
   before the file is sent.
-- **Append-only.** There is no code that updates or deletes an entry, and a
-  trigger (`activity_append_only`) refuses it in the database, whatever sends
-  it. The only updates it lets through clear `actorId` or `projectId`, which
-  is what deleting the account or the project does (`SET NULL`); the entry
-  keeps `actorName`. Entries go only with their organisation. Someone with
-  the database owner's rights can still drop the trigger; this protects
-  against the app, not against the database administrator.
+- **Append-only.** There is no code that updates or deletes an entry, and
+  triggers refuse it in the database, whatever sends it: `UPDATE`, `DELETE`
+  and `TRUNCATE` (also through `TRUNCATE ... CASCADE`). The only changes let
+  through are the ones a foreign key cascade makes, which the trigger tells
+  by running nested (`pg_trigger_depth() > 1`): clearing `actorId` or
+  `projectId` when the account or the project is deleted (`SET NULL`; the
+  entry keeps `actorName`), and removing the entries of an organisation that
+  is deleted. The same clearing sent directly is refused. A save that changes
+  nothing writes no entry. Someone with the database owner's rights can still
+  drop the triggers; this protects against the app, not against the database
+  administrator. The integration tests switch the `TRUNCATE` guard off for
+  their reset only.
 - **Sign-ins.** A lockout is recorded once per lock (the first refused
   attempt), and only for an email that has an account, in the organisation it
   signs in to. An unknown email records nothing, so the sign-in form cannot
@@ -657,10 +731,14 @@ same way.
   and no two credits overlap.
 - The submit and resubmit transactions lock the person's membership row
   first, so two submissions of one person are credited one after the other.
-  The stretches are written back merged. A credit reaches back at most 24
-  hours (`CREDIT_WINDOW_MS`): a claim lives at most two time limits of at
-  most 480 minutes each, and a revision, which has no deadline, is credited
-  only in the last day before it is handed in. Stretches that end before
+  The stretches are written back merged. A credit reaches back as far as the
+  longest claim can live (`CREDIT_WINDOW_MS`, which is `MAX_CLAIM_MS`: a time
+  limit of at most 480 minutes and three extensions, 32 hours), so no claim
+  is cut off; a revision, which has no deadline, is credited only within that
+  far back. A first submission is credited at most two time limits
+  (`FIRST_SUBMISSION_LIMITS`), however many extensions it got: extensions
+  give the time to finish, and the credit stays where it was with one
+  extension, so the total of three limits per assignment still holds. Stretches that end before
   that are removed, so the table holds a few rows per person.
 - The clock is per organisation and not per project, so the same minutes
   cannot be paid on two projects. A person in two organisations has two

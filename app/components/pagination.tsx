@@ -28,7 +28,9 @@ export function Pagination({ info, param = 'page' }: { info: PageInfo; param?: s
             Previous
           </Link>
         ) : (
-          <span className={cx(linkClass, 'text-slate-300')}>Previous</span>
+          <span aria-disabled="true" className={cx(linkClass, 'aria-disabled:text-slate-300')}>
+            Previous
+          </span>
         )}
         <span className="px-2 py-1.5 text-slate-500">
           Page {info.page} of {info.pageCount}
@@ -38,7 +40,9 @@ export function Pagination({ info, param = 'page' }: { info: PageInfo; param?: s
             Next
           </Link>
         ) : (
-          <span className={cx(linkClass, 'text-slate-300')}>Next</span>
+          <span aria-disabled="true" className={cx(linkClass, 'aria-disabled:text-slate-300')}>
+            Next
+          </span>
         )}
       </div>
     </nav>

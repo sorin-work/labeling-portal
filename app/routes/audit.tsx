@@ -156,7 +156,7 @@ export default function Audit({ loaderData }: Route.ComponentProps) {
                         {e.project}
                       </Link>
                     ) : (
-                      <span className="text-slate-400">–</span>
+                      <span className="text-slate-500">–</span>
                     )}
                   </td>
                 </tr>

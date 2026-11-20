@@ -52,9 +52,9 @@ export default function ProjectAdjudication({ loaderData }: Route.ComponentProps
                 to={`/projects/${projectId}/tasks/${task.id}`}
                 className="block truncate hover:text-indigo-700"
               >
-                <span className="mr-2 text-slate-400">#{task.position}</span>
+                <span className="mr-2 text-slate-500">#{task.position}</span>
                 {task.externalId && (
-                  <span className="mr-2 font-mono text-xs text-slate-400">{task.externalId}</span>
+                  <span className="mr-2 font-mono text-xs text-slate-500">{task.externalId}</span>
                 )}
                 {task.preview}
               </Link>

@@ -329,20 +329,22 @@ export async function updateProject(
     });
     const schemaChange: [TaskSchema, TaskSchema] | null =
       saved.ok && changes.length > 0 ? [saved.schema, input.schema] : null;
-    // what changed, field by field, in the same transaction as the save
-    await logActivity(tx, {
-      orgId: before.orgId,
-      projectId,
-      actorId,
-      action: 'project.settings',
-      detail: {
-        changes: {
-          ...settingsChanges(before, { ...input, rateCents: input.rateCents }),
-          ...(schemaChange ? { schema: schemaChange } : {}),
-        },
-      } as Prisma.InputJsonValue,
-      createdAt: now,
-    });
+    // what changed, field by field, in the same transaction as the save; a
+    // save that changes nothing is not an event
+    const fieldChanges = {
+      ...settingsChanges(before, input),
+      ...(schemaChange ? { schema: schemaChange } : {}),
+    };
+    if (Object.keys(fieldChanges).length > 0) {
+      await logActivity(tx, {
+        orgId: before.orgId,
+        projectId,
+        actorId,
+        action: 'project.settings',
+        detail: { changes: fieldChanges } as Prisma.InputJsonValue,
+        createdAt: now,
+      });
+    }
     return { ok: true, project, changes, schemaChange };
   });
 }

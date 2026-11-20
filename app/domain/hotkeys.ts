@@ -185,6 +185,25 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
     // the next Backspace is meant for text.
     { action: 'remove', keys: ['Delete'], label: 'Remove the selected span', destructive: true },
     { action: 'undoRemove', keys: ['Mod+z'], label: 'Put back the span that was just removed' },
+    // The text keys only act while the text has focus (Tab to it); anywhere
+    // else the arrows and Enter keep what they do.
+    {
+      action: 'cursor',
+      keys: ['ArrowLeft', 'ArrowRight'],
+      label: 'In the text: go to the previous or the next word',
+      repeat: true,
+    },
+    {
+      action: 'extend',
+      keys: ['Shift+ArrowLeft', 'Shift+ArrowRight'],
+      label: 'In the text: select one word more or less',
+      repeat: true,
+    },
+    {
+      action: 'mark',
+      keys: ['Enter'],
+      label: 'In the text: mark the selected words as the entity type',
+    },
   ],
   pairwise: [
     {
@@ -512,6 +531,10 @@ const KEY_WORDS: Record<string, string> = {
   'Mod+z': 'Ctrl + Z',
   'Mod+Shift+z': 'Ctrl + Shift + Z',
   'Shift+Tab': 'Shift + Tab',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  'Shift+ArrowLeft': 'Shift + ←',
+  'Shift+ArrowRight': 'Shift + →',
   Escape: 'Esc',
   [ANY_OTHER_KEY]: 'any other key',
 };

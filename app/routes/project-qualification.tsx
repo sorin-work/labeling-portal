@@ -101,8 +101,8 @@ function Question({ title, children }: { title: string; children: ReactNode }) {
       className={cx('rounded-lg', scope.active && 'ring-2 ring-indigo-500')}
     >
       <Card>
-        <div className="mb-3 flex items-center justify-between text-sm font-medium text-slate-500">
-          {title}
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-medium text-slate-500">{title}</h2>
           {scope.active && (
             <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-normal text-indigo-700">
               Keyboard shortcuts act on this question

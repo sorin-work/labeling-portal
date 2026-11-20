@@ -1,14 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type { NerAnswer, Span } from '~/domain/answers';
 import { interfaceShortcut, isTextEntry, labelKeys } from '~/domain/hotkeys';
+import { ENTITY_COLORS, ENTITY_TINT } from '~/domain/palette';
 import {
   addSpan,
+  cursorRange,
+  moveCursor,
   relabelSpan,
   removeSpan,
   segmentText,
   spanText,
+  splitAtRange,
   trimSelection,
+  wordAt,
+  wordRanges,
+  type WordCursor,
 } from '~/domain/spans';
 import type { NerSchema } from '~/domain/task-schema';
 
@@ -18,11 +25,9 @@ import type { LabelingProps } from './index';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
 
-const FALLBACK_COLORS = ['#f59e0b', '#6366f1', '#10b981', '#ef4444', '#0ea5e9', '#a855f7'];
-
 function colorFor(schema: NerSchema, label: string): string {
   const index = schema.entities.findIndex((e) => e.name === label);
-  return schema.entities[index]?.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+  return schema.entities[index]?.color ?? ENTITY_COLORS[index % ENTITY_COLORS.length];
 }
 
 /** Offset of a DOM position inside the text, using the data-start of its segment. */
@@ -56,6 +61,18 @@ export function NerSpans({
   const selected = spans.find((span) => same(span, picked)) ?? null;
   const keys = labelKeys(schema.entities.length);
 
+  // The keyboard path: while the text has focus a cursor walks it word by
+  // word, Shift extends it, and Enter marks the selected words with the
+  // active type. What happens is said in a live region.
+  const words = useMemo(() => wordRanges(text), [text]);
+  const [cursor, setCursor] = useState<WordCursor | null>(null);
+  const [textFocused, setTextFocused] = useState(false);
+  const selection = cursor ? cursorRange(words, cursor) : null;
+  const [said, setSaid] = useState('');
+  const hintId = useId();
+  const textHasFocus = () =>
+    container.current !== null && document.activeElement === container.current;
+
   // The span that was removed last can be put back once, until anything else
   // changes. (The box interface gets a full undo; this covers the slip.)
   const [removed, setRemoved] = useState<{ span: Span; from: Span[] } | null>(null);
@@ -68,12 +85,14 @@ export function NerSpans({
     setRemoved({ span, from: next });
     onChange({ spans: next });
     if (same(span, picked)) setPicked(null);
+    setSaid(`Removed ${span.label} “${spanText(text, span)}”.`);
   };
   const putBack = () => {
     if (!undoable) return false;
     setRemoved(null);
     onChange({ spans: addSpan(spans, undoable) });
     setPicked(undoable);
+    setSaid(`Put back ${undoable.label} “${spanText(text, undoable)}”.`);
     return true;
   };
 
@@ -87,7 +106,28 @@ export function NerSpans({
     return () => document.removeEventListener('focusin', onFocus);
   }, []);
 
+  const step = (by: number, extend: boolean) => {
+    if (!textHasFocus() || words.length === 0) return false;
+    const next = moveCursor(words, cursor ?? { anchor: 0, focus: 0 }, cursor ? by : 0, extend);
+    setCursor(next);
+    const range = cursorRange(words, next);
+    if (range) setSaid(spanText(text, range));
+    return true;
+  };
+
+  const mark = () => {
+    if (!textHasFocus() || !selection) return false;
+    onChange({ spans: addSpan(spans, { ...selection, label: active }) });
+    setPicked(null);
+    setCursor((c) => (c ? { anchor: c.focus, focus: c.focus } : c));
+    setSaid(`Marked ${active} “${spanText(text, selection)}”.`);
+    return true;
+  };
+
   const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action === 'cursor') return step(hit.index === 0 ? -1 : 1, false);
+    if (hit.action === 'extend') return step(hit.index === 0 ? -1 : 1, true);
+    if (hit.action === 'mark') return mark();
     if (hit.action === 'undoRemove') return putBack();
     if (hit.action === 'remove') {
       if (!selected) return false;
@@ -122,10 +162,16 @@ export function NerSpans({
     if (start >= end) return;
     onChange({ spans: addSpan(spans, { start, end, label: active }) });
     setPicked(null);
+    setSaid(`Marked ${active} “${text.slice(start, end)}”.`);
   };
+
+  const keyHint = `With the keyboard: Tab to the text, ${interfaceShortcut(schema, ['cursor'])} go from word to word, ${interfaceShortcut(schema, ['extend'])} select more, ${interfaceShortcut(schema, ['mark'])} marks the selection as the entity type.`;
 
   return (
     <div className="space-y-4" {...inUse}>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -146,7 +192,7 @@ export function NerSpans({
                 className="h-3 w-3 rounded-sm"
                 style={{ backgroundColor: colorFor(schema, entity.name) }}
               />
-              {keys[index] && <kbd className="font-mono text-xs text-slate-400">{keys[index]}</kbd>}
+              {keys[index] && <kbd className="font-mono text-xs text-slate-500">{keys[index]}</kbd>}
               {entity.name}
             </button>
           ))}
@@ -155,9 +201,24 @@ export function NerSpans({
       <div
         ref={container}
         onMouseUp={onMouseUp}
+        role={readOnly ? undefined : 'group'}
+        aria-label={readOnly ? undefined : 'Text to label'}
+        aria-describedby={readOnly ? undefined : hintId}
+        tabIndex={readOnly ? undefined : 0}
+        onFocus={(event) => {
+          if (event.target !== event.currentTarget) return;
+          setTextFocused(true);
+          // the cursor starts on the first word, or where it was
+          if (!cursor && words.length > 0) {
+            const at = wordAt(words, picked?.start ?? 0);
+            setCursor({ anchor: at, focus: at });
+            setSaid(spanText(text, words[at]));
+          }
+        }}
+        onBlur={() => setTextFocused(false)}
         className="whitespace-pre-wrap rounded-md bg-slate-50 p-4 text-base leading-8"
       >
-        {segmentText(text, spans).map((segment) =>
+        {splitAtRange(segmentText(text, spans), textFocused ? selection : null).map((segment) =>
           segment.span ? (
             <mark
               key={segment.start}
@@ -168,8 +229,9 @@ export function NerSpans({
                 'rounded px-0.5 text-slate-900',
                 !readOnly && 'cursor-pointer',
                 same(segment, picked) && 'ring-2 ring-slate-800',
+                segment.inRange && 'outline-2 outline-offset-1 outline-indigo-600',
               )}
-              style={{ backgroundColor: `${colorFor(schema, segment.span.label)}55` }}
+              style={{ backgroundColor: `${colorFor(schema, segment.span.label)}${ENTITY_TINT}` }}
             >
               {segment.text}
               <sup className="ml-0.5 select-none text-[10px] font-semibold uppercase text-slate-600">
@@ -177,12 +239,23 @@ export function NerSpans({
               </sup>
             </mark>
           ) : (
-            <span key={segment.start} data-start={segment.start}>
+            <span
+              key={segment.start}
+              data-start={segment.start}
+              className={cx(
+                segment.inRange && 'rounded-sm bg-indigo-100 outline-2 outline-indigo-600',
+              )}
+            >
               {segment.text}
             </span>
           ),
         )}
       </div>
+      {!readOnly && (
+        <p id={hintId} className="text-xs text-slate-500">
+          {keyHint}
+        </p>
+      )}
       {!readOnly && undoable && (
         <p className="flex items-center gap-2 text-sm text-slate-600">
           Removed {undoable.label} “{spanText(text, undoable)}”.
@@ -200,7 +273,7 @@ export function NerSpans({
         <p className="text-sm text-slate-500">
           {readOnly
             ? 'No entities were marked.'
-            : 'Select text with the mouse to mark it. Submit with no spans if nothing applies.'}
+            : 'Select text with the mouse to mark it, or with the keyboard (see below). Submit with no spans if nothing applies.'}
         </p>
       ) : (
         <>
@@ -234,7 +307,7 @@ export function NerSpans({
                     type="button"
                     aria-label={`Remove ${span.label} “${spanText(text, span)}”`}
                     onClick={() => remove(span)}
-                    className="text-slate-400 hover:text-rose-600"
+                    className="text-slate-500 hover:text-rose-700"
                   >
                     ×
                   </button>

@@ -1,4 +1,5 @@
-import { data, Form, Link, NavLink, Outlet } from 'react-router';
+import { useEffect, useRef } from 'react';
+import { data, Form, Link, NavLink, Outlet, useLocation } from 'react-router';
 
 import { Flash } from '~/components/flash';
 
@@ -35,6 +36,21 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     { to: '/people', label: 'People', show: can(role, 'manageUsers') },
     { to: '/audit', label: 'Audit', show: can(role, 'viewAudit') },
   ].filter((link) => link.show);
+
+  // A new page puts focus at the start of its content, as a page load would,
+  // unless the page has put it somewhere itself (the work page puts it on the
+  // next task). Changes of the query string (sorting, paging) leave it alone.
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const firstPath = useRef(location.pathname);
+  useEffect(() => {
+    if (location.pathname === firstPath.current) return;
+    firstPath.current = location.pathname;
+    const main = mainRef.current;
+    const at = document.activeElement;
+    if (!main || (at && at !== document.body && main.contains(at))) return;
+    main.focus({ preventScroll: true });
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen">
@@ -97,7 +113,12 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           </Form>
         </div>
       </header>
-      <main id="main" className="mx-auto max-w-6xl px-4 py-8">
+      <main
+        id="main"
+        ref={mainRef}
+        tabIndex={-1}
+        className="mx-auto max-w-6xl px-4 py-8 focus:outline-none"
+      >
         <Outlet />
       </main>
       <Flash message={flash} />
