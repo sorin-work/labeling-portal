@@ -53,7 +53,8 @@
   approved or fixed it, or the day it was submitted when no review was
   needed. Before, it counted on the day it was submitted
 - Time spent revising sent-back work is added to the active time, which is
-  paid on hourly projects
+  paid on hourly projects. It is saved with the revision draft, so a reload
+  does not lose it
 
 ### Operations
 

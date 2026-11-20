@@ -222,7 +222,8 @@ Projects pay either per accepted task or per hour of active time. Active time
 is measured in the browser (visible tab, recent input) and capped on the server
 at the time since the claim. It is saved with the draft, so a reload does not
 start the count again. Time spent revising work that was sent back is added
-to it, capped at the time since the review.
+to it, capped at the time since the review, and is kept with the revision
+draft in the same way.
 
 - **The rate is frozen at submission.** `submitAssignment` copies the
   project's `rateCents` and `payMode` onto the assignment in the same write
