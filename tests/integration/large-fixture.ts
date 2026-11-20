@@ -64,7 +64,7 @@ export async function createLargeProject(tasks = 20_000) {
   await prisma.$executeRaw`
     INSERT INTO "Assignment" (id, "projectId", "taskId", "userId", status, "claimedAt",
                               "expiresAt", "submittedAt", answer, "activeSeconds",
-                              "reviewStatus", "goldScore")
+                              "reviewStatus", "goldScore", "rateCents", "payMode", "payableAt")
     SELECT ${project.id} || '-a' || g || '-' || k, ${project.id}, ${project.id} || '-t' || g,
            ${userAt}[1 + (g + k * 7) % ${people}], 'SUBMITTED',
            now() - interval '2 days' + interval '1 second' * g,
@@ -76,9 +76,14 @@ export async function createLargeProject(tasks = 20_000) {
            CASE WHEN g % 50 = 0 THEN 'NOT_REQUIRED'::"ReviewStatus"
                 WHEN g <= ${half} THEN 'APPROVED'::"ReviewStatus"
                 ELSE 'PENDING'::"ReviewStatus" END,
-           CASE WHEN g % 50 = 0 THEN CASE WHEN (g + k) % 3 = 0 THEN 0 ELSE 1 END END
+           CASE WHEN g % 50 = 0 THEN CASE WHEN (g + k) % 3 = 0 THEN 0 ELSE 1 END END,
+           12, 'PER_TASK',
+           CASE WHEN g % 50 = 0 OR g <= ${half}
+                THEN now() - interval '2 days' + interval '1 second' * g + interval '1 minute' END
     FROM generate_series(1, ${tasks}) g, generate_series(0, 1) k
     WHERE g <= ${full} OR (k = 0 AND g % 3 = 0)`;
+  // fresh statistics, or the statements below plan for an empty table
+  await prisma.$executeRaw`ANALYZE "Assignment"`;
   // a review with a QA score on every fourth complete task, a fix on every twentieth
   await prisma.$executeRaw`
     INSERT INTO "Review" (id, "assignmentId", "reviewerId", decision, "qaScore", "correctedAnswer", "createdAt")
