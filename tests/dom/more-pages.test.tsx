@@ -20,6 +20,7 @@ type Data<L extends (...args: never[]) => unknown> = Awaited<ReturnType<L>>;
 
 const answers = {
   text_classification: { labels: ['positive'] },
+  image_classification: { labels: ['person', 'car'] },
   ner: { spans: [{ start: 0, end: 12, label: 'PERSON' }] },
   pairwise: {
     preference: 'A',

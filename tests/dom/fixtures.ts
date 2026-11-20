@@ -11,6 +11,15 @@ export const KINDS = {
     },
     data: { text: 'The delivery was quick and the box was intact.' },
   },
+  image_classification: {
+    schema: {
+      kind: 'image_classification',
+      imageField: 'image',
+      labels: ['person', 'car', 'empty street'],
+      multiple: true,
+    },
+    data: { image: '/street.png' },
+  },
   ner: {
     schema: {
       kind: 'ner',

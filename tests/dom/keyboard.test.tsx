@@ -175,3 +175,32 @@ describe('boxes in words', () => {
     expect(answer).toMatchObject({ boxes: [{ x: 10 }, { x: 101 }] });
   });
 });
+
+describe('an image that does not load', () => {
+  it('says so and points to Skip instead of showing a broken picture', async () => {
+    const user = userEvent.setup();
+    let answer: Answer | null = null;
+    render(<Labeling kind="image_classification" onAnswer={(a) => (answer = a)} />);
+    const image = screen.getByRole('img', { name: 'The image to classify' });
+    act(() => {
+      image.dispatchEvent(new Event('error'));
+    });
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('The image did not load.');
+    expect(alert.textContent).toContain('/street.png');
+    expect(alert.textContent).toContain('Content is broken or unreadable');
+    expect(screen.queryByRole('img')).toBeNull();
+    // the labels stay: what the person sees may still be enough
+    await user.keyboard('1');
+    expect(answer).toEqual({ labels: ['person'] });
+    await expectAccessible();
+  });
+
+  it('on a box task says the same, under the picture', () => {
+    render(<Labeling kind="bbox" />);
+    act(() => {
+      screen.getByRole('img', { name: 'Task to label' }).dispatchEvent(new Event('error'));
+    });
+    expect(screen.getByRole('alert').textContent).toContain('The image did not load.');
+  });
+});
