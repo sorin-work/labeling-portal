@@ -159,6 +159,13 @@ describe('dispute forms', () => {
     });
     expect(parseResolution(form({ intent: 'uphold', resolution: '' })).ok).toBe(false);
     expect(parseResolution(form({ intent: 'reopen', resolution: 'x' })).ok).toBe(false);
+    // names every object has are not outcomes
+    for (const intent of ['constructor', 'toString', '__proto__', 'withdraw']) {
+      expect(parseResolution(form({ intent, resolution: 'x' }))).toEqual({
+        ok: false,
+        error: 'Choose uphold or overturn.',
+      });
+    }
   });
 });
 

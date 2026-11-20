@@ -150,7 +150,8 @@ export function parseDisputeReason(form: FormData): TextResult {
   return requiredText(form.get('reason'), 'Say why you think the decision is wrong.');
 }
 
-export type DisputeOutcome = Exclude<DisputeStatus, 'OPEN'>;
+/** What a resolver can decide. A dispute can also end by being withdrawn. */
+export type DisputeOutcome = 'UPHELD' | 'OVERTURNED';
 
 const OUTCOMES: Record<string, DisputeOutcome> = { uphold: 'UPHELD', overturn: 'OVERTURNED' };
 
@@ -158,7 +159,9 @@ const OUTCOMES: Record<string, DisputeOutcome> = { uphold: 'UPHELD', overturn: '
 export function parseResolution(
   form: FormData,
 ): { ok: true; outcome: DisputeOutcome; resolution: string } | { ok: false; error: string } {
-  const outcome = OUTCOMES[String(form.get('intent') ?? '')];
+  // own keys only: "constructor" and the like are on every object
+  const intent = String(form.get('intent') ?? '');
+  const outcome = Object.hasOwn(OUTCOMES, intent) ? OUTCOMES[intent] : undefined;
   if (!outcome) return { ok: false, error: 'Choose uphold or overturn.' };
   const note = requiredText(form.get('resolution'), 'Add a note that explains the outcome.');
   if (!note.ok) return note;

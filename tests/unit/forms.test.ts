@@ -24,6 +24,7 @@ describe('parseReviewForm', () => {
 
   it('rejects unknown decisions and bad scores', () => {
     expect(parseReviewForm(form({ intent: 'delete' })).ok).toBe(false);
+    expect(parseReviewForm(form({ intent: 'constructor' })).ok).toBe(false);
     expect(parseReviewForm(form({ intent: 'approve', qaScore: '6' })).ok).toBe(false);
     expect(parseReviewForm(form({ intent: 'approve', qaScore: '2.5' })).ok).toBe(false);
   });
