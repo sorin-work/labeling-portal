@@ -196,10 +196,27 @@ export async function action({ request, params }: Route.ActionArgs) {
  * skip form, the working time and the autosave start fresh for every task.
  */
 export default function Work(props: Route.ComponentProps) {
-  return <WorkPage key={props.loaderData.assignment.id} {...props} />;
+  const { assignment, task, doneToday } = props.loaderData;
+  // After "Submit and next" the new task is said in a live region that stays
+  // on the page, and focus goes to the task.
+  const firstId = useRef(assignment.id);
+  const next = assignment.id !== firstId.current;
+  const [said, setSaid] = useState('');
+  useEffect(() => {
+    if (assignment.id === firstId.current) return;
+    setSaid(`Next task loaded, reference ${task.ref}. ${doneToday} done today.`);
+  }, [assignment.id, task.ref, doneToday]);
+  return (
+    <>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
+      <WorkPage key={assignment.id} {...props} next={next} />
+    </>
+  );
 }
 
-function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
+function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { next: boolean }) {
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
   // A text without entities or an image without objects is submitted as it
@@ -236,6 +253,10 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     },
   });
   const submitRef = useRef<HTMLButtonElement>(null);
+  const taskRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (next) taskRef.current?.focus({ preventScroll: true });
+  }, [next]);
   const skipRef = useRef<HTMLButtonElement>(null);
 
   // The keys of this page are rows of the key map (domain/hotkeys.ts). While
@@ -297,17 +318,19 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
             you continue.
           </Alert>
         )}
-        <Card>
-          <LabelingInterface
-            key={assignment.id}
-            schema={schema}
-            data={task.data}
-            value={answer}
-            onChange={setAnswer}
-            onImageSize={setImageSize}
-            viewKey={assignment.id}
-          />
-        </Card>
+        <section ref={taskRef} tabIndex={-1} aria-label="Task" className="focus:outline-none">
+          <Card>
+            <LabelingInterface
+              key={assignment.id}
+              schema={schema}
+              data={task.data}
+              value={answer}
+              onChange={setAnswer}
+              onImageSize={setImageSize}
+              viewKey={assignment.id}
+            />
+          </Card>
+        </section>
         <TaskContext schema={schema} data={task.data} />
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
