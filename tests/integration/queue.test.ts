@@ -396,16 +396,50 @@ describe('expired claims', () => {
 describe('more time', () => {
   beforeEach(resetDb);
 
-  it('extends a claim once by the time limit', async () => {
+  it('extends a claim by the time limit, three times at most', async () => {
     const { project, ann } = await setup();
     const t0 = new Date('2026-01-10T09:00:00Z');
     const claim = await claimNextTask(project, ann.id, t0);
     const id = claim.ok ? claim.assignment.id : '';
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
 
-    const first = await extendAssignment(id, ann.id, 30, new Date(t0.getTime() + 25 * 60_000));
-    expect(first).toEqual({ ok: true, expiresAt: new Date(t0.getTime() + 60 * 60_000) });
-    const second = await extendAssignment(id, ann.id, 30, new Date(t0.getTime() + 26 * 60_000));
-    expect(second).toEqual({ ok: false, error: 'already_extended' });
+    expect(await extendAssignment(id, ann.id, 30, at(25))).toEqual({
+      ok: true,
+      expiresAt: at(60),
+      extensionsLeft: 2,
+    });
+    expect(await extendAssignment(id, ann.id, 30, at(55))).toEqual({
+      ok: true,
+      expiresAt: at(90),
+      extensionsLeft: 1,
+    });
+    expect(await extendAssignment(id, ann.id, 30, at(85))).toEqual({
+      ok: true,
+      expiresAt: at(120),
+      extensionsLeft: 0,
+    });
+    expect(await extendAssignment(id, ann.id, 30, at(115))).toEqual({
+      ok: false,
+      error: 'no_extensions_left',
+    });
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(row.extensions).toBe(3);
+    expect(row.expiresAt).toEqual(at(120));
+  });
+
+  it('counts two requests at the same moment as one extension', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    const now = new Date(t0.getTime() + 25 * 60_000);
+    const results = await Promise.all([
+      extendAssignment(id, ann.id, 30, now),
+      extendAssignment(id, ann.id, 30, now),
+    ]);
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(row.extensions).toBe(results.filter((r) => r.ok).length);
+    expect(row.expiresAt.getTime() - t0.getTime()).toBe(row.extensions * 30 * 60_000 + 30 * 60_000);
   });
 
   it('cannot revive a claim that already ran out', async () => {

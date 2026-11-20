@@ -1,6 +1,7 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
+import { extensionsLeft, MAX_EXTENSIONS } from '~/domain/time-limit';
 import { prisma, utc } from '~/lib/db.server';
 
 import { blockedByDispute } from './disputes.server';
@@ -390,8 +391,10 @@ export async function saveRevisionDraft(
 }
 
 /**
- * Gives the annotator another full time limit on their claim. Allowed once,
- * and only before the claim has run out.
+ * Gives the annotator another full time limit on their claim. Allowed
+ * `MAX_EXTENSIONS` times, and only before the claim has run out. The update
+ * only goes through on the claim as it was read, so two requests at once
+ * cannot both count as the same extension.
  */
 export async function extendAssignment(
   assignmentId: string,
@@ -399,16 +402,24 @@ export async function extendAssignment(
   minutes: number,
   now = new Date(),
 ): Promise<
-  { ok: true; expiresAt: Date } | { ok: false; error: AssignmentError | 'already_extended' }
+  | { ok: true; expiresAt: Date; extensionsLeft: number }
+  | { ok: false; error: AssignmentError | 'no_extensions_left' }
 > {
   const found = await ownActive(assignmentId, userId);
   if ('error' in found) return { ok: false, error: found.error! };
-  if (found.assignment.expiresAt <= now) return { ok: false, error: 'expired' };
-  if (found.assignment.extendedAt) return { ok: false, error: 'already_extended' };
-  const expiresAt = addMinutes(found.assignment.expiresAt, minutes);
-  await prisma.assignment.update({
-    where: { id: assignmentId },
-    data: { expiresAt, extendedAt: now },
+  const { assignment } = found;
+  if (assignment.expiresAt <= now) return { ok: false, error: 'expired' };
+  if (assignment.extensions >= MAX_EXTENSIONS) return { ok: false, error: 'no_extensions_left' };
+  const expiresAt = addMinutes(assignment.expiresAt, minutes);
+  const updated = await prisma.assignment.updateMany({
+    where: {
+      id: assignmentId,
+      status: 'ACTIVE',
+      expiresAt: assignment.expiresAt,
+      extensions: assignment.extensions,
+    },
+    data: { expiresAt, extendedAt: now, extensions: { increment: 1 } },
   });
-  return { ok: true, expiresAt };
+  if (updated.count === 0) return { ok: false, error: 'not_active' };
+  return { ok: true, expiresAt, extensionsLeft: extensionsLeft(assignment.extensions + 1) };
 }
