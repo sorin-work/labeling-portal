@@ -24,6 +24,8 @@ enum ProjectStatus {
 enum ImportFormat {
   CSV
   JSONL
+  JSON
+  TSV
 }
 
 enum TaskStatus {
