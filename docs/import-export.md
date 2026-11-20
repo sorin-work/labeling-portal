@@ -53,6 +53,13 @@ more there are.
 - Zip and gzip files are refused and never unpacked, which includes `.xlsx`
   spreadsheets. A small archive can unpack to gigabytes, and no import format
   needs one.
+- A row may nest at most 32 levels deep and hold at most 10,000 values (keys
+  and array items at every level), checked right after each line or item is
+  parsed. In a re-imported CSV export the `data` and `answer` columns are
+  checked the same way.
+- In CSV and TSV files, a quoted field that is still open at the end of the
+  file refuses the file, naming the line where the quote opened. Such a field
+  would otherwise take in every line after it.
 
 ### Imported text is data
 
@@ -67,6 +74,24 @@ Anything else is refused: `javascript:`, `data:` and `file:` addresses, and
 requests an image, not at import time and not later. The address is stored as
 text and only the browser of an annotator loads it. A server that fetched
 addresses from an upload could be made to call hosts on its own network.
+
+The browser of every annotator would load the image, though, from inside the
+annotator's own network. So addresses that point inside a network are refused
+as well: IP literals that are loopback, private, shared, link-local,
+documentation, multicast or reserved (`127.0.0.1`, `10.x`, `172.16-31.x`,
+`192.168.x`, `169.254.169.254`, `::1`, `fe80::`, `fc00::/7` and so on, in
+any spelling the URL parser accepts, such as `0x7f.1`), IPv6 addresses outside
+global unicast and the 6to4 and Teredo ranges that carry an IPv4 address, host
+names without a dot (`localhost`, `intranet`) and names under `.local`,
+`.localhost`, `.internal` and `.home.arpa`. Host names are not looked up, so a
+public name that resolves to an internal address is not caught; the server
+never resolves or requests them.
+
+An installation that serves images from an internal host on purpose lists it
+in `INTERNAL_IMAGE_HOSTS`, comma separated (for example
+`images.internal,10.0.0.5`). The list is empty by default, and only the exact host
+names and addresses in it are let through. It applies to every project of the
+installation.
 
 ### Gold answers
 

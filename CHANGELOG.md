@@ -31,7 +31,13 @@
   files are refused without being unpacked
 - Image addresses for box projects have to be http or https URLs or a path on
   the portal; `//host` addresses are refused now. The server never fetches
-  them
+  them. Addresses inside a network (loopback, private, link-local and
+  reserved IP addresses, names without a dot or under `.local`) are refused
+  too, unless the installation lists the host in `INTERNAL_IMAGE_HOSTS`
+- An import is refused when a quoted field is never closed (naming the line
+  where it opened), or when a row nests more than 32 levels deep or holds more
+  than 10,000 values. A bad gold answer in a re-imported CSV export is
+  reported on its own row
 - A gold answer for a comparison may only be a tie where the schema allows
   ties, and a batch is refused when the schema changed while its file was
   read

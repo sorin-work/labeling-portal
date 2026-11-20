@@ -106,15 +106,16 @@ npm run dev              # http://localhost:4421
 
 ## Configuration
 
-| Variable            | Default               | Purpose                                                           |
-| ------------------- | --------------------- | ----------------------------------------------------------------- |
-| `DATABASE_URL`      | (required)            | PostgreSQL connection string                                      |
-| `SESSION_SECRET`    | dev-only value        | Signs the session cookie; required (16+ characters) in production |
-| `COOKIE_SECURE`     | `true` in production  | Set `false` when serving over plain http                          |
-| `SEED_DEMO`         | `false`               | Docker only: create the demo organisation on start                |
-| `SHOW_DEMO_LOGINS`  | `false`               | List the demo accounts on the sign-in page                        |
-| `TEST_DATABASE_URL` | local `labeling_test` | Database for integration tests (it is truncated between tests)    |
-| `WEB_PORT`          | `4421`                | Host port for the compose setup                                   |
+| Variable               | Default               | Purpose                                                               |
+| ---------------------- | --------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`         | (required)            | PostgreSQL connection string                                          |
+| `SESSION_SECRET`       | dev-only value        | Signs the session cookie; required (16+ characters) in production     |
+| `COOKIE_SECURE`        | `true` in production  | Set `false` when serving over plain http                              |
+| `SEED_DEMO`            | `false`               | Docker only: create the demo organisation on start                    |
+| `SHOW_DEMO_LOGINS`     | `false`               | List the demo accounts on the sign-in page                            |
+| `INTERNAL_IMAGE_HOSTS` | (empty)               | Internal hosts that box project images may come from, comma separated |
+| `TEST_DATABASE_URL`    | local `labeling_test` | Database for integration tests (it is truncated between tests)        |
+| `WEB_PORT`             | `4421`                | Host port for the compose setup                                       |
 
 ## Backup and restore
 
