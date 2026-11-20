@@ -4,6 +4,7 @@ import { Badge, cx } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
+import { countOpenDisputes } from '~/models/disputes.server';
 import { requireProject } from '~/models/projects.server';
 import { countPendingReviews } from '~/models/reviews.server';
 
@@ -14,8 +15,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const project = await requireProject(current, params.projectId);
   const role = current.membership.role;
   const pendingReviews = can(role, 'review') ? await countPendingReviews(project.id) : 0;
+  const openDisputes = can(role, 'review') ? await countOpenDisputes(project.id) : 0;
   return {
     pendingReviews,
+    openDisputes,
     project: {
       id: project.id,
       name: project.name,
@@ -37,6 +40,12 @@ export default function ProjectLayout({ loaderData }: Route.ComponentProps) {
   const tabs = [
     { to: base, label: 'Overview', show: true },
     { to: `${base}/review`, label: 'Review', show: can.review, count: loaderData.pendingReviews },
+    {
+      to: `${base}/disputes`,
+      label: 'Disputes',
+      show: can.review,
+      count: loaderData.openDisputes,
+    },
     { to: `${base}/quality`, label: 'Quality', show: can.quality },
     { to: `${base}/batches`, label: 'Batches', show: can.manage },
     { to: `${base}/export`, label: 'Export', show: can.export },
