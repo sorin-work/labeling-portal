@@ -92,6 +92,7 @@ export function agreementExplained(schema: TaskSchema | null): string {
   if (!schema) return 'How much the accepted answers of a task agree, from 0% to 100%.';
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return schema.multiple
         ? 'For each label that anyone chose, the share of annotators who chose it, averaged over those labels. "a, b" against "a" is 75%.'
         : 'The share of annotators behind the most chosen label: 50% for one against one, 67% for two against one, 33% for three different labels.';

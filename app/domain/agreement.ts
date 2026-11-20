@@ -2,18 +2,34 @@ import type { Answer, ClassificationAnswer, PairwiseAnswer } from './answers';
 import type { TaskSchema } from './task-schema';
 
 /**
- * Inter-annotator agreement for categorical answers. Classification labels and
- * pairwise preferences are categorical; spans and boxes use F1 instead (see
- * consensus.ts).
+ * Inter-annotator agreement for categorical answers. Classification labels
+ * (of texts and of images) and pairwise preferences are categorical; spans
+ * and boxes use F1 instead (see consensus.ts). Every kind is named here, with
+ * no default, so that a new kind does not compile until someone decides.
  */
 export function categoricalValue(schema: TaskSchema, answer: Answer): string | null {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return [...(answer as ClassificationAnswer).labels].sort().join('|');
     case 'pairwise':
       return (answer as PairwiseAnswer).preference;
-    default:
+    case 'ner':
+    case 'bbox':
       return null;
+  }
+}
+
+/** True for the kinds that get kappa: those with a categorical value. */
+export function isCategorical(schema: TaskSchema): boolean {
+  switch (schema.kind) {
+    case 'text_classification':
+    case 'image_classification':
+    case 'pairwise':
+      return true;
+    case 'ner':
+    case 'bbox':
+      return false;
   }
 }
 

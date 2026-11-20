@@ -213,6 +213,7 @@ export function bboxConsensus(answers: BboxAnswer[]): Consensus {
 export function consensus(schema: TaskSchema, answers: Answer[]): Consensus {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return classificationConsensus(answers as ClassificationAnswer[], schema.multiple);
     case 'pairwise':
       return pairwiseConsensus(

@@ -86,8 +86,26 @@ export const bboxSchema = z.object({
   minBoxSize: z.number().int().min(1).max(200).default(4),
 });
 
+/**
+ * Sorting images into classes. The answer is the same as for text
+ * classification (`ClassificationAnswer`), and so are validation, consensus,
+ * gold scoring and agreement; only the interface shows an image. The image is
+ * a URL that the annotator's browser loads; the server never fetches it.
+ */
+export const imageClassificationSchema = z.object({
+  kind: z.literal('image_classification'),
+  imageField: fieldName,
+  labels: z
+    .array(labelName)
+    .min(2, 'Add at least two labels')
+    .max(30)
+    .superRefine(uniqueBy((l) => l, 'Duplicate label')),
+  multiple: z.boolean().default(false),
+});
+
 export const taskSchema = z.discriminatedUnion('kind', [
   textClassificationSchema,
+  imageClassificationSchema,
   nerSchema,
   pairwiseSchema,
   bboxSchema,
@@ -95,6 +113,9 @@ export const taskSchema = z.discriminatedUnion('kind', [
 
 export type TaskSchema = z.infer<typeof taskSchema>;
 export type TextClassificationSchema = z.infer<typeof textClassificationSchema>;
+export type ImageClassificationSchema = z.infer<typeof imageClassificationSchema>;
+/** The two kinds whose answer is a set of labels. */
+export type ClassificationSchema = TextClassificationSchema | ImageClassificationSchema;
 export type NerSchema = z.infer<typeof nerSchema>;
 export type PairwiseSchema = z.infer<typeof pairwiseSchema>;
 export type BboxSchema = z.infer<typeof bboxSchema>;
@@ -102,6 +123,7 @@ export type SchemaKind = TaskSchema['kind'];
 
 export const KIND_TO_ENUM = {
   text_classification: 'TEXT_CLASSIFICATION',
+  image_classification: 'IMAGE_CLASSIFICATION',
   ner: 'NER',
   pairwise: 'PAIRWISE',
   bbox: 'BBOX',
@@ -109,6 +131,7 @@ export const KIND_TO_ENUM = {
 
 export const KIND_LABELS: Record<SchemaKind, string> = {
   text_classification: 'Text classification',
+  image_classification: 'Image classification',
   ner: 'Named entities',
   pairwise: 'Pairwise comparison',
   bbox: 'Bounding boxes',
@@ -144,13 +167,34 @@ export function requiredFields(schema: TaskSchema): string[] {
       return [schema.textField];
     case 'pairwise':
       return [schema.promptField, schema.responseAField, schema.responseBField];
+    case 'image_classification':
     case 'bbox':
       return [schema.imageField];
   }
 }
 
+/** The field that stands for a task in lists and searches: its text, prompt or image. */
+export function mainField(schema: TaskSchema): string {
+  switch (schema.kind) {
+    case 'text_classification':
+    case 'ner':
+      return schema.textField;
+    case 'pairwise':
+      return schema.promptField;
+    case 'image_classification':
+    case 'bbox':
+      return schema.imageField;
+  }
+}
+
+/** The kinds whose tasks are an image (an http(s) URL or a path on this site). */
+export function isImageKind(schema: TaskSchema): schema is ImageClassificationSchema | BboxSchema {
+  return schema.kind === 'image_classification' || schema.kind === 'bbox';
+}
+
 export const SCHEMA_TEMPLATES: {
   text_classification: TextClassificationSchema;
+  image_classification: ImageClassificationSchema;
   ner: NerSchema;
   pairwise: PairwiseSchema;
   bbox: BboxSchema;
@@ -159,6 +203,12 @@ export const SCHEMA_TEMPLATES: {
     kind: 'text_classification',
     textField: 'text',
     labels: ['positive', 'neutral', 'negative'],
+    multiple: false,
+  },
+  image_classification: {
+    kind: 'image_classification',
+    imageField: 'image_url',
+    labels: ['usable', 'blurry', 'wrong product'],
     multiple: false,
   },
   ner: {

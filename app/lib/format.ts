@@ -18,6 +18,7 @@ export const TASK_STATUS_BADGES: Record<
 
 export const KIND_NAMES: Record<TaskKind, string> = {
   TEXT_CLASSIFICATION: 'Text classification',
+  IMAGE_CLASSIFICATION: 'Image classification',
   NER: 'Named entities',
   PAIRWISE: 'Pairwise comparison',
   BBOX: 'Bounding boxes',

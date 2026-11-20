@@ -7,7 +7,7 @@ import type {
   NerSchema,
   PairwiseSchema,
   TaskSchema,
-  TextClassificationSchema,
+  ClassificationSchema,
 } from './task-schema';
 
 export type ClassificationAnswer = { labels: string[] };
@@ -33,7 +33,7 @@ function textOf(data: unknown, field: string): string {
 }
 
 export function validateClassification(
-  schema: TextClassificationSchema,
+  schema: ClassificationSchema,
   input: unknown,
 ): AnswerResult<ClassificationAnswer> {
   const parsed = z.object({ labels: z.array(z.string()) }).safeParse(input);
@@ -140,6 +140,7 @@ export function validateBbox(schema: BboxSchema, input: unknown): AnswerResult<B
 export function validateAnswer(schema: TaskSchema, data: unknown, input: unknown): AnswerResult {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return validateClassification(schema, input);
     case 'ner':
       return validateNer(schema, data, input);
@@ -167,6 +168,7 @@ export function emptyAnswer(schema: TaskSchema, image?: ImageSize | null): Answe
     case 'bbox':
       return image ? { boxes: [], imageWidth: image.width, imageHeight: image.height } : null;
     case 'text_classification':
+    case 'image_classification':
     case 'pairwise':
       return null;
   }

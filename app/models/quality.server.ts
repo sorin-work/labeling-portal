@@ -1,6 +1,6 @@
 import type { Project } from '@prisma/client';
 
-import { categoricalValue, fleissKappa, pairwiseKappas } from '~/domain/agreement';
+import { categoricalValue, fleissKappa, isCategorical, pairwiseKappas } from '~/domain/agreement';
 import type { Answer } from '~/domain/answers';
 import { round } from '~/domain/geometry';
 import { isGoldFlagged } from '~/domain/gold';
@@ -40,7 +40,7 @@ function mean(values: number[]): number | null {
 
 export async function projectQuality(project: Project) {
   const schema = projectSchema(project);
-  const categorical = schema.kind === 'text_classification' || schema.kind === 'pairwise';
+  const categorical = isCategorical(schema);
   const assignments = await prisma.assignment.findMany({
     where: { projectId: project.id, status: { in: ['SUBMITTED', 'SKIPPED'] } },
     select: {

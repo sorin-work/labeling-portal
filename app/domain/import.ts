@@ -1,7 +1,7 @@
 import type { Answer } from './answers';
 import { parseCsv, sniffDelimiter, unguardFormula, type Delimiter } from './csv';
 import { parseGold } from './gold';
-import { requiredFields, type TaskSchema } from './task-schema';
+import { isImageKind, requiredFields, type TaskSchema } from './task-schema';
 
 /**
  * Reading an uploaded file into tasks. Everything here is pure: bytes or text
@@ -504,10 +504,7 @@ export function parseImport(
       errors.push({ line: record.line, message: `Missing ${missing.join(', ')}` });
       continue;
     }
-    if (
-      schema.kind === 'bbox' &&
-      !isImageRef(data[schema.imageField], options.internalImageHosts)
-    ) {
+    if (isImageKind(schema) && !isImageRef(data[schema.imageField], options.internalImageHosts)) {
       errors.push({
         line: record.line,
         message: `${schema.imageField} must be a public http(s) URL or a path starting with /`,

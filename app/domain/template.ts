@@ -41,6 +41,15 @@ export function sampleRows(schema: TaskSchema): Array<Record<string, unknown>> {
           _gold: 'A',
         },
       ];
+    case 'image_classification':
+      return [
+        { id: 'example-1', [schema.imageField]: 'https://example.com/photo-1.jpg' },
+        {
+          id: 'gold-1',
+          [schema.imageField]: 'https://example.com/photo-2.jpg',
+          _gold: schema.labels[0],
+        },
+      ];
     case 'bbox':
       return [
         {

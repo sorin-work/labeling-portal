@@ -123,6 +123,7 @@ async function* writeJsonl({ schema }: ExportContext, tasks: AsyncIterable<Expor
 function answerColumns(schema: TaskSchema): string[] {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return ['labels'];
     case 'ner':
       return ['entities'];
@@ -146,6 +147,7 @@ function answerCells(
   if (!answer) return empty;
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return [(answer as ClassificationAnswer).labels.join('|')];
     case 'ner': {
       const text = String(data[schema.textField] ?? '');

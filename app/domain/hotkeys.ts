@@ -175,6 +175,7 @@ export const PAGES: Record<Page, { labeling: string; keys: KeyBinding[] }> = {
 /** Keys of each labeling interface. The label keys are cut to the project's labels. */
 export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
   text_classification: [{ action: 'label', keys: LABEL_KEYS, label: 'Pick a label' }],
+  image_classification: [{ action: 'label', keys: LABEL_KEYS, label: 'Pick a label' }],
   ner: [
     {
       action: 'label',
@@ -280,6 +281,7 @@ export function pageKeys(page: Page | null): KeyBinding[] {
 function labelCount(schema: TaskSchema): number {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
     case 'bbox':
       return schema.labels.length;
     case 'ner':

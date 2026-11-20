@@ -8,7 +8,7 @@ import type {
   NerSchema,
   PairwiseSchema,
   TaskSchema,
-  TextClassificationSchema,
+  ClassificationSchema,
 } from './task-schema';
 
 /**
@@ -63,7 +63,7 @@ export type FittedDraft = { answer: Answer | null; dropped: number };
 const NOTHING: FittedDraft = { answer: null, dropped: 0 };
 
 function fitClassification(
-  schema: TextClassificationSchema,
+  schema: ClassificationSchema,
   stored: Record<string, unknown>,
 ): FittedDraft {
   if (!Array.isArray(stored.labels)) return NOTHING;
@@ -157,6 +157,7 @@ export function fitDraft(schema: TaskSchema, data: unknown, stored: unknown): Fi
   if (!isRecord(stored)) return NOTHING;
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return fitClassification(schema, stored);
     case 'ner':
       return fitNer(schema, data, stored);
@@ -169,6 +170,7 @@ export function fitDraft(schema: TaskSchema, data: unknown, stored: unknown): Fi
 
 const DRAFT_PARTS: Record<TaskSchema['kind'], [string, string]> = {
   text_classification: ['label', 'labels'],
+  image_classification: ['label', 'labels'],
   ner: ['span', 'spans'],
   pairwise: ['choice', 'choices'],
   bbox: ['box', 'boxes'],

@@ -39,6 +39,7 @@ export function parseGold(
   const value = decode(raw);
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return validateClassification(
         schema,
         typeof value === 'string' ? { labels: value.split('|').map((l) => l.trim()) } : value,
@@ -98,6 +99,7 @@ function jaccard(a: string[], b: string[]): number {
 export function scoreAgainstGold(schema: TaskSchema, answer: Answer, gold: Answer): number {
   switch (schema.kind) {
     case 'text_classification':
+    case 'image_classification':
       return round(
         jaccard((answer as ClassificationAnswer).labels, (gold as ClassificationAnswer).labels),
         4,
@@ -138,7 +140,8 @@ function tally(names: string[]): string {
 export function describeGoldAnswer(schema: TaskSchema, answer: unknown): string {
   if (!answer || typeof answer !== 'object') return 'nothing';
   switch (schema.kind) {
-    case 'text_classification': {
+    case 'text_classification':
+    case 'image_classification': {
       const labels = (answer as Partial<ClassificationAnswer>).labels ?? [];
       return labels.length ? labels.join(', ') : 'nothing';
     }

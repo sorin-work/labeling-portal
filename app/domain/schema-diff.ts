@@ -5,7 +5,7 @@ import {
   type NerSchema,
   type PairwiseSchema,
   type TaskSchema,
-  type TextClassificationSchema,
+  type ClassificationSchema,
 } from './task-schema';
 
 /** The seven places an answer is stored, in the order errors list them. */
@@ -216,12 +216,16 @@ function nameChanges(
 }
 
 function classificationChanges(
-  before: TextClassificationSchema,
-  after: TextClassificationSchema,
+  before: ClassificationSchema,
+  after: ClassificationSchema,
   usage: SchemaUsage,
 ): SchemaChange[] {
   const changes = [
-    ...fieldChange('textField', before.textField, after.textField, usage),
+    ...(before.kind === 'image_classification' && after.kind === 'image_classification'
+      ? fieldChange('imageField', before.imageField, after.imageField, usage)
+      : before.kind === 'text_classification' && after.kind === 'text_classification'
+        ? fieldChange('textField', before.textField, after.textField, usage)
+        : []),
     ...nameChanges(
       { field: 'labels', one: 'label', many: 'labels' },
       before.labels,
@@ -401,7 +405,8 @@ export function diffSchema(
   if (before.kind !== after.kind) return [kindChange(before, after, usage)];
   switch (before.kind) {
     case 'text_classification':
-      return classificationChanges(before, after as TextClassificationSchema, usage);
+    case 'image_classification':
+      return classificationChanges(before, after as ClassificationSchema, usage);
     case 'ner':
       return nerChanges(before, after as NerSchema, usage);
     case 'pairwise':

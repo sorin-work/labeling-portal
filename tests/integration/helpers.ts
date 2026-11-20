@@ -1,4 +1,6 @@
-import type { Role } from '@prisma/client';
+import type { Role, TaskKind } from '@prisma/client';
+
+import { KIND_TO_ENUM } from '~/domain/task-schema';
 
 import { prisma } from '~/lib/db.server';
 import { hashPassword } from '~/lib/password.server';
@@ -127,12 +129,8 @@ export async function createTestProject(
     labels: ['positive', 'negative'],
     multiple: false,
   };
-  const kinds: Record<string, 'TEXT_CLASSIFICATION' | 'NER' | 'PAIRWISE' | 'BBOX'> = {
-    text_classification: 'TEXT_CLASSIFICATION',
-    ner: 'NER',
-    pairwise: 'PAIRWISE',
-    bbox: 'BBOX',
-  };
+  // the same map the app uses, so a new kind cannot be forgotten here
+  const kinds: Record<string, TaskKind> = KIND_TO_ENUM;
   return prisma.project.create({
     data: {
       orgId,
