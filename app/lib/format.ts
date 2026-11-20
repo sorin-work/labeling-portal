@@ -4,7 +4,17 @@ import type {
   ReviewDecision,
   ReviewStatus,
   TaskKind,
+  TaskStatus,
 } from '@prisma/client';
+
+export const TASK_STATUS_BADGES: Record<
+  TaskStatus,
+  { label: string; tone: 'slate' | 'emerald' | 'amber' }
+> = {
+  OPEN: { label: 'Open', tone: 'slate' },
+  ADJUDICATION: { label: 'Adjudication', tone: 'amber' },
+  COMPLETE: { label: 'Complete', tone: 'emerald' },
+};
 
 export const KIND_NAMES: Record<TaskKind, string> = {
   TEXT_CLASSIFICATION: 'Text classification',

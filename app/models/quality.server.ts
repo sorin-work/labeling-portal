@@ -173,11 +173,17 @@ export async function projectQuality(project: Project) {
     : [];
   const fleiss = categorical ? fleissKappa([...perTask.values()]) : null;
 
-  const completed = await prisma.task.aggregate({
-    where: { projectId: project.id, status: 'COMPLETE' },
-    _avg: { agreement: true },
-    _count: { _all: true },
-  });
+  const [completed, adjudicated, waiting] = await Promise.all([
+    prisma.task.aggregate({
+      where: { projectId: project.id, status: 'COMPLETE' },
+      _avg: { agreement: true },
+      _count: { _all: true },
+    }),
+    prisma.task.count({
+      where: { projectId: project.id, status: 'COMPLETE', adjudicatedAt: { not: null } },
+    }),
+    prisma.task.count({ where: { projectId: project.id, status: 'ADJUDICATION' } }),
+  ]);
 
   return {
     annotators,
@@ -191,6 +197,10 @@ export async function projectQuality(project: Project) {
       meanTaskAgreement:
         completed._avg.agreement === null ? null : round(completed._avg.agreement, 3),
       completedTasks: completed._count._all,
+      // how the completed tasks got their result: from the answers, or settled by a reviewer
+      adjudicatedTasks: adjudicated,
+      majorityTasks: completed._count._all - adjudicated,
+      waitingAdjudication: waiting,
     },
   };
 }

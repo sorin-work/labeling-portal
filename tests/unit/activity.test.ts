@@ -22,6 +22,8 @@ const settings: ProjectSettings = {
   goldFeedback: true,
   queueOrder: 'IN_ORDER',
   goldEvery: null,
+  agreementThreshold: null,
+  maxExtraAnnotators: 1,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',

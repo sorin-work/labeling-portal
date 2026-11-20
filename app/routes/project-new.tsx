@@ -57,6 +57,10 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         goldFeedback: values.goldFeedback === 'on',
         queueOrder: values.queueOrder === 'SHUFFLED' ? ('SHUFFLED' as const) : ('IMPORT' as const),
         goldEvery: Number(values.goldEvery) || null,
+        agreementThreshold: Number(values.agreementThreshold) || null,
+        maxExtraAnnotators: Number.isInteger(Number(values.maxExtraAnnotators))
+          ? Number(values.maxExtraAnnotators)
+          : 1,
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
         payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),

@@ -49,6 +49,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       goldFeedback: project.goldFeedback,
       queueOrder: project.queueOrder,
       goldEvery: project.goldEvery,
+      agreementThreshold:
+        project.agreementThreshold === null ? null : Math.round(project.agreementThreshold * 100),
+      maxExtraAnnotators: project.maxExtraAnnotators,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

@@ -105,6 +105,16 @@
   window defaults to 14 days, so every send-back and correction of the last
   14 days can be disputed at once. Set "Dispute window" to 0 in a project's
   settings to keep disputes off there
+- Low agreement, off by default: with an agreement threshold set, a task
+  whose accepted answers agree less gets up to three extra annotators (one by
+  default) through the normal queue, then goes to a new Adjudication tab. A
+  reviewer or manager who did not label it settles it with one of the answers,
+  the consensus or an answer of their own, and a reason; that answer becomes
+  the task's consensus. A task waiting for it has no consensus, in the
+  export either. The JSONL export has `consensus_source` (`majority` or
+  `adjudicated`), the CSV export a `task_status` column, the quality page counts both, and batch pages filter by the
+  new status. Existing projects are unchanged and completed tasks are never
+  reopened
 
 ### Pay and export
 

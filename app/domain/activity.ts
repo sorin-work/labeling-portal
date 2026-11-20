@@ -20,6 +20,8 @@ export const ACTIVITY_ACTIONS = {
   'batch.priority': 'Batch priority changed',
   'batch.paused': 'Batch paused',
   'batch.resumed': 'Batch resumed',
+  'task.adjudicated': 'Task settled in adjudication',
+  'task.escalated': 'Task sent to adjudication',
   'member.added': 'Added to a project',
   'member.removed': 'Removed from a project',
   'qualification.reset': 'Qualification reset',
@@ -61,6 +63,8 @@ export type ProjectSettings = {
   goldFeedback: boolean;
   queueOrder: string;
   goldEvery: number | null;
+  agreementThreshold: number | null;
+  maxExtraAnnotators: number;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: string;
@@ -78,6 +82,8 @@ const COMPARED = [
   'goldFeedback',
   'queueOrder',
   'goldEvery',
+  'agreementThreshold',
+  'maxExtraAnnotators',
   'qualificationRequired',
   'qualificationPassPercent',
   'payMode',
@@ -115,6 +121,8 @@ const FIELD_NAMES: Record<string, string> = {
   goldFeedback: 'gold feedback',
   queueOrder: 'the task order',
   goldEvery: 'gold spacing',
+  agreementThreshold: 'the agreement threshold',
+  maxExtraAnnotators: 'the extra annotators',
   qualificationRequired: 'the qualification test',
   qualificationPassPercent: 'the pass mark',
   payMode: 'the pay mode',
@@ -136,6 +144,9 @@ function formatValue(field: string, value: unknown): string {
       return `${String(value)}%`;
     case 'goldEvery':
       return `one in ${String(value)}`;
+    case 'agreementThreshold':
+    case 'maxExtraAnnotators':
+      return String(value);
     case 'payMode':
       return value === 'HOURLY' ? 'hourly' : 'per task';
     case 'queueOrder':
@@ -208,6 +219,16 @@ export function describeActivity(action: string, detail: unknown): string {
       return `paused “${String(d.name)}”: nothing from it is handed out`;
     case 'batch.resumed':
       return `resumed “${String(d.name)}”`;
+    case 'task.adjudicated':
+      return `settled task #${String(d.position)} in adjudication (${
+        d.how === 'own'
+          ? 'with an answer of their own'
+          : d.how === 'consensus'
+            ? 'kept the consensus'
+            : 'used one of the answers'
+      })`;
+    case 'task.escalated':
+      return `sent task #${String(d.position)} to adjudication without waiting for an extra annotator`;
     case 'member.added':
       return `added ${who} to the project`;
     case 'member.removed':

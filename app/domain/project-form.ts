@@ -1,6 +1,7 @@
 import type { QueueOrder } from '@prisma/client';
 import { z } from 'zod';
 
+import { parseAgreementThreshold, parseMaxExtraAnnotators } from './adjudication';
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from './disputes';
 import { readOptionalNumber } from './form-fields';
 import { parseMoney } from './payouts';
@@ -36,6 +37,9 @@ export type ProjectInput = z.infer<typeof projectFormSchema> & {
   queueOrder: QueueOrder;
   /** about one gold task in every N; null leaves gold where its position puts it */
   goldEvery: number | null;
+  /** a share from 0.01 to 1; null leaves every task to complete as before */
+  agreementThreshold: number | null;
+  maxExtraAnnotators: number;
 };
 
 export type ProjectFormResult =
@@ -75,8 +79,20 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
   if (!queueOrder.ok) errors.queueOrder = queueOrder.error;
   const goldEvery = parseGoldEvery(form.get('goldEvery'));
   if (!goldEvery.ok) errors.goldEvery = goldEvery.error;
+  const threshold = parseAgreementThreshold(form.get('agreementThreshold'));
+  if (!threshold.ok) errors.agreementThreshold = threshold.error;
+  const extras = parseMaxExtraAnnotators(form.get('maxExtraAnnotators'));
+  if (!extras.ok) errors.maxExtraAnnotators = extras.error;
 
-  if (!parsed.success || !schema.ok || rateCents === null || !queueOrder.ok || !goldEvery.ok) {
+  if (
+    !parsed.success ||
+    !schema.ok ||
+    rateCents === null ||
+    !queueOrder.ok ||
+    !goldEvery.ok ||
+    !threshold.ok ||
+    !extras.ok
+  ) {
     return { ok: false, errors };
   }
   return {
@@ -87,6 +103,8 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
       rateCents,
       queueOrder: queueOrder.value,
       goldEvery: goldEvery.value,
+      agreementThreshold: threshold.value,
+      maxExtraAnnotators: extras.value,
     },
   };
 }

@@ -8,7 +8,7 @@ import { MAX_BATCH_PRIORITY, parseBatchPriority } from '~/domain/queue-order';
 import { refSuffix } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { formatDate, formatDateTime, titleCase } from '~/lib/format';
+import { formatDate, formatDateTime, TASK_STATUS_BADGES } from '~/lib/format';
 import { redirectWithFlash } from '~/lib/flash.server';
 import { badRequest, notFound } from '~/lib/http';
 import { paginate, readPage } from '~/lib/pagination';
@@ -23,7 +23,7 @@ import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
 
-const STATUSES = ['OPEN', 'COMPLETE'] as const;
+const STATUSES = ['OPEN', 'ADJUDICATION', 'COMPLETE'] as const;
 
 export function meta({ data }: Route.MetaArgs) {
   return [{ title: `${data?.batch.name ?? 'Batch'} · Labeling Portal` }];
@@ -206,6 +206,7 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
   const filters = [
     { label: 'All', value: null },
     { label: 'Open', value: 'OPEN' },
+    { label: 'Adjudication', value: 'ADJUDICATION' },
     { label: 'Complete', value: 'COMPLETE' },
   ];
 
@@ -381,8 +382,8 @@ export default function BatchDetail({ loaderData, actionData }: Route.ComponentP
                     {task.isGold ? (
                       <Badge tone="amber">{task.goldRetired ? 'Gold, retired' : 'Gold'}</Badge>
                     ) : (
-                      <Badge tone={task.status === 'COMPLETE' ? 'emerald' : 'slate'}>
-                        {titleCase(task.status)}
+                      <Badge tone={TASK_STATUS_BADGES[task.status].tone}>
+                        {TASK_STATUS_BADGES[task.status].label}
                       </Badge>
                     )}
                   </td>

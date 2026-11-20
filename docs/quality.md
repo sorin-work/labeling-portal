@@ -186,3 +186,49 @@ merged:
 - Entities: spans marked by a majority of annotators.
 - Boxes: boxes clustered by label and overlap; clusters drawn by a majority are
   averaged.
+
+## Low agreement: extra annotators and adjudication
+
+Off by default: while a project has no agreement threshold every task
+completes once it has its accepted answers, ties included, as described above.
+
+With a threshold (a whole percentage in the settings), a task that has its
+accepted answers is checked once, the same way for every kind: the agreement
+of those answers (shown in whole percentages) is compared with the threshold.
+
+- At or above it, the task completes.
+- Under it, the task gets one more annotator (`Task.extraSlots`), until the
+  project's number of extra annotators (0 to 3, default 1) is used. The extra
+  annotator comes through the normal queue, so nobody who has labeled the task
+  or a task of its gold group gets it. The consensus and the agreement are then
+  worked out over all accepted answers, extras included.
+- Still under it after the last extra, or at once with no extras, the task
+  goes to adjudication.
+
+Whether there is a majority plays no part: two against one under the threshold
+is sent on like a tie. The number is the agreement each kind already has: the
+share behind the most chosen label or preference for single-label and pairwise
+projects (50% for one against one, 67% for two against one), the mean share
+behind each chosen label for multi-label projects, and span or box F1 averaged
+over every pair of annotators. With an overlap of 1 the setting does nothing.
+
+Tasks waiting for adjudication are listed on the **Adjudication** tab, the
+longest waiting first. A task there has no consensus: what a majority of its
+answers says, if anything, is kept apart (`Task.majority`) for the task page,
+and exports show the task without a result. On the task page a reviewer or
+manager settles it: with one of the accepted answers, with the majority's
+answer when there is one, or with an answer of their own, checked like a
+labeling answer. A reason is required. Nobody settles a task they had a hand
+in: who submitted an answer, holds a claim, or corrected an answer in a review
+(a fix) on the task or on a task of its gold group may not. The chosen answer
+becomes the task's consensus, in the export as well, and who settled it, when
+and why are kept on the task. A later review of one of the answers does not
+change it. A task that waits for an extra annotator nobody is left to give can
+be sent to adjudication from its page by a manager; the majority is worked
+out then too.
+
+Extra answers are paid like any accepted work, once each; adjudication does
+not touch submissions, reviews or pay, and does not feed back into the
+annotators' numbers. Changing the threshold or the number of extras later
+does not reopen completed tasks: the rule is only applied to a task that is
+still open.

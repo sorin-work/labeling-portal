@@ -89,6 +89,7 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
             </h2>
             <span className="text-sm text-slate-600">
               {progress.complete} of {progress.tasks} tasks complete ({pct}%)
+              {progress.adjudication > 0 && `, ${progress.adjudication} to adjudicate`}
             </span>
           </div>
           <div className="h-2 overflow-hidden rounded bg-slate-100">

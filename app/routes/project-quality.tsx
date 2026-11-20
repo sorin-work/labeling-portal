@@ -98,7 +98,15 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
             hint="Across completed tasks"
           />
         )}
-        <Stat label="Completed tasks" value={String(agreement.completedTasks)} />
+        <Stat
+          label="Completed tasks"
+          value={String(agreement.completedTasks)}
+          hint={
+            agreement.adjudicatedTasks > 0 || agreement.waitingAdjudication > 0
+              ? `${agreement.majorityTasks} from the answers, ${agreement.adjudicatedTasks} adjudicated, ${agreement.waitingAdjudication} waiting`
+              : undefined
+          }
+        />
         <Stat
           label="Submissions"
           value={String(annotators.reduce((s, a) => s + a.submitted, 0))}
