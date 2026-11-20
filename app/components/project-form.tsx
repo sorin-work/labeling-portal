@@ -31,6 +31,7 @@ export type ProjectFormDefaults = {
   reviewRequired: boolean;
   reviewSamplePercent: number;
   disputeWindowDays: number;
+  goldFeedback: boolean;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -47,6 +48,7 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   reviewRequired: true,
   reviewSamplePercent: 100,
   disputeWindowDays: DEFAULT_DISPUTE_WINDOW_DAYS,
+  goldFeedback: true,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -262,6 +264,10 @@ export function ProjectForm({
             defaultValue={defaults.disputeWindowDays}
           />
         </Field>
+        <label className="flex items-center gap-2 self-center text-sm text-slate-700">
+          <input type="checkbox" name="goldFeedback" defaultChecked={defaults.goldFeedback} />
+          After submitting a gold task, annotators see their score and the expected answer
+        </label>
       </fieldset>
 
       <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">

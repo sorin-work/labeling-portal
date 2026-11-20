@@ -22,7 +22,9 @@ import {
 } from '~/domain/answers';
 import { droppedNote, fitDraft } from '~/domain/drafts';
 import { pageShortcut } from '~/domain/hotkeys';
+import { withoutImportId } from '~/domain/import';
 import { renderMarkdown } from '~/domain/markdown';
+import { assignmentRef } from '~/domain/reference';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -98,11 +100,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project: { id: project.id, name: project.name },
     instructionsHtml: renderMarkdown(project.instructions),
     schema,
+    // Nothing that identifies the task itself is sent: not its id (a gold task
+    // that was added later has a younger one than its neighbours), not its
+    // external id and not the id column of its import row (a gold copy has
+    // none of its own). The page keys on the assignment, and the annotator
+    // gets a reference cut from the assignment's id to quote in a report.
     task: {
-      id: task.id,
-      externalId: task.externalId,
+      ref: assignmentRef(assignment.id),
       batch: task.batch.name,
-      data: task.data as Record<string, unknown>,
+      data: withoutImportId(task.data as Record<string, unknown>),
     },
     doneToday: await prisma.assignment.count({
       where: {
@@ -254,9 +260,12 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
               {project.name}
             </Link>
             <span className="ml-2 text-xs text-slate-400">{task.batch}</span>
-            {task.externalId && (
-              <span className="ml-2 font-mono text-xs text-slate-400">{task.externalId}</span>
-            )}
+            <span
+              className="ml-2 font-mono text-xs text-slate-400"
+              title="Quote this reference when you report a problem with this task"
+            >
+              ref {task.ref}
+            </span>
             <span className="ml-3 text-xs text-slate-500">{loaderData.doneToday} done today</span>
           </div>
           <div className="flex items-center gap-3">
@@ -286,7 +295,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
         )}
         <Card>
           <LabelingInterface
-            key={task.id}
+            key={assignment.id}
             schema={schema}
             data={task.data}
             value={answer}

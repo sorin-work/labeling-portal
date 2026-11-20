@@ -14,7 +14,8 @@ import {
  *
  * "Stored answers" are submissions, reviewer corrections, gold answers,
  * consensus answers, the answer a dispute was about (once the submission has
- * moved on from it) and the answers of qualification attempts.
+ * moved on from it), the expected answers a gold task had before it was
+ * edited, and the answers of qualification attempts.
  */
 export type SchemaUsage = {
   /** Imported tasks, gold and qualification tasks included. */
@@ -23,6 +24,11 @@ export type SchemaUsage = {
   answers: number;
   /** Label, entity type or box label -> stored answers that use it. */
   names: ReadonlyMap<string, number>;
+  /**
+   * Of those, the ones that are an earlier expected answer in the history of
+   * a gold task. They are kept for good, so they hold their names for good.
+   */
+  goldHistory?: ReadonlyMap<string, number>;
   /** Classification answers with two or more labels. */
   multiLabel: number;
   /** Pairwise answers whose preference is a tie. */
@@ -146,11 +152,20 @@ function nameChanges(
       changes.push(safe(field, summary));
       continue;
     }
+    // Say when it is the history of a gold task that holds the name: that
+    // never goes away, so waiting or relabeling will not free it.
+    const kept = usage.goldHistory?.get(name) ?? 0;
+    const history =
+      kept === 0
+        ? ''
+        : kept === used
+          ? `, ${kept === 1 ? 'which is' : 'all of them'} in the history of a gold task whose expected answer was changed; that history is kept for good`
+          : `, ${kept} of them in the history of a gold task whose expected answer was changed; that history is kept for good`;
     changes.push({
       field,
       impact: 'breaking',
       summary,
-      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it`,
+      reason: `the ${one} “${name}” cannot be removed or renamed while ${answers(used)} ${used === 1 ? 'uses' : 'use'} it${history}`,
       affected: used,
     });
   }

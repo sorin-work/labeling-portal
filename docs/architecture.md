@@ -29,6 +29,7 @@ tests/integration/  loaders and actions against a real PostgreSQL
 | `Assignment`           | An annotator's claim on a task: a draft first, then their answer     |
 | `Review`               | A reviewer's decision on a submission: approve, send back or fix     |
 | `Dispute`              | An annotator's objection to one review decision, and its outcome     |
+| `GoldRevision`         | A change to a gold task: who, when, why, the answer before and after |
 | `QualificationAttempt` | A graded attempt at a project's qualification test                   |
 | `Activity`             | What managers did to a project (settings, imports, members, status)  |
 
@@ -166,6 +167,56 @@ be disputed.
   in the export. "My work", the revise page and the annotator page show the
   outcome of the dispute in place of the review's feedback and score. The
   histories on the review page and the task page keep the row and mark it.
+
+## Gold tasks
+
+Gold tasks come in with a `_gold` column at import or are made from completed
+tasks. `app/models/gold.server.ts` holds everything a manager can do to them;
+`docs/quality.md` says what each action means.
+
+- **History.** Every change writes a `GoldRevision` (created, edited, retired,
+  restored) with who, when, why and the expected answer before and after, in
+  the same transaction as the change, plus an entry for the activity tab that
+  describes the answers in words.
+- **Edit, then rescore.** `editGoldAnswer` validates with `parseGold`, the
+  validator the import uses, and leaves `Assignment.goldScore` alone.
+  `previewRescore` and `applyRescore` share one planner (`rescore` and
+  `goldImpact` in `app/domain/gold.ts`). A plan has a digest of the expected
+  answer, every score change and every annotator's standing before and
+  after. The page posts the digest of the plan it showed; `applyRescore`
+  plans again under the lock and writes nothing when the digest differs. So
+  the button does what the page showed, or nothing. Applying is one
+  transaction that only writes `goldScore`.
+- **One lock.** Everything that changes a gold task first locks its row
+  (`FOR NO KEY UPDATE`). `submitAssignment` scores a gold submission inside
+  its own transaction under a shared lock on the same row
+  (`scoreGoldSubmission`). So an edit either comes first and is used, or
+  waits and is picked up by the rescore: no submission is scored against an
+  answer that was replaced while it was being stored.
+- **Retired** (`Task.goldRetiredAt`): `eligibleFor` leaves the task out, and
+  every place that averages gold scores (quality page, flag, needs attention,
+  the annotator's own stats) filters it out. The scores stay.
+- **Copies** (`promoteToGold`, `Task.goldSourceId`): a copy takes the data of
+  its original, but not its external id, and goes into a batch that still has
+  open tasks (chosen by the manager, the most recent by default), at the
+  position of one of that batch's open tasks (the random function is a
+  parameter, as in `submitAssignment`). Without an open batch nothing is
+  copied. An original has one live copy at most: promoting again is refused
+  while one is live, and so is bringing back a retired copy while another is
+  live; both lock the original, so they cannot pass each other.
+- **One item, one group.** `eligibleFor` takes a task, the task it was copied
+  from and that task's other copies as one group, and leaves out every task
+  of a group in which the annotator has an active claim, a submission or a
+  skip. Nobody is handed the same item twice, whichever of them came first.
+- **What reaches an annotator.** `goldFeedback` in `app/domain/gold.ts` is the
+  only gate for results: nothing before the submission, and afterwards the
+  score and the expected answer if the project's `goldFeedback` setting is on,
+  the task is not retired and the stored score is the one the current
+  expected answer gives (between an edit and its rescore it is not, and
+  nothing is shown). The work loader sends nothing about gold and no id of
+  the task: no task id, no external id and no id column from the import row
+  (`withoutImportId`). It sends `assignmentRef`, a reference cut from the
+  assignment's id, which the task page and the batch search resolve.
 
 ## Drafts
 
@@ -417,12 +468,14 @@ saved. The rule lives in the model, so it holds for any form post, not only
 for the settings page. The page gets the same counts from its loader and
 shows what an edit would do while the manager types.
 
-"Stored answers" are the six places an answer is kept: submissions
+"Stored answers" are the seven places an answer is kept: submissions
 (`Assignment.answer`), reviewer corrections (`Review.correctedAnswer`), gold
-answers (`Task.goldAnswer`), consensus answers (`Task.consensus`), the answer
-a dispute was about (`Dispute.answer`, counted only once the submission has
-been revised and says something else, so no answer is counted twice) and
-qualification attempts (`QualificationAttempt.answers`). A correction that a
+answers (`Task.goldAnswer`), the expected answers a gold task had before it
+was edited (`GoldRevision.previousAnswer`, which its history still shows),
+consensus answers (`Task.consensus`), the answer a dispute was about
+(`Dispute.answer`, counted only once the submission has been revised and says
+something else) and qualification attempts (`QualificationAttempt.answers`).
+No answer is counted twice. A correction that a
 dispute overturned still counts: the review row is kept and shown.
 
 | Edit                                               | Outcome                                                   |

@@ -42,7 +42,10 @@ or fix the work.
   accuracy, speed and throughput; Cohen's and Fleiss' kappa; consensus answers
   per task
 - **Gold tasks** scored automatically and a **qualification test** before an
-  annotator may work on a project
+  annotator may work on a project. Managers can correct a gold answer (with a
+  history of who changed it and why), rescore the stored answers against it
+  after seeing what that changes, retire a gold task, and turn completed
+  tasks into gold. After submitting, annotators see how they did
 - **Time tracking** of active time per task and a **payouts** report (per task
   or hourly) with CSV download
 - **Export** of finished labels as JSONL, CSV or COCO (box projects)
