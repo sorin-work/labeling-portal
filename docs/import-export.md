@@ -47,7 +47,8 @@ without review). A correction or a QA score from a review that a dispute
 overturned is not exported: the annotation carries the annotator's own answer. Gold and qualification tasks are left out. Choose completed
 tasks only or every task, and optionally a single batch.
 
-- **JSONL**: one task per line with `data`, `consensus`, `agreement` and every
+- **JSONL**: one task per line with `data`, `consensus`, `consensus_source`
+  (`majority`, `adjudicated`, or null when there is no consensus), `agreement` and every
   accepted annotation (annotator email, final answer, review status, QA score,
   active seconds). Entity spans include the covered `text`.
 - **CSV**: one row per annotation plus a `consensus` row per completed task.
