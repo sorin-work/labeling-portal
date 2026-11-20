@@ -14,6 +14,7 @@ import { droppedNote, fitDraft } from '~/domain/drafts';
 import { describeGoldAnswer, formatGoldScore, goldFeedback } from '~/domain/gold';
 import { withoutImportId } from '~/domain/import';
 import { requireUser } from '~/lib/auth.server';
+import { userTag } from '~/lib/user-tag.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
 import { countResolvers, openDispute, withdrawDispute } from '~/models/disputes.server';
@@ -57,7 +58,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   const decision = assignment.reviews.at(0) ?? null;
   return {
-    userId: user.id,
+    // the key of unsaved work in the tab; the user's id does not leave the server
+    userTag: userTag(user.id),
     mode: gold
       ? ('gold' as const)
       : assignment.reviewStatus === 'FIXED'
@@ -159,7 +161,7 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   // nothing is saved in compare mode: the answer there cannot change
   const draftState = useDraftSave({
     url: `/my-work/${loaderData.id}/draft`,
-    user: loaderData.userId,
+    user: loaderData.userTag,
     answer: value,
     restored: loaderData.draft !== null,
     handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
