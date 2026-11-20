@@ -330,3 +330,12 @@ export function parseView(raw: string | null): View {
     return FIT;
   }
 }
+
+/**
+ * A box in words, for screen readers and the list under the picture: its
+ * label, where it is and how big, in whole image pixels.
+ */
+export function describeBox(box: Rect & { label: string }, index: number, count: number): string {
+  const r = (n: number) => Math.round(n);
+  return `${box.label}, box ${index + 1} of ${count}, at ${r(box.x)}, ${r(box.y)}, ${r(box.w)} by ${r(box.h)} pixels`;
+}

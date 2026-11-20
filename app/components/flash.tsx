@@ -22,7 +22,7 @@ export function Flash({ message }: { message: string | null }) {
       <button
         type="button"
         onClick={() => setVisible(false)}
-        className="text-slate-400 hover:text-white"
+        className="text-slate-300 hover:text-white"
         aria-label="Dismiss"
       >
         ×

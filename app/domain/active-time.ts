@@ -10,12 +10,29 @@ export function clampActiveSeconds(reported: number, since: Date, now: Date): nu
   return Math.min(Math.floor(reported), elapsed);
 }
 
+import { MAX_CLAIM_MS } from './time-limit';
+
 /**
  * However often work is sent back, one assignment is never credited more than
  * this many of its project's time limits in total. A first submission is at
- * most two (the claim and its one extension), which leaves one for revising.
+ * most `FIRST_SUBMISSION_LIMITS`, which leaves one for revising.
  */
 export const MAX_CREDITED_LIMITS = 3;
+
+/**
+ * The most time limits a first submission is credited, however many
+ * extensions the claim got. Extensions give the time to finish; the credit
+ * stays where it was when one extension was all there was, so the total
+ * above still holds.
+ */
+export const FIRST_SUBMISSION_LIMITS = 2;
+
+/** The cap of a first submission, in seconds, for a project's time limit in minutes. */
+export function firstSubmissionCap(limitMinutes: number): number {
+  return Number.isFinite(limitMinutes)
+    ? Math.max(0, Math.floor(limitMinutes)) * 60 * FIRST_SUBMISSION_LIMITS
+    : 0;
+}
 
 /**
  * The most seconds one revision of sent-back work can get. A first
@@ -56,13 +73,13 @@ export function revisionSeconds(input: {
 export type Interval = { start: Date; end: Date };
 
 /**
- * How far back a credit may reach. A claim lives at most two time limits
- * (one extension), and a time limit is at most 480 minutes, so every claim
- * fits. A revision has no deadline and is credited only in the last day
- * before it is handed in. Intervals that end before this far back can never
- * matter again and are removed.
+ * How far back a credit may reach: the longest a claim can live (the
+ * longest time limit and every extension, `MAX_CLAIM_MS`), so a claim is
+ * never cut off. A revision has no deadline and is credited only within this
+ * far back before it is handed in. Intervals that end before this far back
+ * can never matter again and are removed.
  */
-export const CREDIT_WINDOW_MS = 24 * 60 * 60_000;
+export const CREDIT_WINDOW_MS = MAX_CLAIM_MS;
 
 /** The earliest moment a credit made at `now` can use, and before which stored intervals are dropped. */
 export function creditHorizon(now: Date): Date {

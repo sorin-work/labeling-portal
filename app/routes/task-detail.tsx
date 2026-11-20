@@ -347,7 +347,7 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
           <span>
             Task #{task.position}
             {task.externalId && (
-              <span className="ml-2 font-mono text-base text-slate-400">{task.externalId}</span>
+              <span className="ml-2 font-mono text-base text-slate-500">{task.externalId}</span>
             )}
             <span className="ml-2 align-middle">
               <CopyButton value={task.externalId ?? task.id} label="Copy id" />
