@@ -1,5 +1,13 @@
+import { useId, useRef } from 'react';
+
 import type { PairwiseAnswer, Preference } from '~/domain/answers';
-import { interfaceShortcut } from '~/domain/hotkeys';
+import {
+  interfaceShortcut,
+  nextScoreGroup,
+  scoreGroups,
+  scoreTarget,
+  type ScoreGroup,
+} from '~/domain/hotkeys';
 import type { PairwiseSchema } from '~/domain/task-schema';
 
 import { cx } from '../ui';
@@ -14,36 +22,58 @@ const EMPTY = {
   rationale: '',
 } as unknown as PairwiseAnswer;
 
+const groupId = (group: ScoreGroup) => `${group.side}:${group.dimension}`;
+
+/**
+ * One score row: real radio buttons, so the group is one tab stop and the
+ * arrow keys choose, as in any radio group. The digits are handled by the
+ * interface, which finds the group through `data-score-group`.
+ */
 function ScoreButtons({
   name,
+  label,
+  group,
   value,
   onPick,
   readOnly,
 }: {
   name: string;
+  label: string;
+  group: ScoreGroup;
   value: number | undefined;
   onPick: (n: number) => void;
   readOnly?: boolean;
 }) {
   return (
-    <div className="flex gap-1" role="radiogroup" aria-label={name}>
+    <div
+      className="flex gap-1"
+      role="radiogroup"
+      aria-label={label}
+      data-score-group={groupId(group)}
+    >
       {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
-          role="radio"
-          aria-checked={value === n}
-          disabled={readOnly}
-          onClick={() => onPick(n)}
-          className={cx(
-            'h-7 w-7 rounded text-xs font-medium ring-1',
-            value === n
-              ? 'bg-indigo-600 text-white ring-indigo-600'
-              : 'bg-white ring-slate-300 hover:bg-slate-50',
-          )}
-        >
-          {n}
-        </button>
+        <label key={n} className="relative">
+          <input
+            type="radio"
+            name={name}
+            value={n}
+            checked={value === n}
+            disabled={readOnly}
+            onChange={() => onPick(n)}
+            className="peer sr-only"
+          />
+          <span
+            className={cx(
+              'grid h-7 w-7 place-items-center rounded text-xs font-medium ring-1',
+              'peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-indigo-600',
+              value === n ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white ring-slate-300',
+              !readOnly && 'cursor-pointer',
+              !readOnly && value !== n && 'hover:bg-slate-50',
+            )}
+          >
+            {n}
+          </span>
+        </label>
       ))}
     </div>
   );
@@ -68,8 +98,36 @@ export function PairwiseRubric({
     { value: 'B', label: 'B is better' },
   ];
   const length = draft.rationale.trim().length;
+  const root = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const groups = scoreGroups(schema.dimensions.map((d) => d.key));
+
+  /** Puts the cursor on a score group: on its chosen score, else on the first. */
+  const focusGroup = (group: ScoreGroup, score?: number) => {
+    const row = Array.from(
+      root.current?.querySelectorAll<HTMLElement>('[data-score-group]') ?? [],
+    ).find((el) => el.dataset.scoreGroup === groupId(group));
+    const inputs = Array.from(row?.querySelectorAll<HTMLInputElement>('input') ?? []);
+    const wanted = score ?? draft.scores[group.side][group.dimension];
+    (inputs.find((input) => Number(input.value) === wanted) ?? inputs[0])?.focus();
+  };
 
   const inUse = useInterfaceHotkeys(schema, readOnly, (hit) => {
+    if (hit.action === 'score') {
+      // the group that has focus, or the first one that has no score yet
+      const at = document.activeElement?.closest<HTMLElement>('[data-score-group]');
+      const focused =
+        at && root.current?.contains(at)
+          ? (groups.find((g) => groupId(g) === at.dataset.scoreGroup) ?? null)
+          : null;
+      const target = scoreTarget(groups, focused, draft.scores);
+      if (!target) return false;
+      const score = hit.index + 1;
+      setScore(target.side, target.dimension, score);
+      const next = nextScoreGroup(groups, target);
+      focusGroup(next, next === target ? score : undefined);
+      return true;
+    }
     const pick = ({ preferA: 'A', preferB: 'B', preferTie: 'tie' } as const)[
       hit.action as 'preferA' | 'preferB' | 'preferTie'
     ] as Preference | undefined;
@@ -79,7 +137,7 @@ export function PairwiseRubric({
   });
 
   return (
-    <div className="space-y-5" {...inUse}>
+    <div className="space-y-5" ref={root} {...inUse}>
       <section>
         <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">Prompt</h3>
         <p className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm leading-6">
@@ -110,7 +168,14 @@ export function PairwiseRubric({
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-            <th className="py-1">Dimension</th>
+            <th className="py-1">
+              Dimension
+              {!readOnly && (
+                <span className="ml-2 normal-case text-slate-400">
+                  (keys {interfaceShortcut(schema, ['score'])}, row by row)
+                </span>
+              )}
+            </th>
             <th className="py-1">Response A</th>
             <th className="py-1">Response B</th>
           </tr>
@@ -124,7 +189,9 @@ export function PairwiseRubric({
               </td>
               <td className="py-2">
                 <ScoreButtons
-                  name={`${dim.label} for A`}
+                  name={`${id}-a-${dim.key}`}
+                  label={`${dim.label} for A`}
+                  group={{ dimension: dim.key, side: 'a' }}
                   value={draft.scores.a[dim.key]}
                   onPick={(n) => setScore('a', dim.key, n)}
                   readOnly={readOnly}
@@ -132,7 +199,9 @@ export function PairwiseRubric({
               </td>
               <td className="py-2">
                 <ScoreButtons
-                  name={`${dim.label} for B`}
+                  name={`${id}-b-${dim.key}`}
+                  label={`${dim.label} for B`}
+                  group={{ dimension: dim.key, side: 'b' }}
                   value={draft.scores.b[dim.key]}
                   onPick={(n) => setScore('b', dim.key, n)}
                   readOnly={readOnly}
