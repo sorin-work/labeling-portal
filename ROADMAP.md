@@ -364,9 +364,11 @@ disagreed on.
   for an extra annotator to adjudication from its page.
 - Item 12 adds its own condition to `eligibleFor`, and item 10 has shipped
   two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
-  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
-  Gold tasks stay outside the slot count, extra slots included.
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold tasks stay outside the slot count, extra slots
+  included.
 - Undecided: whether an adjudicated answer should feed back into the
   annotators' numbers (agreement with the adjudicator, per person). I lean
   towards not yet.
@@ -417,11 +419,12 @@ else. They are the ordering rules that item 17 has to keep.
   queue tests rely on position order.
 - Item 11 (extra slots) adds a condition to `eligibleFor` as well, and item 10
   has shipped two that must stay: a retired gold task is never eligible
-  (`t."goldRetiredAt" IS NULL`), and the "already mine" check also covers the
-  task a gold copy was made from (`mine."taskId" IN (t.id, t."goldSourceId")`).
-  Gold spacing has to treat those copies like any other gold task, and a new
-  order must not single them out: today a copy takes the position of a random
-  open task.
+  (`t."goldRetiredAt" IS NULL`), and a task, the task it was copied from and
+  that task's other copies are one group (the second `NOT EXISTS`, over
+  `kin`): whoever has a claim, a submission or a skip on one of them gets
+  none of the others. Gold spacing has to treat those copies like any other
+  gold task, and a new order must not single them out: today a copy sits in a
+  batch with open tasks, at the position of one of them.
 - Follow-ups, each small enough for a pull request of its own and not part of
   this one:
   - a daily limit per annotator, so one fast person cannot label most of a
