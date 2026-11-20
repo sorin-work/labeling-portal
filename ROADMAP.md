@@ -43,7 +43,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 9   | Disputes on review decisions                 | Later | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Later | quality       | M    | -          |
 | 11  | Low-agreement tasks: extras and adjudication | Later | quality       | M    | -          |
-| 12  | Queue order and assignment rules             | Later | queue         | M    | -          |
+| 12  | Queue order, batch priority and gold spacing | Later | queue         | M    | -          |
 | 13  | Moving, resizing and zooming boxes           | Later | labeling      | M    | -          |
 | 14  | Image classification                         | Later | labeling      | M    | -          |
 | 15  | Audit trail                                  | Later | ops           | M    | -          |
@@ -579,6 +579,9 @@ on the dashboard, and never which tasks they got wrong.
 - For managers: a small table on the quality page of the gold tasks with the
   lowest average score. A gold task that most people miss is usually the one
   that is wrong.
+- Retiring adds a condition to `eligibleFor` in `models/queue.server.ts`.
+  Items 11 (extra slots) and 12 (paused batches) change the same function. The
+  three changes are independent, but whoever lands later has to merge them.
 - Tricky: where a new gold task appears. `createBatch` appends after the last
   position and the queue goes strictly by `position`, so a copy made today
   would be served after everything else. `position` is not unique: give the
@@ -686,19 +689,19 @@ disagreed on.
   an adjudicated task survives a later review, and the export marks the
   source. One case per kind for the number that is compared.
 
-### 12. Queue order and assignment rules
+### 12. Queue order, batch priority and gold spacing
 
 The queue has one rule: the open task with the lowest `position` that you have
 not touched and that has a free slot (`nextCandidate` in
 `models/queue.server.ts`). Position is import order. So an urgent batch
-imported later waits behind everything before it. Everyone works through the
-file in the same order. Gold tasks sit wherever their rows were in the file,
-so a block of gold at the top is done in the first ten minutes and never met
-again. One fast annotator can label most of a project. And a claim somebody
-walked away from blocks its slot until the time limit runs out, which can be
-eight hours (`timeLimitMinutes` goes up to 480), or sixteen with the
-extension. A manager sees it under "Claims" on the task page and cannot
-release it.
+imported later waits behind everything before it, and a batch with a problem
+cannot be held back short of pausing the whole project. Everyone works through
+the file in the same order. Gold tasks sit wherever their rows were in the
+file, so a block of gold at the top is done in the first ten minutes and never
+met again.
+
+This pull request is three changes to how the next task is chosen, and nothing
+else. They are the ordering rules that item 17 has to keep.
 
 - Batch priority and pause: `priority Int @default(0)` and
   `pausedAt DateTime?` on `Batch`. `nextCandidate` joins the batch and sorts
@@ -713,17 +716,8 @@ release it.
   gold task, and when one is due and an unseen one exists it serves that,
   otherwise a regular task. Some jitter keeps it from being exactly every Nth.
   Empty means today's behaviour.
-- A daily limit per annotator (`dailyTaskLimit` on `Project`, counted per UTC
-  day like "done today" on the work page). `ClaimResult` gets a `limit`
-  reason and `lib/queue-messages.ts` a text for it; the redirects already pass
-  the reason through.
-- Managers can release an active claim from `routes/task-detail.tsx`. It sets
-  `RELEASED`, like `releaseAssignment` without the owner check. The annotator's
-  open page then gets "This task is no longer yours" on submit, which exists.
-  That route has no action today, and items 10 and 11 add theirs to it as
-  well.
 - Tricky: `countAvailable` feeds "N tasks available" and the Start button on
-  the dashboard. It must apply the same rules, or the dashboard offers work
+  the dashboard. It must skip paused batches too, or the dashboard offers work
   that the claim then refuses.
 - Tricky: eligibility is evaluated three times per claim (the candidate query,
   the locked re-check, the count). The choice between gold and regular has to
@@ -732,11 +726,27 @@ release it.
   tasks. Fine for thousands of tasks, not for hundreds of thousands (item 17).
 - Tricky: with default settings the behaviour must stay exactly as it is. The
   queue tests rely on position order.
-- Undecided: assigning tasks to named people by hand. That is a different
-  model (`assignedToId` on `Task`) and I do not think it is needed while
-  claims work.
+- Items 10 (retired gold tasks) and 11 (extra slots) each add a condition to
+  `eligibleFor` as well. The three changes are independent, but whoever lands
+  later has to merge them.
+- Follow-ups, each small enough for a pull request of its own and not part of
+  this one:
+  - a daily limit per annotator, so one fast person cannot label most of a
+    project: `dailyTaskLimit` on `Project`, counted per UTC day like "done
+    today" on the work page, a `limit` reason in `ClaimResult` with a text in
+    `lib/queue-messages.ts`, and the same check in `countAvailable`;
+  - a manager releasing somebody's claim from `routes/task-detail.tsx`. A
+    claim that was walked away from blocks its slot until the time limit runs
+    out, which can be eight hours (`timeLimitMinutes` goes up to 480) or
+    sixteen with the extension. It is listed under "Claims" on the task page
+    and cannot be released there;
+  - assigning tasks to named people by hand (`assignedToId` on `Task`). I do
+    not think it is needed while claims work.
 - Tests: `tests/integration/queue.test.ts`, with the random source passed in
-  as `now` is today.
+  as `now` is today: a higher priority batch is served first, a paused batch
+  is skipped by the claim and by the count, the shuffled order is stable for
+  one annotator and differs between two, gold arrives about every N tasks and
+  never twice for one person, and the defaults give position order.
 
 ### 13. Moving, resizing and zooming boxes
 
@@ -990,8 +1000,9 @@ is why this is here and not above. What would have to change first:
   fixture of some 20,000 tasks with `createMany` and assert on work done: rows
   read by the claim query, from `EXPLAIN (ANALYZE, FORMAT JSON)`, and rows
   fetched per export page.
-- Depends on item 12: the faster claim has to keep whatever ordering rules
-  exist by then. Items 6 and 11 touch the same export and queue code.
+- Depends on item 12: the faster claim has to keep the ordering rules that
+  item adds (batch priority and pause, shuffled order, gold spacing). Items 6,
+  10 and 11 touch the same export and queue code without being needed first.
 - Undecided: how much of this to do without a real large project. Streaming
   export and SQL aggregates are plain wins. The counter adds a way for the
   queue to be wrong, and I would only add it with the consistency test.
