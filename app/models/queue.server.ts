@@ -479,6 +479,25 @@ async function sampleForReview(
  * started from it even when the page did not say so (a draft restored after
  * a reload).
  */
+/**
+ * Records that the annotator pressed "Start from the suggestion" on their
+ * claim, at the moment they did. A submission reads it from here; the form
+ * that hands the answer in has no say. Only on an active claim of theirs
+ * whose task has a suggestion.
+ */
+export async function markSuggestionTaken(assignmentId: string, userId: string): Promise<boolean> {
+  const marked = await prisma.assignment.updateMany({
+    where: {
+      id: assignmentId,
+      userId,
+      status: 'ACTIVE',
+      task: { NOT: { suggestion: { equals: Prisma.DbNull } } },
+    },
+    data: { fromSuggestion: true },
+  });
+  return marked.count > 0;
+}
+
 function suggestionUse(
   suggestion: Prisma.JsonValue,
   answer: Prisma.InputJsonValue,
@@ -502,8 +521,6 @@ export async function submitAssignment(
     reviewRequired: boolean;
     /** share of submissions that go to review; everything when left out */
     reviewSamplePercent?: number;
-    /** the annotator pressed "Start from the suggestion" */
-    fromSuggestion?: boolean;
   },
   now = new Date(),
   random: () => number = Math.random,
@@ -587,7 +604,9 @@ export async function submitAssignment(
           answer: input.answer,
           // what the task's suggestion had to do with it: it is never the answer
           // by itself, the annotator took it or wrote their own
-          ...suggestionUse(task.suggestion, input.answer, input.fromSuggestion),
+          // whether they took it is what the server recorded (`markSuggestionTaken`),
+          // not what the form says
+          ...suggestionUse(task.suggestion, input.answer, found.assignment.fromSuggestion),
           goldScore,
           reviewStatus,
           reviewSample: sampling.sample,

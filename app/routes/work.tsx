@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { useEffect, useRef, useState } from 'react';
-import { data, Form, Link, redirect, useNavigation } from 'react-router';
+import { data, Form, Link, redirect, useFetcher, useNavigation } from 'react-router';
 
 import { Countdown } from '~/components/countdown';
 import { DraftNote } from '~/components/draft-note';
@@ -41,6 +41,7 @@ import {
   claimNextTask,
   extendAssignment,
   releaseAssignment,
+  markSuggestionTaken,
   releaseExpiredClaims,
   skipAssignment,
   submitAssignment,
@@ -120,6 +121,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     suggestion: suggestion && {
       answer: suggestion,
       text: describeSuggestion(schema, data, suggestion),
+      // taken already, before a reload
+      taken: assignment.fromSuggestion,
     },
     doneToday: await prisma.assignment.count({
       where: {
@@ -160,6 +163,12 @@ export async function action({ request, params }: Route.ActionArgs) {
     return redirect(`/work/${assignment.id}`);
   }
 
+  if (intent === 'take-suggestion') {
+    // the page tells the server when the suggestion was taken; a submission reads it from there
+    const marked = await markSuggestionTaken(assignment.id, user.id);
+    return data({ error: marked ? null : 'This task is no longer yours.' });
+  }
+
   if (intent === 'release') {
     await releaseAssignment(assignment.id, user.id);
     return redirect(`/projects/${assignment.projectId}`);
@@ -190,7 +199,6 @@ export async function action({ request, params }: Route.ActionArgs) {
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
       reviewRequired: assignment.project.reviewRequired,
       reviewSamplePercent: assignment.project.reviewSamplePercent,
-      fromSuggestion: form.get('fromSuggestion') === '1',
     });
     if (!result.ok && result.error === 'expired') {
       return redirect(`/projects/${assignment.projectId}?queue=expired`);
@@ -233,11 +241,14 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
   const { assignment, project, schema, task, instructionsHtml, instructionsChanged } = loaderData;
   // A draft wins over the suggestion; the suggestion is never the answer by itself.
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
-  const [fromSuggestion, setFromSuggestion] = useState(false);
+  const [fromSuggestion, setFromSuggestion] = useState(loaderData.suggestion?.taken ?? false);
+  const suggestionTaken = useFetcher();
   const takeSuggestion = () => {
     if (!loaderData.suggestion) return;
     setAnswer(structuredClone(loaderData.suggestion.answer));
     setFromSuggestion(true);
+    // the server keeps that it was taken; the submission reads it from there
+    suggestionTaken.submit({ intent: 'take-suggestion' }, { method: 'post' });
   };
   // A text without entities or an image without objects is submitted as it
   // is: nothing marked is the answer. For boxes that needs the loaded image.
@@ -366,7 +377,6 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
         <Form method="post" className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="answer" value={toSubmit ? JSON.stringify(toSubmit) : ''} />
           <input type="hidden" name="activeSeconds" value={activeSeconds} />
-          <input type="hidden" name="fromSuggestion" value={fromSuggestion ? '1' : ''} />
           <Button
             ref={submitRef}
             type="submit"
