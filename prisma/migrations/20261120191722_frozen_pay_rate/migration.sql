@@ -10,9 +10,11 @@ SET "rateCents" = p."rateCents", "payMode" = p."payMode"
 FROM "Project" p
 WHERE p.id = a."projectId" AND a.status = 'SUBMITTED';
 
--- Accepted work now counts on the day it was reviewed. Rows that have a review
--- status without that date (the demo data was written this way) take the date
--- of their latest review.
+-- A reviewed submission carries the date of its review; the time credited for
+-- revising sent-back work is counted from it. Rows that have a review status
+-- without that date (the demo data was written this way) take the date of
+-- their latest review. Which period work is paid in does not depend on this:
+-- the next migration stores that day on its own.
 UPDATE "Assignment" a
 SET "reviewedAt" = r.latest
 FROM (
@@ -21,13 +23,6 @@ FROM (
 WHERE r."assignmentId" = a.id
   AND a."reviewedAt" IS NULL
   AND a."reviewStatus" IN ('APPROVED', 'FIXED', 'SENT_BACK');
-
--- The pay reports now look work up by the day it was reviewed as well.
--- CreateIndex
-CREATE INDEX "Assignment_userId_reviewedAt_idx" ON "Assignment"("userId", "reviewedAt");
-
--- CreateIndex
-CREATE INDEX "Assignment_projectId_reviewedAt_idx" ON "Assignment"("projectId", "reviewedAt");
 
 -- From here on a submission without its rate is refused, whatever writes it.
 ALTER TABLE "Assignment" ADD CONSTRAINT "Assignment_submitted_has_rate"
