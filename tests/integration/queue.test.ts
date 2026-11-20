@@ -325,6 +325,39 @@ describe('expired claims', () => {
     expect(stored).toMatchObject({ status: 'EXPIRED', answer: null });
   });
 
+  it('keeps a submission that was in time when a second post arrives after the limit', async () => {
+    const { project, ann } = await setup();
+    const t0 = new Date('2026-01-10T09:00:00Z');
+    const claim = await claimNextTask(project, ann.id, t0);
+    const id = claim.ok ? claim.assignment.id : '';
+    const input = { answer: { labels: ['positive'] }, activeSeconds: 60, reviewRequired: true };
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Both posts read the claim as active. Holding the row makes them write
+    // one after the other: the one in time first, the late one second.
+    let inTime: ReturnType<typeof submitAssignment> | undefined;
+    let late: ReturnType<typeof submitAssignment> | undefined;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Assignment" WHERE id = ${id} FOR UPDATE`;
+      inTime = submitAssignment(id, ann.id, input, new Date(t0.getTime() + 29 * 60_000));
+      await pause();
+      late = submitAssignment(id, ann.id, input, new Date(t0.getTime() + 31 * 60_000));
+      await pause();
+    });
+
+    const [first, second] = [await inTime, await late];
+    const stored = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    // whichever write came first, the row and the answers given agree
+    if (first?.ok) {
+      expect(second).toEqual({ ok: false, error: 'not_active' });
+      expect(stored).toMatchObject({ status: 'SUBMITTED', answer: { labels: ['positive'] } });
+    } else {
+      expect(second).toEqual({ ok: false, error: 'expired' });
+      expect(stored).toMatchObject({ status: 'EXPIRED', answer: null });
+    }
+    expect(first?.ok).toBe(true);
+  });
+
   it('sends the annotator back to the project when their time ran out', async () => {
     const { project, ann, cookie } = await setup();
     const claim = await claimNextTask(project, ann.id, new Date(Date.now() - 40 * 60_000));
@@ -467,6 +500,31 @@ describe('drafts', () => {
     expect(statusOf(submitted)).toBe(400);
   });
 
+  it('leaves out a box the schema refuses since the draft was saved, and says so', async () => {
+    const org = await createOrg();
+    const schema = SCHEMA_TEMPLATES.bbox;
+    const [label] = schema.labels;
+    const project = await createTestProject(org.id, { schema });
+    await createTasks(project.id, [{ [schema.imageField]: '/demo/street-1.svg' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const cookie = await cookieFor(ann, org.id);
+    const claim = await claimNextTask(project, ann.id);
+    const id = claim.ok ? claim.assignment.id : '';
+    const big = { x: 10, y: 10, w: 80, h: 60, label };
+    const small = { x: 200, y: 10, w: 12, h: 12, label };
+    const draft = { imageWidth: 640, imageHeight: 400, boxes: [big, small] };
+    await save(id, cookie, { draft: JSON.stringify(draft) });
+    expect(await open(id, cookie)).toMatchObject({ draft, draftNote: null });
+
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { schema: { ...schema, minBoxSize: 20 } },
+    });
+    const page = await open(id, cookie);
+    expect(page.draft).toEqual({ ...draft, boxes: [big] });
+    expect(page).toMatchObject({ draftNote: expect.stringMatching(/^One box from your draft/) });
+  });
+
   it('clamps the working time, never lowers it and keeps the draft on a time-only save', async () => {
     const { id, cookie } = await claimed(2);
     await save(id, cookie, { draft: '{"labels":["positive"]}', activeSeconds: '9999' });
@@ -481,6 +539,11 @@ describe('drafts', () => {
       draft: { labels: ['positive'] },
       draftSeconds: first.draftSeconds,
     });
+
+    // two tabs saving at the same moment: the larger time still stands
+    await Promise.all(['30', '5', '60'].map((s) => save(id, cookie, { activeSeconds: s })));
+    const third = await prisma.assignment.findUniqueOrThrow({ where: { id } });
+    expect(third.draftSeconds).toBe(first.draftSeconds);
   });
 
   it('refuses a draft that is too large or not a JSON object', async () => {
@@ -543,6 +606,26 @@ describe('drafts', () => {
     });
     expect(statusOf(result)).toBe(404);
     expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).draft).toBeNull();
+  });
+
+  it('refuses a save that another site made the browser send', async () => {
+    const { id, cookie } = await claimed();
+    const from = (headers: Record<string, string>) =>
+      run(
+        draftAction,
+        makeRequest(`/work/${id}/draft`, {
+          cookie,
+          headers,
+          form: { draft: '{"labels":["negative"]}' },
+        }),
+        { assignmentId: id },
+      );
+
+    expect(statusOf(await from({ Origin: 'https://elsewhere.example' }))).toBe(403);
+    expect(statusOf(await from({ Referer: 'https://elsewhere.example/page' }))).toBe(403);
+    expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).draft).toBeNull();
+
+    expect(statusOf(await from({ Origin: 'http://localhost' }))).toBe(200);
   });
 
   it('refuses a draft once the claim is no longer active', async () => {

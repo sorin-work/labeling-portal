@@ -15,8 +15,9 @@ at the end. The table lists who can open each page.
 | `/projects/:id/qualification`       | Qualification test                       | annotators on the project                   |
 | `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                          |
 | `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                |
-| `/projects/:id/review`              | Review queue                             | reviewers, managers                         |
-| `/review/:assignmentId`             | Approve, send back or fix a submission   | reviewers, managers (not on their own work) |
+| `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                         |
+| `/projects/:id/review` (POST)       | Reserve the next submission and open it  | reviewers, managers                         |
+| `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
 | `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
 | `/projects/:id/batches[/new\|/:id]` | Import and browse tasks                  | admin, project manager                      |
 | `/projects/:id/tasks/:taskId`       | Every submission and the consensus       | reviewers, managers                         |
@@ -28,6 +29,10 @@ at the end. The table lists who can open each page.
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/account`                          | Change your password                     | signed in                                   |
+
+Saving the settings form answers 400 with `errors.schema` when the schema
+edit would break stored work, and saves nothing from that post. The rules are
+in [architecture](architecture.md#changing-the-schema-once-work-exists).
 
 ## Downloads and probes
 
@@ -67,5 +72,8 @@ against the task schema, because an unfinished answer is not a valid one yet.
 | 413    | `{"ok":false,"error":"too_large"}`             | `draft` is over 200 KB                   |
 | 404    | `{"ok":false,"error":"not_found"}`             | no such assignment, or not yours         |
 | 409    | `{"ok":false,"error":"not_active"}`, `expired` | submitted, skipped, released or too late |
+| 403    | `{"ok":false,"error":"cross_origin"}`          | the request came from another site       |
 
-Without a session the answer is the usual redirect to the sign-in page.
+Without a session the answer is the usual redirect to the sign-in page. The
+`Origin` header (or `Referer` without it) has to be this app's own origin, the
+same rule React Router applies to page actions.

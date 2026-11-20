@@ -2,15 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 const IDLE_AFTER_MS = 2 * 60_000;
 
-/**
- * Counts the seconds someone actually spends on a task: the tab must be
- * visible and they must have touched the mouse or keyboard in the last two
- * minutes. The server still caps the value at the time since the claim.
- * `startAt` is the time already saved with a draft, so the count goes on after
- * a reload. The second value raises the count to a later saved value.
- */
-export function useActiveTime(startAt = 0): [number, (atLeast: number) => void] {
-  const [seconds, setSeconds] = useState(startAt);
+/** When the person last touched the mouse or keyboard on this page, as a ref. */
+export function useLastInput() {
   const lastInput = useRef(0);
 
   useEffect(() => {
@@ -20,18 +13,33 @@ export function useActiveTime(startAt = 0): [number, (atLeast: number) => void] 
     };
     const events = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'scroll'] as const;
     for (const e of events) window.addEventListener(e, touch, { passive: true });
+    return () => {
+      for (const e of events) window.removeEventListener(e, touch);
+    };
+  }, []);
 
+  return lastInput;
+}
+
+/**
+ * Counts the seconds someone actually spends on a task: the tab must be
+ * visible and they must have touched the mouse or keyboard in the last two
+ * minutes. The server still caps the value at the time since the claim.
+ * `startAt` is the time already saved with a draft, so the count goes on after
+ * a reload. The second value raises the count to a later saved value.
+ */
+export function useActiveTime(startAt = 0): [number, (atLeast: number) => void] {
+  const [seconds, setSeconds] = useState(startAt);
+  const lastInput = useLastInput();
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       const visible = document.visibilityState === 'visible';
       const idle = Date.now() - lastInput.current > IDLE_AFTER_MS;
       if (visible && !idle) setSeconds((s) => s + 1);
     }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-      for (const e of events) window.removeEventListener(e, touch);
-    };
-  }, []);
+    return () => window.clearInterval(timer);
+  }, [lastInput]);
 
   const raise = useCallback((atLeast: number) => setSeconds((s) => Math.max(s, atLeast)), []);
   return [seconds, raise];

@@ -19,7 +19,7 @@ import {
   type Answer,
   type ImageSize,
 } from '~/domain/answers';
-import { fitDraft } from '~/domain/drafts';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { renderMarkdown } from '~/domain/markdown';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
@@ -69,6 +69,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
   const { project, task } = assignment;
   const schema = projectSchema(project);
+  // unfinished work from before a reload; the page starts from it
+  const draft = fitDraft(schema, task.data, assignment.draft);
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
@@ -80,14 +82,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     project.instructionsUpdatedAt > lastSubmission.submittedAt,
   );
   return {
+    userId: user.id,
     instructionsChanged,
     assignment: {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
       expiresAt: assignment.expiresAt.toISOString(),
       canExtend: assignment.extendedAt === null,
-      // unfinished work from before a reload; the page starts from it
-      draft: fitDraft(schema, task.data, assignment.draft),
+      draft: draft.answer,
+      draftNote: droppedNote(schema, draft.dropped),
       draftSeconds: assignment.draftSeconds,
     },
     project: { id: project.id, name: project.name },
@@ -165,6 +168,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       answer: checked.answer as Prisma.InputJsonValue,
       activeSeconds: Number(form.get('activeSeconds') ?? 0),
       reviewRequired: assignment.project.reviewRequired,
+      reviewSamplePercent: assignment.project.reviewSamplePercent,
     });
     if (!result.ok && result.error === 'expired') {
       return redirect(`/projects/${assignment.projectId}?queue=expired`);
@@ -210,13 +214,17 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
   const [activeSeconds, raiseActiveSeconds] = useActiveTime(assignment.draftSeconds);
   const draftState = useDraftSave({
     url: `/work/${assignment.id}/draft`,
+    user: loaderData.userId,
     answer,
     seconds: activeSeconds,
     restored: assignment.draft !== null,
-    // submit, skip and release end the claim; a save after them would be refused
-    paused: navigation.formData != null,
+    // Submit, skip and release end the claim; a save after them would be
+    // refused. Asking for more time and the layout's sign-out do not.
+    handingIn:
+      navigation.formAction === `/work/${assignment.id}` &&
+      navigation.formData?.get('intent') !== 'extend',
     onRecover: (unsaved) => {
-      const fitted = fitDraft(schema, task.data, unsaved.draft);
+      const fitted = fitDraft(schema, task.data, unsaved.draft).answer;
       if (fitted) setAnswer(fitted);
       raiseActiveSeconds(unsaved.seconds);
     },
@@ -265,6 +273,7 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {assignment.draftNote && <Alert tone="info">{assignment.draftNote}</Alert>}
         <TimeWarning
           key={assignment.expiresAt}
           expiresAt={assignment.expiresAt}

@@ -7,12 +7,17 @@ import {
   DRAFT_SAVE_AFTER_MS,
   DRAFT_SAVE_AT_LATEST_MS,
   DRAFT_SAVE_SECONDS,
+  droppedNote,
   fitDraft,
+  LOCAL_PREFIX,
+  packTestAnswers,
   packUnsaved,
   parseDraft,
   readUnsaved,
   restoreTestAnswers,
   saveDelay,
+  testAnswersKey,
+  unsavedKey,
 } from '~/domain/drafts';
 import { SCHEMA_TEMPLATES, type TextClassificationSchema } from '~/domain/task-schema';
 
@@ -61,7 +66,7 @@ describe('fitDraft', () => {
     const [first] = pairwise.dimensions;
     const stored = { preference: null, scores: { a: { [first.key]: 4 }, b: {} }, rationale: 'B ' };
     expect(validateAnswer(pairwise, {}, stored).ok).toBe(false);
-    expect(fitDraft(pairwise, {}, stored)).toEqual(stored);
+    expect(fitDraft(pairwise, {}, stored)).toEqual({ answer: stored, dropped: 0 });
   });
 
   it('drops pairwise parts the schema does not know', () => {
@@ -71,17 +76,22 @@ describe('fitDraft', () => {
       {},
       { preference: 'tie', scores: { a: { [first.key]: 9, gone: 3 }, b: 'x' }, rationale: 7 },
     );
-    expect(fitted).toEqual({ preference: null, scores: { a: {}, b: {} }, rationale: '' });
+    expect(fitted).toEqual({
+      answer: { preference: null, scores: { a: {}, b: {} }, rationale: '' },
+      dropped: 3,
+    });
   });
 
   it('keeps known labels in the order they were picked', () => {
     expect(fitDraft(multi, {}, { labels: ['negative', 'gone', 'positive', 'negative'] })).toEqual({
-      labels: ['negative', 'positive'],
+      answer: { labels: ['negative', 'positive'] },
+      dropped: 2,
     });
     expect(fitDraft(single, {}, { labels: ['negative', 'positive'] })).toEqual({
-      labels: ['negative'],
+      answer: { labels: ['negative'] },
+      dropped: 1,
     });
-    expect(fitDraft(single, {}, { labels: [] })).toEqual({ labels: [] });
+    expect(fitDraft(single, {}, { labels: [] })).toEqual({ answer: { labels: [] }, dropped: 0 });
   });
 
   it('keeps spans that still fit the text and the entity types', () => {
@@ -98,10 +108,13 @@ describe('fitDraft', () => {
     });
     // overlapping spans replace each other, as they do while labeling
     expect(fitted).toEqual({
-      spans: [
-        { start: 0, end: 3, label: 'PERSON' },
-        { start: 17, end: 24, label: 'PERSON' },
-      ],
+      answer: {
+        spans: [
+          { start: 0, end: 3, label: 'PERSON' },
+          { start: 17, end: 24, label: 'PERSON' },
+        ],
+      },
+      dropped: 4,
     });
   });
 
@@ -118,18 +131,61 @@ describe('fitDraft', () => {
       ],
     };
     expect(fitDraft(bbox, {}, stored)).toEqual({
-      imageWidth: 640,
-      imageHeight: 480,
-      boxes: [{ x: 10, y: 20, w: 100, h: 50, label }],
+      answer: {
+        imageWidth: 640,
+        imageHeight: 480,
+        boxes: [{ x: 10, y: 20, w: 100, h: 50, label }],
+      },
+      dropped: 3,
     });
-    expect(fitDraft(bbox, {}, { boxes: [] })).toBeNull();
+    expect(fitDraft(bbox, {}, { boxes: [] })).toEqual({ answer: null, dropped: 0 });
   });
 
-  it('returns null for a draft of another kind or no draft at all', () => {
-    expect(fitDraft(single, {}, null)).toBeNull();
-    expect(fitDraft(single, {}, 'labels')).toBeNull();
-    expect(fitDraft(single, {}, { spans: [] })).toBeNull();
-    expect(fitDraft(ner, { text: 'x' }, { labels: ['positive'] })).toBeNull();
+  it('cuts boxes to the image and drops the ones the schema now refuses', () => {
+    const [label] = bbox.labels;
+    const strict = { ...bbox, minBoxSize: 20 };
+    const stored = {
+      imageWidth: 200,
+      imageHeight: 100,
+      boxes: [
+        { x: 10, y: 10, w: 15, h: 40, label }, // narrower than the new minimum
+        { x: -5, y: 50, w: 60, h: 80, label }, // hangs over two edges
+        { x: 190, y: 10, w: 40, h: 40, label }, // only 10 wide inside the image
+        { x: 300, y: 10, w: 40, h: 40, label }, // outside altogether
+        { x: 50, y: 20, w: 30, h: 30, label },
+      ],
+    };
+    const fitted = fitDraft(strict, {}, stored);
+    expect(fitted).toEqual({
+      answer: {
+        imageWidth: 200,
+        imageHeight: 100,
+        boxes: [
+          { x: 0, y: 50, w: 60, h: 50, label },
+          { x: 50, y: 20, w: 30, h: 30, label },
+        ],
+      },
+      dropped: 3,
+    });
+    // what is left can be handed in as it is
+    expect(validateAnswer(strict, {}, fitted.answer).ok).toBe(true);
+    expect(validateAnswer(strict, {}, stored).ok).toBe(false);
+  });
+
+  it('has no answer for a draft of another kind or no draft at all', () => {
+    const nothing = { answer: null, dropped: 0 };
+    expect(fitDraft(single, {}, null)).toEqual(nothing);
+    expect(fitDraft(single, {}, 'labels')).toEqual(nothing);
+    expect(fitDraft(single, {}, { spans: [] })).toEqual(nothing);
+    expect(fitDraft(ner, { text: 'x' }, { labels: ['positive'] })).toEqual(nothing);
+  });
+
+  it('says what was left out, in the words of the kind', () => {
+    expect(droppedNote(bbox, 0)).toBeNull();
+    expect(droppedNote(bbox, 1)).toMatch(/^One box from your draft no longer fits .* was left out/);
+    expect(droppedNote(bbox, 3)).toMatch(/^3 boxes from your draft no longer fit .* were left out/);
+    expect(droppedNote(ner, 2)).toMatch(/^2 spans /);
+    expect(droppedNote(single, 1)).toMatch(/^One label /);
   });
 });
 
@@ -138,23 +194,37 @@ describe('restoreTestAnswers', () => {
     { id: 'q1', data: { text: 'one' } },
     { id: 'q2', data: { text: 'two' } },
   ];
+  const ana = { user: 'ana', attempt: 1 };
   const stored = JSON.stringify({
-    attempt: 1,
+    ...ana,
     answers: { q1: { labels: ['positive'] }, q2: { spans: [] }, old: { labels: ['negative'] } },
   });
 
   it('brings back the answers of the same attempt for questions still in the test', () => {
-    expect(restoreTestAnswers(single, tasks, 1, stored)).toEqual({ q1: { labels: ['positive'] } });
+    expect(restoreTestAnswers(single, tasks, ana, stored)).toEqual({
+      q1: { labels: ['positive'] },
+    });
+    expect(
+      restoreTestAnswers(single, tasks, ana, packTestAnswers(ana, { q2: { labels: [] } })),
+    ).toEqual({ q2: { labels: [] } });
   });
 
   it('ignores answers from an attempt that was already handed in', () => {
-    expect(restoreTestAnswers(single, tasks, 2, stored)).toEqual({});
+    expect(restoreTestAnswers(single, tasks, { ...ana, attempt: 2 }, stored)).toEqual({});
+  });
+
+  it('never hands one person the answers of another', () => {
+    expect(restoreTestAnswers(single, tasks, { user: 'ben', attempt: 1 }, stored)).toEqual({});
+    const unsigned = JSON.stringify({ attempt: 1, answers: { q1: { labels: ['positive'] } } });
+    expect(restoreTestAnswers(single, tasks, ana, unsigned)).toEqual({});
   });
 
   it('ignores a missing or broken value', () => {
-    expect(restoreTestAnswers(single, tasks, 0, null)).toEqual({});
-    expect(restoreTestAnswers(single, tasks, 0, '{"attempt":0,')).toEqual({});
-    expect(restoreTestAnswers(single, tasks, 0, '{"attempt":0,"answers":[]}')).toEqual({});
+    expect(restoreTestAnswers(single, tasks, ana, null)).toEqual({});
+    expect(restoreTestAnswers(single, tasks, ana, '{"attempt":1,')).toEqual({});
+    expect(
+      restoreTestAnswers(single, tasks, ana, '{"user":"ana","attempt":1,"answers":[]}'),
+    ).toEqual({});
   });
 });
 
@@ -162,25 +232,43 @@ describe('unsaved work of a closing page', () => {
   const server = { json: '{"labels":["positive"]}', seconds: 40 };
 
   it('is nothing when the server has it all', () => {
-    expect(packUnsaved(server, server)).toBeNull();
-    expect(packUnsaved({ json: '', seconds: 0 }, { json: '', seconds: 0 })).toBeNull();
-    expect(readUnsaved(null)).toBeNull();
+    expect(packUnsaved(server, server, 'ana')).toBeNull();
+    expect(packUnsaved({ json: '', seconds: 0 }, { json: '', seconds: 0 }, 'ana')).toBeNull();
+    expect(readUnsaved(null, 'ana')).toBeNull();
   });
 
   it('carries a changed answer and the working time to the next page', () => {
-    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server);
-    expect(readUnsaved(packed)).toEqual({ draft: { labels: ['negative'] }, seconds: 47 });
+    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server, 'ana');
+    expect(readUnsaved(packed, 'ana')).toEqual({ draft: { labels: ['negative'] }, seconds: 47 });
   });
 
   it('carries the time alone when the answer did not change', () => {
-    const packed = packUnsaved({ ...server, seconds: 55 }, server);
-    expect(readUnsaved(packed)).toEqual({ draft: null, seconds: 55 });
+    const packed = packUnsaved({ ...server, seconds: 55 }, server, 'ana');
+    expect(readUnsaved(packed, 'ana')).toEqual({ draft: null, seconds: 55 });
+  });
+
+  it('is not read by anyone but the user who left it', () => {
+    const packed = packUnsaved({ json: '{"labels":["negative"]}', seconds: 47 }, server, 'ana');
+    expect(readUnsaved(packed, 'ben')).toBeNull();
+    expect(readUnsaved('{"draft":"{\\"labels\\":[]}","seconds":5}', 'ana')).toBeNull();
+  });
+
+  it('files every copy under its user and under the prefix that sign-out clears', () => {
+    expect(unsavedKey('ana', '/work/a1/draft')).toBe('labeling-portal:unsaved:ana:/work/a1/draft');
+    expect(unsavedKey('ben', '/work/a1/draft')).not.toBe(unsavedKey('ana', '/work/a1/draft'));
+    expect(testAnswersKey('ana', 'p1')).toBe('labeling-portal:qualification:ana:p1');
+    for (const key of [unsavedKey('ana', '/x'), testAnswersKey('ana', 'p1')]) {
+      expect(key.startsWith(LOCAL_PREFIX)).toBe(true);
+    }
   });
 
   it('reads nothing from a broken value', () => {
-    expect(readUnsaved('{"draft":')).toBeNull();
-    expect(readUnsaved('[]')).toBeNull();
-    expect(readUnsaved('{"draft":"[1]","seconds":"x"}')).toEqual({ draft: null, seconds: 0 });
+    expect(readUnsaved('{"draft":', 'ana')).toBeNull();
+    expect(readUnsaved('[]', 'ana')).toBeNull();
+    expect(readUnsaved('{"user":"ana","draft":"[1]","seconds":"x"}', 'ana')).toEqual({
+      draft: null,
+      seconds: 0,
+    });
   });
 });
 

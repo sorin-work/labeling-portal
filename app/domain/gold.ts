@@ -67,6 +67,14 @@ export function parseGold(
 /** Default share of gold answers an annotator must match to count as accurate. */
 export const GOLD_PASS_SCORE = 0.8;
 
+/** Gold tasks an annotator must have answered before their accuracy can flag them. */
+export const MIN_GOLD_ATTEMPTS = 3;
+
+/** An annotator is flagged when their mean gold score is under the pass score. */
+export function isGoldFlagged(accuracy: number | null, attempts: number): boolean {
+  return accuracy !== null && attempts >= MIN_GOLD_ATTEMPTS && accuracy < GOLD_PASS_SCORE;
+}
+
 function jaccard(a: string[], b: string[]): number {
   const setA = new Set(a);
   const setB = new Set(b);

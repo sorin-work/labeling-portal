@@ -7,7 +7,7 @@ import { LabelingInterface } from '~/components/labeling';
 import { Alert, Button, Card } from '~/components/ui';
 import { useDraftSave } from '~/components/use-draft-save';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
-import { fitDraft } from '~/domain/drafts';
+import { droppedNote, fitDraft } from '~/domain/drafts';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { notFound } from '~/lib/http';
@@ -41,7 +41,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
   const fix = assignment.reviews.find((r) => r.decision === 'FIX');
   const schema = projectSchema(assignment.project);
+  // changes that were under way before a reload
+  const draft = fitDraft(schema, assignment.task.data, assignment.draft);
   return {
+    userId: user.id,
     mode: assignment.reviewStatus === 'FIXED' ? ('compare' as const) : ('revise' as const),
     corrected: (fix?.correctedAnswer ?? null) as Answer | null,
     id: assignment.id,
@@ -49,8 +52,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     schema,
     data: assignment.task.data as Record<string, unknown>,
     answer: assignment.answer as Answer,
-    // changes that were under way before a reload
-    draft: fitDraft(schema, assignment.task.data, assignment.draft),
+    draft: draft.answer,
+    draftNote: droppedNote(schema, draft.dropped),
     feedback: assignment.reviews[0]?.feedback ?? '',
   };
 }
@@ -75,18 +78,28 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect('/my-work?filter=returned');
 }
 
-export default function Revise({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * Keyed by submission, like the work page: going back and forth in the
+ * browser history between two sent-back submissions stays on this route, and
+ * without the key the first one's answer would be saved as the other's draft.
+ */
+export default function Revise(props: Route.ComponentProps) {
+  return <RevisePage key={props.loaderData.id} {...props} />;
+}
+
+function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
   // nothing is saved in compare mode: the answer there cannot change
   const draftState = useDraftSave({
     url: `/my-work/${loaderData.id}/draft`,
+    user: loaderData.userId,
     answer: value,
     restored: loaderData.draft !== null,
-    paused: navigation.formData != null,
+    handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
     onRecover: (unsaved) => {
-      const fitted = fitDraft(schema, taskData, unsaved.draft);
+      const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
       if (fitted) setValue(fitted);
     },
   });
@@ -146,6 +159,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
         </div>
       )}
       {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {loaderData.draftNote && <Alert tone="info">{loaderData.draftNote}</Alert>}
       <Card>
         <LabelingInterface schema={schema} data={taskData} value={value} onChange={setValue} />
       </Card>

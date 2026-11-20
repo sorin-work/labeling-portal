@@ -68,6 +68,20 @@ describe('pairwiseConsensus', () => {
   it('has no answer when votes split', () => {
     expect(pairwiseConsensus([vote('A', 4, 2), vote('B', 2, 4)]).answer).toBeNull();
   });
+
+  it('leaves out the scores of a dimension the schema no longer has', () => {
+    const old: PairwiseAnswer = {
+      preference: 'A',
+      scores: { a: { help: 4, tone: 5 }, b: { help: 2, tone: 1 } },
+      rationale: 'because',
+    };
+    const result = pairwiseConsensus([old, vote('A', 2, 4)], ['help']);
+    expect(result.answer).toEqual({
+      preference: 'A',
+      scores: { a: { help: 3 }, b: { help: 3 } },
+      rationale: '',
+    });
+  });
 });
 
 describe('nerConsensus', () => {

@@ -9,6 +9,7 @@ well people label and how much they agree. This page explains each number.
 | ------------ | ----------------------------------------------------------------------------- |
 | Submitted    | Tasks submitted, gold tasks included                                          |
 | Skipped      | Tasks skipped, with the reasons summarised under the table                    |
+| Reviewed     | Share of their submissions a reviewer has decided on, gold tasks not counted  |
 | Approval     | Approve decisions divided by all review decisions on their work               |
 | Sent back    | How often a reviewer returned their work with feedback                        |
 | QA score     | Average 1-5 quality score reviewers gave                                      |
@@ -16,8 +17,30 @@ well people label and how much they agree. This page explains each number.
 | Avg time     | Average active time per submission                                            |
 | Tasks / hour | Submissions divided by total active time                                      |
 
+Approval, sent back and QA score only describe the reviewed part of someone's
+work. With review sampling (below) or a backlog in the review queue that can
+be a small part, which is what the Reviewed column is for.
+
 Click a name for that person's recent work in the project. The table can be
 sorted by any column and downloaded as CSV.
+
+## Review sampling
+
+A project with review on reviews every submission unless "Share to review"
+in its settings is below 100. Then, for each new submission:
+
+1. Until ten of the annotator's submissions in the project have gone to
+   review, it is reviewed. Nobody's first work goes unseen.
+2. If the annotator is flagged ⚑ in the table above, it is reviewed.
+3. Otherwise chance decides, with the configured share as the probability.
+
+A share of 0 keeps only the first two rules. The outcome is decided once, at
+submission, and never changes: the review page says why a submission is in
+the queue, and the task page marks work that was accepted without review.
+Work that is not picked counts as accepted straight away, completes its task
+like approved work and is paid the same. Sent-back work always comes back to
+a reviewer. Gold tasks are scored instead of reviewed, with or without
+sampling.
 
 ## Gold scores
 
@@ -55,7 +78,7 @@ When a task has as many accepted answers as the project's overlap, they are
 merged:
 
 - Classification and pairwise: majority vote (no answer on a tie); rubric
-  scores are averaged.
+  scores are averaged, for the dimensions the rubric has now.
 - Entities: spans marked by a majority of annotators.
 - Boxes: boxes clustered by label and overlap; clusters drawn by a majority are
   averaged.

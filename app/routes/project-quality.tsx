@@ -34,6 +34,7 @@ type SortKey =
   | 'name'
   | 'submitted'
   | 'skipped'
+  | 'reviewedShare'
   | 'approvalRate'
   | 'sentBack'
   | 'avgQaScore'
@@ -45,6 +46,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'name', label: 'Name' },
   { key: 'submitted', label: 'Submitted' },
   { key: 'skipped', label: 'Skipped' },
+  { key: 'reviewedShare', label: 'Reviewed' },
   { key: 'approvalRate', label: 'Approval' },
   { key: 'sentBack', label: 'Sent back' },
   { key: 'avgQaScore', label: 'QA score' },
@@ -164,6 +166,12 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                   </td>
                   <td className="px-4 py-2 text-right">{a.submitted}</td>
                   <td className="px-4 py-2 text-right">{a.skipped}</td>
+                  <td
+                    className="px-4 py-2 text-right"
+                    title={`A reviewer decided on ${a.reviewedSubmissions} of ${a.reviewable} submissions (gold tasks not counted)`}
+                  >
+                    {pct(a.reviewedShare)}
+                  </td>
                   <td className="px-4 py-2 text-right">{pct(a.approvalRate)}</td>
                   <td className="px-4 py-2 text-right">{a.sentBack}</td>
                   <td className="px-4 py-2 text-right">{a.avgQaScore?.toFixed(1) ?? '–'}</td>

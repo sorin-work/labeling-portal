@@ -1,4 +1,5 @@
 import { EmptyState } from '~/components/ui';
+import { describeSchemaChange } from '~/domain/schema-diff';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { prisma } from '~/lib/db.server';
@@ -17,8 +18,15 @@ type Detail = Record<string, unknown> | null;
 function describe(action: string, detail: Detail, names: Map<string, string>): string {
   const d = detail ?? {};
   switch (action) {
-    case 'project.settings':
-      return 'updated the project settings';
+    case 'project.settings': {
+      // `changes` maps a field to [before, after]; the schema pair is diffed
+      // again here instead of storing the list of changes
+      const changes = (d.changes ?? {}) as Record<string, unknown>;
+      const schema = describeSchemaChange(changes.schema);
+      return schema.length
+        ? `changed the task schema: ${schema.join(', ')}`
+        : 'updated the project settings';
+    }
     case 'project.status':
       return `changed the status from ${String(d.from).toLowerCase()} to ${String(d.to).toLowerCase()}`;
     case 'project.duplicated':

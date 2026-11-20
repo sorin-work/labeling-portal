@@ -12,8 +12,8 @@ What the app does today is in the [README](README.md) and the notes under
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
-- **Shipped**: built. What was done, and how it differs from the plan, is at
-  the end of this file.
+- **Shipped**: built. The notes at the end say what was built, how it differs
+  from the design and what is still open.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
@@ -35,12 +35,12 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | #   | Item                                         | Group   | Area          | Size | Depends on |
 | --- | -------------------------------------------- | ------- | ------------- | ---- | ---------- |
 | 1   | Drafts that survive a reload                 | Shipped | labeling      | S    | -          |
-| 2   | Safe schema edits once work exists           | Next    | projects      | S    | -          |
+| 2   | Safe schema edits once work exists           | Shipped | projects      | S    | -          |
 | 3   | Hotkeys for every action                     | Next    | labeling      | M    | -          |
-| 4   | Review sampling and reviewer reservations    | Next    | review        | M    | -          |
+| 4   | Review sampling and reviewer reservations    | Shipped | review        | M    | -          |
 | 5   | Earnings page and rates frozen at submission | Next    | payouts       | M    | -          |
 | 6   | More import and export formats               | Next    | import/export | M    | -          |
-| 7   | Scheduled backups                            | Next    | ops           | S    | -          |
+| 7   | Scheduled backups                            | Shipped | ops           | S    | -          |
 | 8   | Accessibility pass                           | Next    | ui            | M    | -          |
 | 9   | Disputes on review decisions                 | Later   | review        | M    | -          |
 | 10  | Gold tasks: add, fix and rescore             | Later   | quality       | M    | -          |
@@ -54,58 +54,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
 ## Next
-
-### 2. Safe schema edits once work exists
-
-The settings form lets a manager change anything in the task schema at any
-time. `parseProjectForm` only checks that the JSON is a valid schema, and
-`updateProject` writes `kind` and `schema` straight to the row. Removing a
-label that 500 answers use, renaming `textField` after the import, or turning
-a classification project into a box project all save without a word.
-Afterwards review, consensus and export read the old answers with the new
-schema.
-
-- A pure `diffSchema(before, after)` in a new `domain/schema-diff.ts` that
-  returns a list of changes, each marked safe or breaking:
-  - the kind: breaking as soon as the project has a task;
-  - field names (`textField`, `promptField`, `responseAField`,
-    `responseBField`, `imageField`): breaking once tasks exist, because the
-    imported rows only have the old field;
-  - labels, entity types, box labels: adding is safe, removing or renaming is
-    breaking when a stored answer uses the name;
-  - `multiple` from true to false: breaking when an answer has two labels;
-  - `allowTie` from true to false: breaking when an answer is a tie;
-  - rubric dimensions: adding one is breaking once answers exist. Old answers
-    have no score for it, `pairwiseConsensus` can average a missing score as
-    0, and `validatePairwise` refuses a reviewer's fix of an old answer until
-    the new dimension is scored too. Removing one only orphans numbers and
-    can be allowed with a warning;
-  - `minRationaleLength`, `minBoxSize`, colours, descriptions: safe.
-- Whether a name is in use needs the stored answers: `Assignment.answer`,
-  `Review.correctedAnswer`, `Task.goldAnswer`, `Task.consensus` and
-  `QualificationAttempt.answers`. A `schemaUsage(projectId)` in
-  `models/projects.server.ts` can count them with one `$queryRaw` over the
-  JSON columns.
-- The `routes/project-settings.tsx` action answers 400 with `errors.schema`
-  listing what breaks and how many answers are affected. Safe changes save as
-  today. `ProjectForm` already runs `parseTaskSchema` while typing; it can run
-  the diff against the saved schema as well and show it before the save.
-- The way out for a real redesign exists: "Duplicate" (`duplicateProject`)
-  copies the setup into a new draft without tasks. The error should say so.
-- Record the change in the `project.settings` activity entry, whose `detail`
-  is empty today, as `detail.changes.schema = [before, after]` with the two
-  schemas as JSON. This is the one shape for settings changes, a map from
-  field name to `[before, after]`, and item 15 uses it for every other field.
-  The list from `diffSchema` is not stored: the activity page runs the diff on
-  the pair when it describes the entry.
-- Tricky: tasks and answers are separate checks. A draft project with imported
-  tasks and no answers can still be broken by a field rename.
-- Undecided: a "rename this label everywhere" action that rewrites the stored
-  answers in one transaction. Useful, but it touches five JSON columns; I
-  would leave it out of the first version. Also whether an admin may force a
-  breaking change. I lean towards no.
-- Tests: unit tests for `diffSchema` for every kind; integration tests in
-  `tests/integration/projects.test.ts` for a blocked and an allowed save.
 
 ### 3. Hotkeys for every action
 
@@ -173,60 +121,6 @@ shows.
   walk through the pairwise groups, and for the "is this text entry" rule as a
   pure function. Key handling inside components cannot be tested until item 8
   adds a DOM test setup, so keep the logic outside the components.
-
-### 4. Review sampling and reviewer reservations
-
-Two gaps in the review queue. First, `reviewRequired` is all or nothing: every
-submission waits for a reviewer, or none does. With annotators I trust I want
-to review a share. Second, the queue hands the same submission to everyone:
-`nextPendingReview` returns the oldest pending row to each reviewer who
-presses "Start reviewing", and the slower one gets "Someone already reviewed
-this submission" (the 409 in `routes/review.tsx`) after doing the work.
-
-Sampling:
-
-- Data: `reviewSamplePercent Int @default(100)` on `Project`, used when
-  `reviewRequired` is on. It needs a field in `ProjectForm` and
-  `projectFormSchema`, and a line in `createProject`, `updateProject` and
-  `duplicateProject`.
-- `submitAssignment` in `models/queue.server.ts` chooses between `PENDING` and
-  `NOT_REQUIRED` from `input.reviewRequired && !task.isGold`. The draw goes
-  there. Pass the random function in, the way `now` is passed in, so tests can
-  fix it.
-- Work that is not sampled is accepted at once, so `refreshTaskStatus` has to
-  run for it. Today it only runs when the project has review switched off.
-  Items 1 and 5 add their own lines to `submitAssignment`; the three changes
-  do not depend on each other.
-- Tricky: new annotators. With a flat 10% somebody's first thirty submissions
-  may never be seen. Always review an annotator's first ten submissions in a
-  project, and everything from annotators the quality page flags (`flagged` in
-  `models/quality.server.ts`: gold accuracy under `GOLD_PASS_SCORE`).
-- Tricky: decide once. Work that was sent back and resubmitted always returns
-  to `PENDING` (`resubmitAssignment` does that already).
-- The quality page should show what share of each annotator's work was
-  reviewed, or the approval rate reads as if it covered everything.
-
-Reservations:
-
-- Data: `reviewHeldById` and `reviewHeldAt` on `Assignment`.
-  `nextPendingReview` takes the oldest pending submission that nobody else
-  holds (holds older than 15 minutes do not count) and marks it in the same
-  statement, with `FOR UPDATE SKIP LOCKED` in a `$queryRaw`. `claimNextTask`
-  locks task rows for the same reason.
-- "Start reviewing" is a link to `?next=1` handled in the loader of
-  `routes/project-review.tsx`. Reserving is a write, so it becomes a POST, like
-  the claim in `routes/project-work.tsx`.
-- The list (`listPendingReviews`) shows who holds a row. Opening a held
-  submission directly still works and says who is on it. The action keeps its
-  `reviewStatus !== 'PENDING'` check as the last line of defence.
-- `recordReview` clears the hold. Abandoned holds just age out; there is no
-  background job in this app.
-- Undecided: letting a manager pull an accepted, unsampled submission into
-  review later as a spot check. I lean towards leaving it for a follow-up.
-- Tests: `tests/integration/review.test.ts`: sampled and unsampled with a
-  fixed random function, the first-ten rule, the task completes when unsampled
-  work fills it, and two reviewers asking at the same moment get different
-  submissions (the queue tests do the same with `Promise.all`).
 
 ### 5. Earnings page and rates frozen at submission
 
@@ -333,35 +227,6 @@ ordinary JSON array is rejected line by line ("Not valid JSON").
 - Tests: `tests/unit/export.test.ts` and `tests/unit/import.test.ts` for the
   writers and readers, `tests/integration/export.test.ts` for the downloads.
   `docs/import-export.md` gets the new formats.
-
-### 7. Scheduled backups
-
-Everything lives in the `db-data` volume of `docker-compose.yml` and there is
-no backup. The label export is no substitute: it leaves out reviews, gold
-answers, pay data, accounts and project settings.
-
-- A `backup` service behind a compose profile, using the same
-  `postgres:17-alpine` image as `db`, that runs `pg_dump --format=custom` once
-  a day into a mounted folder and keeps the last N dumps. The script goes in
-  `docker/backup.sh` next to `entrypoint.sh`. `docker compose run --rm backup`
-  should take one dump right away.
-- A "Backup and restore" section in the README with the restore command. An
-  older dump restored under a newer app is fine: `docker/entrypoint.sh` runs
-  `prisma migrate deploy` on start.
-- A restore that is never tested is not a backup. Add a step to
-  `.github/workflows/ci.yml` after the tests: put the demo data into the
-  database (`npm run db:seed`; the tests truncate every table as they go, so
-  little is left in it), dump it with the script, restore the dump into a
-  scratch database and compare the row count of every table.
-- Tricky: the runner's own `pg_dump` can be older than the server and then
-  refuses to dump it. Run the tools from the same image, either with
-  `docker exec` in the service container (`job.services.postgres.id`) or with
-  `docker run --network host postgres:17-alpine`.
-- Tricky: a dump holds password hashes and personal data. Create the files
-  readable by their owner only, say so in the README, and add the folder to
-  `.gitignore` and `.dockerignore`.
-- Undecided: cron inside a container is clumsy. A shell loop with `sleep` is
-  probably enough for one dump a day.
 
 ### 8. Accessibility pass
 
@@ -1028,16 +893,75 @@ is hidden or closed and when the page is left, and a reload starts from there.
 The page body is keyed by assignment id, so nothing carries over to the next
 task. Revising sent-back work keeps a draft in the same column, and the
 qualification test keeps its answers in `sessionStorage`. Different from the
-plan: the save is a plain `fetch` to two resource routes
+design: the save is a plain `fetch` to two resource routes
 (`POST /work/:assignmentId/draft`, `POST /my-work/:assignmentId/draft`)
 instead of an `intent=draft` branch called through `useFetcher`, because a
-fetcher whose request fails puts the error page in place of the task. A save
-without a changed answer carries working time only, so a tab that was only
-looked at cannot overwrite the draft. A stored draft is fitted to the task
-schema when it is read back, a claim that runs out of time drops its draft
-too, and because a reload overtakes the closing page's save, that page also
-leaves its unsaved work in `sessionStorage`. The details are in
+fetcher whose request fails puts the error page in place of the task. The two
+routes check the origin of the request themselves. A save without a changed
+answer carries working time only, so a tab that was only looked at cannot
+overwrite the draft. A stored draft is fitted to the task schema when it is
+read back, and the page says what was left out. A claim that runs out of time
+drops its draft too. Because a reload overtakes the closing page's save, that
+page also leaves its unsaved work in `sessionStorage`, filed under the user
+and removed on sign-out. The details are in
 [docs/architecture.md](docs/architecture.md). Still open: a crash can lose the
 last seconds before it; a claim that ran out does not hand its draft to the
 next claim of the same task; time spent revising is not counted (item 5); the
 reset between tasks has no test until the DOM test setup of item 8.
+
+### 2. Safe schema edits once work exists
+
+`diffSchema` in `domain/schema-diff.ts` lists what an edit changes, and
+`updateProject` refuses the save when a change would break stored work: 400
+with `errors.schema`, which counts the tasks or answers affected and points to
+"Duplicate project". The check and the write share one transaction, with the
+counts from `schemaUsage`. The settings form shows the same diff while typing,
+and a saved edit is logged as `detail.changes.schema = [before, after]`, which
+the activity tab words by running the diff again. Different from the design: a
+new rubric dimension is refused only while an answer with scores has none for
+it, so a dimension removed by mistake can be put back, and consensus now
+averages only the dimensions of the current rubric, so the scores a removed
+dimension leaves behind stay out of it. Left out: "rename this label
+everywhere" and a forced save for admins. Still open: the check covers what is
+stored when the save runs. An answer validated against the old schema in the
+same instant can land after it, and closing that needs every place that stores
+an answer to hold the project row while it validates and writes.
+
+### 4. Review sampling and reviewer reservations
+
+A project has a "Share to review" (`reviewSamplePercent`, 0 to 100).
+`submitAssignment` decides once, with the random function passed in, and
+stores the outcome in `Assignment.reviewSample`; work that is not drawn is
+accepted at once and can complete its task. New and flagged annotators are
+always reviewed, and the quality page shows the reviewed share of each
+annotator's work. "Start reviewing" is a POST that reserves the oldest free
+submission in one statement with `FOR UPDATE SKIP LOCKED`, holds lapse after
+15 minutes unless the review page renews them, which it does while the
+reviewer works, and a decision is one conditional write. Different from the
+design: the outcome of the draw has its own column, the first-ten rule counts
+submissions that went to review (work done while review was off does not use
+it up), a submission opened from the list is reserved with a button before
+the form appears, and deciding on a submission another reviewer holds is
+refused. Still open: pulling an accepted, unsampled submission into review
+later as a spot check, and releasing or taking over a hold before it lapses.
+
+### 7. Scheduled backups
+
+A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
+`docker/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
+`./backups` once a day, keeping the newest seven. It is a shell loop with
+`sleep`, not cron. The age of a dump and the order of pruning come from the
+time in the file name, never from modification times, and after every attempt
+the loop pauses before the next. Different from the design: a dump right away
+is `docker compose run --rm backup once`, because without an argument the
+service is the daily loop, and that makes a dump at the start only when the
+newest one is older than a day. A restore is part of the script
+(`backup restore <file>`), loading the dump into a new database and swapping
+it with the old one in one transaction, so that a database with the name
+exists at every moment. Dumps dated in the future are never pruned and do not
+count towards the seven. CI runs `docker/check-backup.sh` after
+the tests, with the demo data in: the loop and the pruning against made-up
+clocks, then a real dump, a restore into a scratch database and the row
+counts. Still open: the dumps are not encrypted and stay on the same disk
+unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
+apart from the service's log.

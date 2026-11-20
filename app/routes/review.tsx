@@ -1,25 +1,43 @@
 import type { Prisma } from '@prisma/client';
-import { useRef, useState } from 'react';
-import { data, Form, Link, redirect, useNavigation } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { data, Form, Link, redirect, useFetcher, useNavigation } from 'react-router';
 
 import { LabelingInterface } from '~/components/labeling';
 import { useHotkeys } from '~/components/labeling/use-hotkeys';
 import { Alert, Button, Card, cx } from '~/components/ui';
-import { formatDuration } from '~/components/use-active-time';
+import { formatDuration, useLastInput } from '~/components/use-active-time';
 import { parseAnswerJson, validateAnswer, type Answer } from '~/domain/answers';
 import { parseReviewForm } from '~/domain/review-form';
+import {
+  activeHold,
+  HOLD_RENEW_MINUTES,
+  REVIEW_HOLD_MINUTES,
+  shouldRenewHold,
+} from '~/domain/review-hold';
+import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, formatRelative } from '~/lib/format';
 import { forbidden, notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
-import { nextPendingReview, recordReview } from '~/models/reviews.server';
+import {
+  holdReview,
+  recordReview,
+  renewReviewHold,
+  reserveNextReview,
+  type ReviewRefusal,
+} from '~/models/reviews.server';
 
 import type { Route } from './+types/review';
 
 export function meta() {
   return [{ title: 'Review submission · Labeling Portal' }];
 }
+
+const REFUSED: Record<ReviewRefusal, string> = {
+  not_pending: 'Someone already reviewed this submission.',
+  held: `Another reviewer has reserved this submission. It frees up if they do not decide within ${REVIEW_HOLD_MINUTES} minutes.`,
+};
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const current = await requireUser(request);
@@ -28,6 +46,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     include: {
       task: true,
       user: { select: { name: true } },
+      reviewHeldBy: { select: { name: true } },
       reviews: {
         orderBy: { createdAt: 'desc' },
         include: { reviewer: { select: { name: true } } },
@@ -36,11 +55,14 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   });
   if (!assignment || assignment.status !== 'SUBMITTED') throw notFound('Submission not found');
   const project = await requireProject(current, assignment.projectId, 'review');
+  const hold = activeHold(assignment, current.user.id, new Date());
 
   return {
     project: { id: project.id, name: project.name },
     schema: projectSchema(project),
     ownWork: assignment.userId === current.user.id,
+    hold: hold && { reviewer: hold.reviewer, mine: hold.mine, until: hold.until },
+    sampleNote: assignment.reviewSample ? SAMPLE_LABELS[assignment.reviewSample] : null,
     assignment: {
       id: assignment.id,
       annotator: assignment.user.name,
@@ -74,10 +96,25 @@ export async function action({ request, params }: Route.ActionArgs) {
     throw forbidden('You cannot review your own submission.');
   }
   if (assignment.reviewStatus !== 'PENDING') {
-    return data({ error: 'Someone already reviewed this submission.' }, { status: 409 });
+    return data({ error: REFUSED.not_pending }, { status: 409 });
   }
 
   const form = await request.formData();
+  if (form.get('intent') === 'hold') {
+    const held = await holdReview(assignment.id, current.user.id);
+    if (!held.ok) return data({ error: REFUSED[held.error] }, { status: 409 });
+    return redirect(`/review/${assignment.id}`);
+  }
+  // The page posts this while the reviewer is working. When the hold is no
+  // longer theirs the page reloads its data and shows who has it now.
+  if (form.get('intent') === 'renew') {
+    const renewed = await renewReviewHold(assignment.id, current.user.id);
+    return data({ error: null }, { status: renewed ? 200 : 409 });
+  }
+
+  // a decision that does not validate below still shows the reviewer is at
+  // work, so their hold starts over; a stored decision clears it
+  await renewReviewHold(assignment.id, current.user.id);
   const parsed = parseReviewForm(form);
   if (!parsed.ok) return data({ error: parsed.error }, { status: 400 });
 
@@ -94,8 +131,12 @@ export async function action({ request, params }: Route.ActionArgs) {
     correctedAnswer = checked.answer as Prisma.InputJsonValue;
   }
 
-  await recordReview(assignment.id, current.user.id, { ...parsed.value, correctedAnswer });
-  const next = await nextPendingReview(assignment.projectId, current.user.id);
+  const recorded = await recordReview(assignment.id, current.user.id, {
+    ...parsed.value,
+    correctedAnswer,
+  });
+  if (!recorded.ok) return data({ error: REFUSED[recorded.error] }, { status: 409 });
+  const next = await reserveNextReview(assignment.projectId, current.user.id);
   return redirect(next ? `/review/${next.id}` : `/projects/${assignment.projectId}/review?done=1`);
 }
 
@@ -104,6 +145,36 @@ const DECISION_STYLE: Record<string, string> = {
   SEND_BACK: 'text-amber-700',
   FIX: 'text-sky-700',
 };
+
+/**
+ * Keeps the reviewer's hold alive while they work on the page, and returns a
+ * function that renews it at once (starting a fix is the long case).
+ */
+function useHoldRenewal(holding: boolean) {
+  const fetcher = useFetcher();
+  const lastInput = useLastInput();
+  // the timer below must not start over on every render, so it goes through a
+  // ref to whatever the fetcher's submit currently is
+  const submit = useRef(fetcher.submit);
+  useEffect(() => {
+    submit.current = fetcher.submit;
+  });
+  const renew = useCallback(() => submit.current({ intent: 'renew' }, { method: 'post' }), []);
+
+  useEffect(() => {
+    if (!holding) return;
+    const timer = window.setInterval(() => {
+      const page = {
+        visible: document.visibilityState === 'visible',
+        lastInputAt: lastInput.current,
+      };
+      if (shouldRenewHold(page, Date.now())) renew();
+    }, HOLD_RENEW_MINUTES * 60_000);
+    return () => window.clearInterval(timer);
+  }, [holding, lastInput, renew]);
+
+  return renew;
+}
 
 /**
  * Approving, sending back or fixing moves on to the next submission without
@@ -115,7 +186,7 @@ export default function Review(props: Route.ComponentProps) {
 }
 
 function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { project, schema, assignment, task, history, ownWork } = loaderData;
+  const { project, schema, assignment, task, history, ownWork, hold, sampleNote } = loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -137,6 +208,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
     return false;
   });
   const pending = assignment.reviewStatus === 'PENDING';
+  const renewHold = useHoldRenewal(pending && !ownWork && hold?.mine === true);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
@@ -158,6 +230,7 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
           </span>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {sampleNote && <p className="text-sm text-slate-500">{sampleNote}.</p>}
         <Card>
           {fixing && (
             <p className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800">
@@ -177,11 +250,35 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
       <aside className="space-y-4">
         {ownWork ? (
           <Alert tone="info">This is your own submission, so someone else has to review it.</Alert>
-        ) : pending ? (
+        ) : !pending ? (
+          <Alert tone="info">Already reviewed.</Alert>
+        ) : hold && !hold.mine ? (
+          <Alert tone="info">
+            {hold.reviewer} is reviewing this submission. It frees up at{' '}
+            {formatDateTime(hold.until)} if they do not decide.
+          </Alert>
+        ) : !hold ? (
+          <Form
+            method="post"
+            className="space-y-3 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-slate-200"
+          >
+            <p className="text-slate-600">
+              Nobody is reviewing this submission. Reserve it so no other reviewer picks it up while
+              you look at it.
+            </p>
+            <Button name="intent" value="hold" disabled={navigation.state !== 'idle'}>
+              Review this submission
+            </Button>
+          </Form>
+        ) : (
           <Form
             method="post"
             className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
           >
+            <p className="text-xs text-slate-500">
+              Reserved for you until {formatDateTime(hold.until)}, and for longer while you keep
+              working on it.
+            </p>
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
                 Quality score <span className="font-normal text-slate-400">(keys 1-5)</span>
@@ -253,15 +350,20 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                   >
                     Send back
                   </Button>
-                  <Button type="button" variant="ghost" onClick={() => setFixing(true)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setFixing(true);
+                      renewHold();
+                    }}
+                  >
                     Fix it myself
                   </Button>
                 </>
               )}
             </div>
           </Form>
-        ) : (
-          <Alert tone="info">Already reviewed.</Alert>
         )}
         {history.length > 0 && (
           <Card>

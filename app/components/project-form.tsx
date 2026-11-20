@@ -2,6 +2,13 @@ import { useState } from 'react';
 import { Form } from 'react-router';
 
 import { renderMarkdown } from '~/domain/markdown';
+import { ALWAYS_REVIEW_FIRST } from '~/domain/review-sampling';
+import {
+  diffSchema,
+  REDESIGN_HINT,
+  type SchemaChange,
+  type SchemaUsage,
+} from '~/domain/schema-diff';
 import {
   KIND_LABELS,
   parseTaskSchema,
@@ -11,7 +18,7 @@ import {
 
 import { MarkdownBody } from './markdown';
 
-import { Alert, Button, Field, Input } from './ui';
+import { Alert, Button, cx, Field, Input } from './ui';
 
 export type ProjectFormDefaults = {
   name: string;
@@ -21,6 +28,7 @@ export type ProjectFormDefaults = {
   overlap: number;
   timeLimitMinutes: number;
   reviewRequired: boolean;
+  reviewSamplePercent: number;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -35,6 +43,7 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   overlap: 1,
   timeLimitMinutes: 30,
   reviewRequired: true,
+  reviewSamplePercent: 100,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -44,13 +53,47 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
 const textareaClass =
   'block w-full rounded-md border-0 px-3 py-2 font-mono text-sm shadow-sm ring-1 ring-slate-300 focus:ring-2 focus:ring-indigo-600';
 
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const CHANGE_STYLE: Record<SchemaChange['impact'], string> = {
+  safe: 'text-slate-600',
+  warning: 'text-amber-700',
+  breaking: 'text-rose-600',
+};
+
+/** What the typed schema changes compared with the saved one, before the save. */
+function SchemaChanges({ changes }: { changes: SchemaChange[] }) {
+  if (changes.length === 0) return null;
+  const blocked = changes.some((change) => change.impact === 'breaking');
+  return (
+    <div className="rounded-md p-3 text-xs ring-1 ring-slate-200" aria-live="polite">
+      <p className={cx('font-medium', blocked ? 'text-rose-600' : 'text-slate-700')}>
+        {blocked
+          ? 'This edit cannot be saved because it would break work that already exists:'
+          : 'Compared with the saved schema:'}
+      </p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {changes.map((change) => (
+          <li key={change.summary} className={CHANGE_STYLE[change.impact]}>
+            {capitalize(change.reason || change.summary)}.
+          </li>
+        ))}
+      </ul>
+      {blocked && <p className="mt-1 text-slate-600">{REDESIGN_HINT}</p>}
+    </div>
+  );
+}
+
 export function ProjectForm({
   defaults,
+  usage,
   errors,
   submitLabel,
   allowTemplates,
 }: {
   defaults: ProjectFormDefaults;
+  /** What stored work uses from the saved schema. Only an existing project has it. */
+  usage?: SchemaUsage;
   errors?: Record<string, string>;
   submitLabel: string;
   allowTemplates: boolean;
@@ -58,6 +101,9 @@ export function ProjectForm({
   const [schema, setSchema] = useState(defaults.schema);
   const [instructions, setInstructions] = useState(defaults.instructions);
   const checked = parseTaskSchema(schema);
+  const saved = usage ? parseTaskSchema(defaults.schema) : null;
+  const changes =
+    usage && saved?.ok && checked.ok ? diffSchema(saved.schema, checked.schema, usage) : [];
 
   return (
     <Form method="post" className="space-y-6">
@@ -111,6 +157,7 @@ export function ProjectForm({
         ) : (
           <p className="text-xs text-amber-700">{checked.errors[0]}</p>
         )}
+        <SchemaChanges changes={changes} />
       </div>
 
       <Field
@@ -141,7 +188,7 @@ export function ProjectForm({
         </div>
       </Field>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Annotators per task"
           htmlFor="overlap"
@@ -172,11 +219,31 @@ export function ProjectForm({
             defaultValue={defaults.timeLimitMinutes}
           />
         </Field>
-        <label className="flex items-center gap-2 self-center pt-4 text-sm text-slate-700">
-          <input type="checkbox" name="reviewRequired" defaultChecked={defaults.reviewRequired} />
-          Every submission needs review
-        </label>
       </div>
+
+      <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+        <legend className="px-1 text-sm font-medium text-slate-700">Review</legend>
+        <label className="flex items-center gap-2 self-center text-sm text-slate-700">
+          <input type="checkbox" name="reviewRequired" defaultChecked={defaults.reviewRequired} />
+          Submissions are reviewed before they count
+        </label>
+        <Field
+          label="Share to review (%)"
+          htmlFor="reviewSamplePercent"
+          error={errors?.reviewSamplePercent}
+          hint={`100 reviews everything. Below that the rest is accepted unseen, except each annotator's first ${ALWAYS_REVIEW_FIRST} submissions and all work of annotators flagged for low gold accuracy.`}
+        >
+          <Input
+            id="reviewSamplePercent"
+            name="reviewSamplePercent"
+            type="number"
+            min={0}
+            max={100}
+            required
+            defaultValue={defaults.reviewSamplePercent}
+          />
+        </Field>
+      </fieldset>
 
       <fieldset className="grid gap-4 rounded-md p-4 ring-1 ring-slate-200 sm:grid-cols-2">
         <legend className="px-1 text-sm font-medium text-slate-700">Qualification</legend>
