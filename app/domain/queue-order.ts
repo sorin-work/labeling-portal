@@ -11,18 +11,31 @@ export const MAX_GOLD_EVERY = 500;
 /**
  * After this many minutes without a submission in the project, the next task
  * an annotator gets counts as the first of a new session. Gold spacing never
- * makes that one a gold task.
+ * makes that one a gold task. The task after it is a draw like any other.
  */
 export const SESSION_GAP_MINUTES = 30;
 
 /**
- * With "about one gold task in every N", the number of regular tasks between
- * two gold tasks is drawn anew each time from this range, N on average. A
- * fixed N would make gold tasks easy to count out.
+ * "About one gold task in every N" as a draw without memory: each claim is a
+ * gold task with a chance of 1 in N, whatever came before. A schedule with a
+ * shortest and a longest gap would tell an annotator that the tasks right
+ * after a gold task are regular, and that one is certain after the longest
+ * gap. The draw comes from a hash keyed with the project's secret, so it is
+ * the same on a reload and cannot be worked out from anything an annotator
+ * sees.
+ *
+ * The cap keeps a lucky streak from running away: when `max` of the last
+ * `window` submissions were gold already, the next claim is regular. With
+ * twice the expected number it is rarely reached.
  */
-export function goldGapRange(goldEvery: number): { lo: number; hi: number } {
-  const spread = Math.floor(goldEvery / 2);
-  return { lo: Math.max(1, goldEvery - spread), hi: goldEvery + spread };
+export function goldDraw(goldEvery: number): {
+  /** a claim is gold when its 32-bit hash is below this */
+  below: number;
+  window: number;
+  max: number;
+} {
+  const window = 5 * goldEvery;
+  return { below: Math.floor(2 ** 32 / goldEvery), window, max: Math.min(10, window - 1) };
 }
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };

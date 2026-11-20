@@ -1,6 +1,6 @@
 import { Prisma, type Assignment, type Project } from '@prisma/client';
 
-import { goldGapRange, SESSION_GAP_MINUTES } from '~/domain/queue-order';
+import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
 import { prisma, utc } from '~/lib/db.server';
 
@@ -78,54 +78,80 @@ export type PickOptions = {
   userId: string;
   now: Date;
   /**
-   * What the shuffled order and the jitter of the gold spacing are derived
-   * from, together with the annotator's id. The project's id unless a test
-   * passes its own, so the order is the annotator's for good: a reload or a
-   * second tab gets the same task.
+   * The project's queue secret (`queueSecretFor`). The shuffled order and the
+   * gold draw are HMACs keyed with it, so nothing an annotator sees (ids,
+   * times, which of their tasks were gold) tells them what comes next.
    */
-  seed?: string;
+  secret: string;
   /** wait for tasks another annotator is claiming right now instead of passing over them */
   wait?: boolean;
 };
 
 /**
- * "Is a gold task due for this annotator?", as CTEs. It looks at their latest
- * submissions in the project, newest first, no further back than can matter:
- * gold is due once they have submitted as many regular tasks since their last
- * gold task as the gap for this round, which is drawn from `goldGapRange`
- * with the seed, the annotator and that last gold task. It is never due for
- * the first task of a session.
+ * The project's queue secret, made on first use for a project created after
+ * the migration. It stays on the server: it is in a table of its own, which
+ * no loader reads.
  */
-function goldDueCtes(options: Required<Omit<PickOptions, 'wait'>>, goldEvery: number): Prisma.Sql {
-  const { project, userId, now, seed } = options;
-  const { lo, hi } = goldGapRange(goldEvery);
+export async function queueSecretFor(
+  db: Prisma.TransactionClient,
+  projectId: string,
+): Promise<string> {
+  const read = () =>
+    db.$queryRaw<Array<{ secret: string }>>`
+      SELECT secret FROM "QueueSecret" WHERE "projectId" = ${projectId}`;
+  let rows = await read();
+  if (rows.length === 0) {
+    await db.$executeRaw`
+      INSERT INTO "QueueSecret" ("projectId") VALUES (${projectId})
+      ON CONFLICT ("projectId") DO NOTHING`;
+    rows = await read();
+  }
+  return rows[0].secret;
+}
+
+/** A 32-bit number from an HMAC of `text` keyed with the secret, as SQL. */
+function keyedHash(text: Prisma.Sql, secret: string): Prisma.Sql {
+  return Prisma.sql`('x' || substr(encode(hmac((${text})::text, ${secret}::text, 'sha256'), 'hex'), 1, 8))::bit(32)::bigint`;
+}
+
+/**
+ * "Is a gold task due for this annotator?", as CTEs. Each claim is a draw
+ * with a chance of 1 in N (`goldDraw`): an HMAC of the annotator and their
+ * latest submission or skip, keyed with the project's secret. So the answer
+ * is the same on a reload, new after every task they hand in or skip, and
+ * independent of what came before. It is never due for the first task of a
+ * session, nor when the cap of recent gold tasks is reached.
+ */
+function goldDueCtes(options: Omit<PickOptions, 'wait'>, goldEvery: number): Prisma.Sql {
+  const { project, userId, now, secret } = options;
+  const { below, window, max } = goldDraw(goldEvery);
   const sessionStart = addMinutes(now, -SESSION_GAP_MINUTES);
   return Prisma.sql`
     WITH recent AS (
-      SELECT a.id, a."submittedAt", g."isGold",
-             row_number() OVER (ORDER BY a."submittedAt" DESC, a.id DESC) AS rn
+      SELECT a."submittedAt", g."isGold"
       FROM "Assignment" a
       JOIN "Task" g ON g.id = a."taskId"
       WHERE a."userId" = ${userId} AND a."projectId" = ${project.id}
         AND a.status = 'SUBMITTED' AND a."submittedAt" IS NOT NULL
       ORDER BY a."submittedAt" DESC, a.id DESC
-      LIMIT ${hi + 1}
+      LIMIT ${window}
+    ),
+    latest AS (
+      SELECT COALESCE((
+        SELECT a.id FROM "Assignment" a
+        WHERE a."userId" = ${userId} AND a."projectId" = ${project.id}
+          AND a.status IN ('SUBMITTED', 'SKIPPED')
+        ORDER BY a."claimedAt" DESC, a.id DESC
+        LIMIT 1
+      ), '') AS id
     ),
     spacing AS (
-      SELECT (since >= gap AND NOT fresh) AS due
-      FROM (
-        SELECT
-          COALESCE(
-            (SELECT min(r.rn) - 1 FROM recent r WHERE r."isGold"),
-            (SELECT count(*) FROM recent)
-          ) AS since,
-          ${lo}::bigint + (
-            ('x' || substr(md5(${seed} || ':' || ${userId} || ':' || COALESCE(
-              (SELECT r.id FROM recent r WHERE r."isGold" ORDER BY r.rn LIMIT 1), ''
-            )), 1, 8))::bit(32)::bigint % ${hi - lo + 1}::bigint
-          ) AS gap,
-          COALESCE((SELECT max(r."submittedAt") FROM recent r) <= ${utc(sessionStart)}, true) AS fresh
-      ) numbers
+      SELECT (
+        ${keyedHash(Prisma.sql`'gold:' || ${userId} || ':' || latest.id`, secret)} < ${below}
+        AND (SELECT count(*) FROM recent r WHERE r."isGold") < ${max}
+        AND NOT COALESCE((SELECT max(r."submittedAt") FROM recent r) <= ${utc(sessionStart)}, true)
+      ) AS due
+      FROM latest
     )`;
 }
 
@@ -138,9 +164,10 @@ function goldDueCtes(options: Required<Omit<PickOptions, 'wait'>>, goldEvery: nu
  *    so the queue never runs dry while something eligible is left.
  * 2. Batches that are not paused, the highest priority first, then in import
  *    order (by their first position).
- * 3. Inside a batch, by position or, in a shuffled project, by a hash of the
- *    seed, the annotator and the task: an order of their own for everyone,
- *    and always the same one for the same person.
+ * 3. Inside a batch, by position or, in a shuffled project, by an HMAC of
+ *    the annotator and the task keyed with the project's secret: an order of
+ *    their own for everyone, always the same one for the same person, and
+ *    not one they can work out.
  *
  * The three levels are nested lateral joins with `LIMIT 1`. PostgreSQL runs
  * them as nested loops and stops at the first row, so only the batches up to
@@ -154,7 +181,7 @@ function goldDueCtes(options: Required<Omit<PickOptions, 'wait'>>, goldEvery: nu
  * statement may have counted before one of them was committed.
  */
 export function nextTaskSql(options: PickOptions): Prisma.Sql {
-  const { project, userId, now, seed = project.id, wait = false } = options;
+  const { project, userId, now, secret, wait = false } = options;
   const lock = wait ? Prisma.sql`FOR UPDATE OF t` : Prisma.sql`FOR UPDATE OF t SKIP LOCKED`;
   const eligible = eligibleFor(userId, now, Prisma.sql`${project.overlap}`);
   const spaced = project.goldEvery !== null;
@@ -165,7 +192,7 @@ export function nextTaskSql(options: PickOptions): Prisma.Sql {
       ? Prisma.sql`
           SELECT t.id
           FROM (
-            SELECT s.id, md5(${seed} || ':' || ${userId} || ':' || s.id) AS shuffled
+            SELECT s.id, hmac('order:' || ${userId} || ':' || s.id, ${secret}::text, 'sha256') AS shuffled
             FROM "Task" s
             WHERE s."batchId" = b.id AND s.status = 'OPEN'
               ${spaced ? Prisma.sql`AND s."isGold" = c.gold` : Prisma.empty}
@@ -202,7 +229,7 @@ export function nextTaskSql(options: PickOptions): Prisma.Sql {
 
   if (!spaced) return inProject;
   return Prisma.sql`
-    ${goldDueCtes({ project, userId, now, seed }, project.goldEvery ?? 0)}
+    ${goldDueCtes({ project, userId, now, secret }, project.goldEvery ?? 0)}
     SELECT pick.id
     FROM (
       SELECT want.gold
@@ -216,7 +243,7 @@ export function nextTaskSql(options: PickOptions): Prisma.Sql {
 /**
  * Picks the task the annotator gets next and locks its row for the rest of
  * the transaction, or returns null when there is none. The same inputs and
- * the same seed give the same task.
+ * the same secret give the same task.
  */
 export async function pickNextTask(
   tx: Prisma.TransactionClient,
@@ -257,13 +284,12 @@ export async function countAvailable(
 
 /**
  * Gives the annotator their current claim, or claims the next available task.
- * Which task that is, is `nextTaskSql`. `seed` is for tests; see `PickOptions`.
+ * Which task that is, is `nextTaskSql`.
  */
 export async function claimNextTask(
   project: Project,
   userId: string,
   now = new Date(),
-  seed: string = project.id,
 ): Promise<ClaimResult> {
   await releaseExpiredClaims(project.id, now);
   const existing = await findActiveAssignment(project.id, userId, now);
@@ -276,7 +302,7 @@ export async function claimNextTask(
     if (!member?.qualifiedAt) return { ok: false, reason: 'unqualified' };
   }
 
-  const pick = { project, userId, now, seed };
+  const pick = { project, userId, now, secret: await queueSecretFor(prisma, project.id) };
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
     const outcome = await prisma.$transaction(async (tx) => {
       // The pick locks the task and passes over tasks that are being claimed
