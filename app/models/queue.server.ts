@@ -249,9 +249,9 @@ export function nextTaskSql(options: PickOptions): Prisma.Sql {
   if (!spaced) return inProject;
   return Prisma.sql`
     ${goldDueCtes({ project, userId, now, secret }, project.goldEvery ?? 0)}
-    SELECT pick.id
+    SELECT pick.id, c.wanted
     FROM (
-      SELECT want.gold
+      SELECT want.gold, (want.gold = spacing.due) AS wanted
       FROM spacing, (VALUES (true), (false)) AS want(gold)
       ORDER BY (want.gold = spacing.due) DESC
     ) c
@@ -268,8 +268,22 @@ export async function pickNextTask(
   tx: Prisma.TransactionClient,
   options: PickOptions,
 ): Promise<string | null> {
-  const rows = await tx.$queryRaw<Array<{ id: string }>>(nextTaskSql(options));
-  return rows[0]?.id ?? null;
+  return (await pickWithKind(tx, options))?.id ?? null;
+}
+
+/**
+ * The pick, and whether the task is of the kind gold spacing wanted for this
+ * claim (always true without spacing). Not the wanted kind means either that
+ * none of that kind is left for this annotator, or that every one of them is
+ * being claimed by someone else at this moment and was passed over.
+ */
+async function pickWithKind(
+  tx: Prisma.TransactionClient,
+  options: PickOptions,
+): Promise<{ id: string; wanted: boolean } | null> {
+  const rows = await tx.$queryRaw<Array<{ id: string; wanted?: boolean }>>(nextTaskSql(options));
+  const row = rows[0];
+  return row ? { id: row.id, wanted: row.wanted ?? true } : null;
 }
 
 /**
@@ -357,14 +371,28 @@ export async function claimNextTask(
   }
 
   const pick = { project, userId, now, secret: await queueSecretFor(prisma, project.id) };
+  // set when a pick found only the other kind than gold spacing wants
+  let waitForWanted = false;
   for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
     const outcome = await retryOnLockConflict(() =>
       prisma.$transaction(async (tx) => {
         // The pick locks the task and passes over tasks that are being claimed
         // by someone else right now. Only when that leaves nothing does it wait
-        // for those: a task with two slots may still have one for us.
-        const taskId =
-          (await pickNextTask(tx, pick)) ?? (await pickNextTask(tx, { ...pick, wait: true }));
+        // for those: a task with two slots may still have one for us. The
+        // waiting pick runs while this transaction holds no other lock, so
+        // two claims waiting for each other's rows cannot happen.
+        let taskId: string | null;
+        if (waitForWanted) {
+          taskId = await pickNextTask(tx, { ...pick, wait: true });
+        } else {
+          const first = await pickWithKind(tx, pick);
+          // Only the other kind than gold spacing wants: the wanted tasks may
+          // just be passed over because others are claiming them. Handing out
+          // the other kind would give a fresh annotator gold first and leave a
+          // regular slot unused, so let go of this one and wait for those.
+          if (first && !first.wanted) return 'wait' as const;
+          taskId = first?.id ?? (await pickNextTask(tx, { ...pick, wait: true }));
+        }
         if (!taskId) return 'empty' as const;
         // With the row locked, look again in a statement of its own. The pick
         // counted the task's claims in its snapshot, and a claim that was
@@ -385,6 +413,10 @@ export async function claimNextTask(
       }),
     );
     if (outcome === 'empty') return { ok: false, reason: 'empty' };
+    if (outcome === 'wait') {
+      waitForWanted = true;
+      continue;
+    }
     if (outcome) return { ok: true, assignment: outcome, resumed: false };
   }
   return { ok: false, reason: 'empty' };
