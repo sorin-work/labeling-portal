@@ -41,10 +41,12 @@ tests/integration/  loaders and actions against a real PostgreSQL
    the annotator can ask for more time once, which adds another full limit.
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
-3. On submit the answer is validated against the schema. Gold tasks are scored
-   immediately; other work goes to review, or is accepted straight away when
-   the project does not require review or reviews only a share and the draw
-   left this submission out (see "Review sampling" below).
+3. On submit the answer is validated against the schema. A text without
+   entities or an image without objects is an answer too and is submitted with
+   nothing marked. Gold tasks are scored immediately; other work goes to
+   review, or is accepted straight away when the project does not require
+   review or reviews only a share and the draw left this submission out (see
+   "Review sampling" below).
 4. Reviewers approve, send back with feedback, or fix the answer themselves.
    A submission is reserved for one reviewer while they look at it (see
    "Reviewer reservations" below). Sent-back work can be revised and
@@ -156,6 +158,48 @@ time counts on from the saved value.
   id). "Submit and next" and the browser's back button stay on the same
   route, and without the key React would keep the previous task's answer and
   seconds and save them as the next task's draft.
+
+## Keyboard shortcuts
+
+Every shortcut is a row in one key map, `app/domain/hotkeys.ts`: the keys of
+the work page and the review page (`PAGES`), the keys of each labeling
+interface (`INTERFACE_KEYS`) and the label keys (`1` to `9`, `0` for the
+tenth, then letters). The key handlers, the list behind `?` and the hints
+next to buttons are all made from these tables, so they cannot drift apart.
+A new shortcut is added there first; the unit tests fail when a key gets two
+meanings on one page.
+
+- **Modes.** A page key can be limited to a mode: `labeling` or `skipping` on
+  the work page, `viewing` or `fixing` on the review page. Each page names the
+  one mode in which the labeling interface gets its keys. That is why `a`
+  approves while a reviewer looks at a submission and picks response A while
+  they fix it, and why the label keys are off while the skip form is open.
+- **Label keys** skip the letters that mean something else somewhere (`a`,
+  `e`, `s` on the pages, `f` and `n` kept for the box interface), on every
+  page, so a label always has the same key.
+- **What is not a shortcut.** Anything with Ctrl, Cmd or Alt belongs to the
+  browser and to screen readers; only Ctrl or Cmd with Enter submits. A key
+  that is held down does not repeat. Nothing acts while the cursor is in a
+  text box (except submit and closing the skip form) or while the list of
+  shortcuts is open. A focused radio button keeps its arrow keys and Space,
+  a button its Enter.
+- **Layouts.** Digits are read from the physical key (`event.code`), so the
+  digit row works where it needs Shift, and the number pad works with Num
+  Lock on. Letters and `?` are taken as typed.
+- **One press, one action, one interface.** The page, the list and every
+  interface on the page listen on `window`. A press that one of them handled
+  is not offered to the others, and with several interfaces on a page (the
+  qualification test) the keys go to the one that was used last.
+- **Nothing is thrown away by a slip.** No single letter or digit skips,
+  releases or deletes: `s` only opens the skip form, releasing has no key, and
+  removing a box or a span takes Delete or Backspace on something that was
+  selected first.
+
+The hooks are in `app/components/labeling/use-hotkeys.ts` and only listen and
+pass on what the key map decides. Pairwise score rows are real radio groups:
+one tab stop each, the arrows choose, and a typed digit scores the row that
+has focus (or the first empty one) and moves to the next, A then B for each
+dimension.
 
 ## Quality
 
@@ -297,7 +341,9 @@ schema union:
    answers name labels in a new place, `schemaUsage` in
    `app/models/projects.server.ts` has to count them.
 6. `app/components/labeling/`: the interface, wired up in `index.tsx`.
-7. A `TaskKind` enum value and a migration.
+7. `app/domain/hotkeys.ts`: its keys in `INTERFACE_KEYS`, and how many label
+   keys it needs.
+8. A `TaskKind` enum value and a migration.
 
 ## Conventions
 
