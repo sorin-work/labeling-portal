@@ -2,7 +2,8 @@
 
 labeling-portal is a single React Router 7 app in framework mode: every page is
 rendered on the server, and loaders/actions talk to PostgreSQL through Prisma.
-There is no separate API service.
+There is no separate API service: the JSON API under `/api/v1/` is a few
+resource routes of the same app (see [api](api.md)).
 
 ```
 app/
@@ -526,6 +527,30 @@ turns an entry into the sentence both pages show, and covers every action.
   project tab for the managers of the project. Every read names the
   organisation, so no entry of another one comes back.
 - **How long**: for ever, until size is a problem.
+
+## JSON API
+
+- `apiRoute(access, handler)` in `app/lib/api.server.ts` marks a route as
+  part of the API. Only such routes take a token, and each one says whether
+  it reads or writes. It allows only `GET`/`HEAD` for reading and `POST` for
+  writing, refuses a read-only token for writing in one place, and turns
+  what the handler throws into JSON with its status (a redirect becomes 401).
+- `requireApiUser` in `app/lib/auth.server.ts` is the only code that reads a
+  token. It hashes it, refuses a revoked or expired one or one whose person
+  left the organisation, applies the per-token limit (`apiLimiter`) and
+  returns the same `CurrentUser` that `requireUser` returns, with the role
+  read from the membership on every request. It never reads the session.
+- The API does not have checks of its own. The import page and the API both
+  call `importFile` (`app/models/import.server.ts`), the download route and
+  the API both call `labelExport`, the task page and the task lookup both
+  call `requireTaskViewer`, and the project routes call `requireProject` and
+  `listProjects` like the pages.
+- `ApiToken` keeps the SHA-256 of a token (`tokenHash`, unique) and its first
+  characters, never the token. `lastUsedAt` is written at most once a minute.
+- An upload with `Idempotency-Key` stores the key on the batch
+  (`Batch.idempotencyKey`, unique per project). `createBatch` looks for it
+  inside its transaction, and a second upload that loses the race on the
+  unique key answers with the first one's batch.
 
 ## Backups
 

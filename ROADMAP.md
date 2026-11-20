@@ -49,7 +49,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 13  | Moving, resizing and zooming boxes           | Shipped | labeling      | M    | -          |
 | 14  | Image classification                         | Later   | labeling      | M    | -          |
 | 15  | Audit trail                                  | Shipped | ops           | M    | -          |
-| 16  | API tokens and a JSON API                    | Later   | api           | L    | -          |
+| 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
 | 17  | Faster on large projects                     | Maybe   | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Maybe   | labeling      | L    | -          |
 
@@ -162,64 +162,6 @@ text field.
   imports, labels, completes and exports an image project, and one in
   `tests/integration/quality.test.ts` that the quality page reports kappa for
   it.
-
-### 16. API tokens and a JSON API
-
-Everything goes through the browser. `docs/routes.md` says it plainly: there
-is no separate JSON API. A pipeline that wants to push tomorrow's tasks or
-fetch finished labels has to log in with a password, keep a session cookie and
-post forms. I want tokens that I create and revoke on the account page, and a
-small versioned API for the things a script needs.
-
-- Data: `ApiToken`: `userId`, `orgId`, `name`, `tokenHash` (SHA-256, unique),
-  `prefix` (to recognise it in the list), `readOnly`, `createdAt`,
-  `lastUsedAt`, `expiresAt`, `revokedAt`. The token is random bytes behind a
-  fixed prefix such as `lp_` and is shown once.
-- `requireApiUser(request)` in `lib/auth.server.ts` reads the
-  `Authorization: Bearer` header, looks the hash up and returns the same
-  `CurrentUser` shape as `requireUser`, so
-  `requireProject(current, id, capability)` and `can()` work unchanged. The
-  token has its user's current role; the membership is read on every request,
-  as `getCurrentUser` does.
-- Routes are listed by hand in `routes.ts`. New resource routes under
-  `api/v1/`, like `routes/healthz.ts`:
-  - `GET /api/v1/projects` and `/api/v1/projects/:id`, with the numbers from
-    `projectProgress`;
-  - `POST /api/v1/projects/:id/batches`: the body is a CSV or JSONL file. It
-    goes through `parseImport`, `createBatch` and `logActivity` like the form,
-    with the same limits, and answers with the same `{ line, message }`
-    errors;
-  - `GET /api/v1/projects/:id/export`: the same output as the download route.
-    Move the body of the loader in `routes/project-download.ts` into a
-    function both call;
-  - `GET /api/v1/projects/:id/tasks?externalId=`: status, consensus and
-    agreement of one task.
-- Tokens are managed on `/account`. `routes/account.tsx` has one form and no
-  `intent` today; it gets create, list and revoke.
-- `docs/api.md` with curl examples, and a corrected sentence in
-  `docs/routes.md`.
-- Tricky: errors. `requireUser` redirects to `/login`, and `requireProject`
-  throws text responses (`notFound`, `forbidden` in `lib/http.ts`). The API
-  answers JSON with 401, 403 and 404, never a redirect.
-- Tricky: keep the two ways in apart. No cookies on `/api` (a cookie there is
-  a cross-site request waiting to happen) and no tokens on pages.
-- Tricky: a retried upload doubles a batch. External ids are only unique
-  within one file (`seenIds` in `parseImport`), in the UI as well. Accept an
-  `Idempotency-Key` header, store it on `Batch` and answer a repeat with the
-  first result.
-- Tricky: writing `lastUsedAt` on every request is a write per read. Update it
-  at most once a minute.
-- Tricky: `makeRequest` in `tests/integration/helpers.ts` builds cookie and
-  form requests only. It needs headers and raw bodies. `MAX_UPLOAD_BYTES` is
-  exported from a route module (`routes/batch-new.tsx`) and should move next
-  to `MAX_IMPORT_ROWS`.
-- Rate limiting with the `RateLimiter` from `lib/rate-limit.server.ts`, keyed
-  by token. It is in memory and per process, like the login limiter.
-- Undecided: webhooks (a POST to a URL when a batch completes) so scripts need
-  not poll. I lean towards a later item. Scopes beyond `readOnly`: not yet.
-- Tests: a new `tests/integration/api.test.ts`: no token, revoked, expired,
-  read-only on a write, another organisation's project is 404, import and
-  export round trip, a repeated key creates one batch.
 
 ## Maybe
 
@@ -613,3 +555,22 @@ migration; only admins see `/audit`, project managers see their projects'
 tabs. Tasks settled in adjudication and sent there by hand (item 11) are
 recorded as well. Still open: entries are kept for ever, and someone with the
 database owner's rights can still drop the trigger.
+
+### 16. API tokens and a JSON API
+
+Tokens are made, listed and revoked on the account page; a token is shown
+once, stored as its SHA-256 and a prefix, has a name, an expiry, a last-used
+time (written at most once a minute) and is read-only unless writing is asked
+for. `requireApiUser` is the only code that reads one and returns the same
+`CurrentUser` as the pages, with the role read on every request, and
+`apiRoute` marks the routes that take a token, says whether each reads or
+writes, refuses a read-only token on a write in one place and answers JSON
+errors. The routes are the five of the design, plus a JSON 404 for anything
+else under `/api`. Each token may make 120 requests a minute. Different from
+the design: the import page and the API share `importFile`, the download and
+the API share `labelExport`, and the task page and the lookup share
+`requireTaskViewer`, so no check exists twice; the lookup lists every task
+with the external id, as ids are unique only within a file; a repeated
+`Idempotency-Key` returns the first batch without comparing the files; making
+and revoking tokens is in the audit trail. Still open: webhooks and scopes
+beyond read-only, and the limit is per process like the sign-in limit.

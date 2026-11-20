@@ -1,9 +1,11 @@
 # Routes and permissions
 
 All pages are server-rendered React Router routes. Pages that change data post
-a form back to the same URL (the route's `action`); there is no separate JSON
-API. The one exception is the draft autosave of the labeling pages, described
-at the end. The table lists who can open each page.
+a form back to the same URL (the route's `action`). Scripts use the JSON API
+under `/api/v1/` with a token instead, described in [api](api.md); pages take
+no token and the API takes no cookie. The draft autosave of the labeling
+pages, described at the end, is the other route that answers JSON. The table
+lists who can open each page.
 
 | Path                                | What                                     | Who                                         |
 | ----------------------------------- | ---------------------------------------- | ------------------------------------------- |
@@ -34,7 +36,7 @@ at the end. The table lists who can open each page.
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
 | `/people`                           | Organisation members, roles, passwords   | admin                                       |
 | `/audit`                            | The organisation's audit trail           | admin                                       |
-| `/account`                          | Change your password                     | signed in                                   |
+| `/account`                          | Change your password, API tokens         | signed in                                   |
 
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are

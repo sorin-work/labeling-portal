@@ -66,6 +66,9 @@ or fix the work.
   plus sign-ins, lockouts and downloads, on a project's activity tab and on
   `/audit` for admins with filters, pages and a CSV download. Entries are
   never changed or removed, and hold no passwords or answers
+- **JSON API** under `/api/v1/` with tokens made on the account page:
+  projects, batch upload with an `Idempotency-Key`, label export and task
+  lookup. See [docs/api.md](docs/api.md)
 - Needs-attention list for managers, demo data
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
