@@ -12,8 +12,11 @@ type Options = {
   seconds?: number;
   /** the page started from a stored draft */
   restored: boolean;
-  /** true while the page hands the work in, so that no save follows the submit */
-  paused: boolean;
+  /**
+   * This page's own submit, skip or release is on its way. No save may follow
+   * it. Other form posts (the sign-out in the layout) do not count.
+   */
+  handingIn: boolean;
   /** called once after a reload with what the closed page could not save in time */
   onRecover: (unsaved: UnsavedCopy) => void;
 };
@@ -39,6 +42,17 @@ function setLocal(key: string, value: string | null) {
   }
 }
 
+// the pages that are saving drafts right now, so that sign-out can reach them
+const savers = new Set<() => void>();
+
+/**
+ * For the sign-out button, before its request leaves: saves what the open
+ * task has not saved yet, while the session is still there.
+ */
+export function beforeSignOut() {
+  for (const saveNow of savers) saveNow();
+}
+
 /**
  * Saves the answer in progress to the server: shortly after the last change,
  * when the tab is hidden or closed, and when the page is left inside the app.
@@ -54,11 +68,11 @@ function setLocal(key: string, value: string | null) {
  * for a new task would store the previous task's answer.
  */
 export function useDraftSave(options: Options): DraftState {
-  const { url, answer, seconds = 0, restored, paused } = options;
+  const { url, answer, seconds = 0, restored, handingIn } = options;
   const json = useMemo(() => (answer ? JSON.stringify(answer) : ''), [answer]);
   const [state, setState] = useState<DraftState>(restored ? 'restored' : 'idle');
   // what the page holds now, and what the server has
-  const page = useRef({ json, seconds, paused, onRecover: options.onRecover });
+  const page = useRef({ json, seconds, handingIn, onRecover: options.onRecover });
   const server = useRef({ json, seconds });
   const unsaved = useRef<{
     changedAt: number | null;
@@ -70,7 +84,7 @@ export function useDraftSave(options: Options): DraftState {
   const localKey = `labeling-portal:unsaved:${url}`;
 
   useEffect(() => {
-    page.current = { json, seconds, paused, onRecover: options.onRecover };
+    page.current = { json, seconds, handingIn, onRecover: options.onRecover };
   });
 
   useEffect(() => {
@@ -87,7 +101,7 @@ export function useDraftSave(options: Options): DraftState {
   }, [localKey]);
 
   const save = useCallback(
-    async (leaving: boolean) => {
+    async (leavingPage: boolean) => {
       if (sending.current || stopped.current) return;
       const next = { json: page.current.json, seconds: page.current.seconds };
       const changed = next.json !== server.current.json;
@@ -100,7 +114,7 @@ export function useDraftSave(options: Options): DraftState {
       body.set('activeSeconds', String(next.seconds));
       sending.current = true;
       setState('saving');
-      const outcome = await post(url, body, leaving);
+      const outcome = await post(url, body, leavingPage);
       sending.current = false;
 
       if (outcome === 'saved') {
@@ -135,7 +149,9 @@ export function useDraftSave(options: Options): DraftState {
   }, [json]);
 
   useEffect(() => {
-    if (paused || state === 'saving' || state === 'stopped') return;
+    // while the hand-in is on its way a save would only race it; when it
+    // comes back with an error this runs again and saving goes on
+    if (handingIn || state === 'saving' || state === 'stopped') return;
     const wait = saveDelay(
       { ...unsaved.current, unsavedSeconds: seconds - server.current.seconds },
       Date.now(),
@@ -143,25 +159,44 @@ export function useDraftSave(options: Options): DraftState {
     if (wait === null) return;
     const timer = window.setTimeout(() => void save(false), wait);
     return () => window.clearTimeout(timer);
-  }, [json, seconds, paused, state, save]);
+  }, [json, seconds, handingIn, state, save]);
 
   useEffect(() => {
-    const flush = () => {
+    const path = window.location.pathname;
+    const keepLocal = () => setLocal(localKey, packUnsaved(page.current, server.current));
+
+    // The tab is hidden or the page is closed or reloaded. The local copy is
+    // what a reload reads; it is written even during a hand-in, in case that
+    // request does not get through.
+    const onHide = () => {
       if (stopped.current) return;
-      if (page.current.paused) return setLocal(localKey, null);
-      setLocal(localKey, packUnsaved(page.current, server.current));
-      void save(true);
+      keepLocal();
+      if (!page.current.handingIn) void save(true);
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') flush();
+      if (document.visibilityState === 'hidden') onHide();
+    };
+    const saveNow = () => {
+      if (!page.current.handingIn) void save(true);
     };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', flush);
+    window.addEventListener('pagehide', onHide);
+    savers.add(saveNow);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', flush);
-      // leaving for another page of the app keeps what is unsaved too
-      flush();
+      window.removeEventListener('pagehide', onHide);
+      savers.delete(saveNow);
+      if (stopped.current) return;
+      const handedIn = page.current.handingIn && window.location.pathname !== path;
+      if (handedIn) {
+        // the claim is over, and so is its draft
+        setLocal(localKey, null);
+      } else {
+        // Taken down on the same address while handing in: that request
+        // failed and the error page replaces the task. Keep the answer here.
+        if (page.current.handingIn) keepLocal();
+        void save(true);
+      }
     };
   }, [save, localKey]);
 

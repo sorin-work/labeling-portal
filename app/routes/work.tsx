@@ -205,8 +205,11 @@ function WorkPage({ loaderData, actionData }: Route.ComponentProps) {
     answer,
     seconds: activeSeconds,
     restored: assignment.draft !== null,
-    // submit, skip and release end the claim; a save after them would be refused
-    paused: navigation.formData != null,
+    // Submit, skip and release end the claim; a save after them would be
+    // refused. Asking for more time and the layout's sign-out do not.
+    handingIn:
+      navigation.formAction === `/work/${assignment.id}` &&
+      navigation.formData?.get('intent') !== 'extend',
     onRecover: (unsaved) => {
       const fitted = fitDraft(schema, task.data, unsaved.draft).answer;
       if (fitted) setAnswer(fitted);

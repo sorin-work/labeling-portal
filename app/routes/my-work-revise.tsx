@@ -77,7 +77,16 @@ export async function action({ request, params }: Route.ActionArgs) {
   return redirect('/my-work?filter=returned');
 }
 
-export default function Revise({ loaderData, actionData }: Route.ComponentProps) {
+/**
+ * Keyed by submission, like the work page: going back and forth in the
+ * browser history between two sent-back submissions stays on this route, and
+ * without the key the first one's answer would be saved as the other's draft.
+ */
+export default function Revise(props: Route.ComponentProps) {
+  return <RevisePage key={props.loaderData.id} {...props} />;
+}
+
+function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
   const { projectName, schema, data: taskData, answer, feedback, mode, corrected } = loaderData;
   const [value, setValue] = useState<Answer>(loaderData.draft ?? answer);
   const navigation = useNavigation();
@@ -86,7 +95,7 @@ export default function Revise({ loaderData, actionData }: Route.ComponentProps)
     url: `/my-work/${loaderData.id}/draft`,
     answer: value,
     restored: loaderData.draft !== null,
-    paused: navigation.formData != null,
+    handingIn: navigation.formAction === `/my-work/${loaderData.id}`,
     onRecover: (unsaved) => {
       const fitted = fitDraft(schema, taskData, unsaved.draft).answer;
       if (fitted) setValue(fitted);
