@@ -32,6 +32,13 @@ export type AnnotatorStats = {
   goldAccuracy: number | null;
   /** gold accuracy below the pass score after enough attempts */
   flagged: boolean;
+  /**
+   * spot checks of accepted work that no reviewer had seen; picked rather
+   * than drawn, so they are counted here and nowhere else
+   */
+  spotChecks: number;
+  /** of those, how many the reviewer would have sent back */
+  spotCheckSendBacks: number;
 };
 
 function mean(values: number[]): number | null {
@@ -44,6 +51,7 @@ type QualityReview = {
   correctedAnswer: unknown;
   createdAt: Date;
   overturnedAt: Date | null;
+  spotCheck: boolean;
 };
 
 type QualityRow = {
@@ -91,7 +99,8 @@ async function loadQualityRows(projectId: string, categorical: boolean): Promise
       WHERE a."projectId" = ${projectId} AND a.status IN ('SUBMITTED', 'SKIPPED')`,
     prisma.$queryRaw<Array<QualityReview & { assignmentId: string }>>`
       SELECT r."assignmentId", r.decision::text AS decision, r."qaScore",
-             ${corrected} AS "correctedAnswer", r."createdAt", r."overturnedAt"
+             ${corrected} AS "correctedAnswer", r."createdAt", r."overturnedAt",
+             r."spotCheck"
       FROM "Review" r
       JOIN "Assignment" a ON a.id = r."assignmentId"
       WHERE a."projectId" = ${projectId} AND a.status IN ('SUBMITTED', 'SKIPPED')`,
@@ -142,6 +151,8 @@ export async function projectQuality(project: Project) {
         goldAttempts: 0,
         goldAccuracy: null,
         flagged: false,
+        spotChecks: 0,
+        spotCheckSendBacks: 0,
         seconds: [],
         scores: [],
         gold: [],
@@ -162,8 +173,15 @@ export async function projectQuality(project: Project) {
       if (a.goldScore !== null && !a.task.goldRetiredAt) stats.gold.push(a.goldScore);
       continue;
     }
+    // A spot check is picked, not drawn, so it leans towards bad work: it has
+    // a column of its own and stays out of the reviewed share, the approval
+    // rate and the QA average.
+    for (const check of a.reviews.filter((r) => r.spotCheck)) {
+      stats.spotChecks += 1;
+      if (check.decision === 'SEND_BACK') stats.spotCheckSendBacks += 1;
+    }
     // a decision that a dispute overturned no longer counts for or against anyone
-    const standing = standingReviews(a.reviews);
+    const standing = standingReviews(a.reviews.filter((r) => !r.spotCheck));
     stats.reviewable += 1;
     if (standing.length > 0) stats.reviewedSubmissions += 1;
     for (const review of standing) {

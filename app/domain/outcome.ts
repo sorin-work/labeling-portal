@@ -23,6 +23,8 @@ type ReviewLike = Overturnable & {
 /**
  * The answer that counts for a submission: the most recent reviewer correction
  * that still stands if there is one, otherwise what the annotator submitted.
+ * Spot checks are review rows too, but they never correct (no FIX), so they
+ * never change what this returns.
  */
 export function finalAnswer<T = unknown>(answer: unknown, reviews: ReviewLike[]): T {
   const fixes = standingReviews(reviews)

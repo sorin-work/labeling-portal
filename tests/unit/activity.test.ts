@@ -157,3 +157,23 @@ describe('the daily limit and released claims in the trail', () => {
     ).toBe('released the claim of Ann on task #7');
   });
 });
+
+describe('spot checks and released reservations in the trail', () => {
+  it('reads as sentences', () => {
+    expect(
+      describeActivity('review.spot_checked', {
+        userName: 'Ann',
+        position: 3,
+        decision: 'SEND_BACK',
+        qaScore: 2,
+      }),
+    ).toBe('spot checked the work of Ann on task #3: would have sent it back (QA 2)');
+    expect(
+      describeActivity('review.hold_released', {
+        userName: 'Ann',
+        holderName: 'Rita',
+        position: 3,
+      }),
+    ).toBe('released the reservation Rita had on the work of Ann on task #3');
+  });
+});

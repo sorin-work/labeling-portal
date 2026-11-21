@@ -4,11 +4,13 @@ import { Pagination } from '~/components/pagination';
 import { Badge, EmptyState, PageHeader } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
 import { shownReview } from '~/domain/disputes';
+import { spotCheckRefusal } from '~/domain/spot-check';
 import { taskPreview } from '~/domain/preview';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { DISPUTE_BADGES, formatDateTime, REVIEW_BADGES } from '~/lib/format';
 import { notFound } from '~/lib/http';
+import { can } from '~/lib/permissions';
 import { paginate, readPage } from '~/lib/pagination';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
@@ -45,8 +47,16 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     take: page.take,
     include: {
       task: {
-        select: { id: true, externalId: true, data: true, isGold: true, goldRetiredAt: true },
+        select: {
+          id: true,
+          externalId: true,
+          data: true,
+          isGold: true,
+          isQualification: true,
+          goldRetiredAt: true,
+        },
       },
+      _count: { select: { reviews: true } },
       reviews: {
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -73,6 +83,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       qaScore: shownReview(a.reviews.at(0)).qaScore,
       dispute: a.reviews.at(0)?.dispute?.status ?? null,
       skipReason: a.skipReason,
+      // accepted work that no reviewer has seen can be pulled in for a look
+      spotCheckable:
+        can(current.membership.role, 'review') &&
+        spotCheckRefusal({
+          status: a.status,
+          reviewStatus: a.reviewStatus,
+          isGold: a.task.isGold,
+          isQualification: a.task.isQualification,
+          reviews: a._count.reviews,
+          ownWork: a.userId === current.user.id,
+        }) === null,
+      spotChecked: a.reviews.at(0)?.spotCheck ?? false,
       activeSeconds: a.activeSeconds,
       at: a.submittedAt ?? a.claimedAt,
     })),
@@ -134,8 +156,18 @@ export default function ProjectAnnotator({ loaderData }: Route.ComponentProps) {
                     {DISPUTE_BADGES[w.dispute].label}
                   </Badge>
                 )}
+                {w.spotChecked && <Badge tone="sky">Spot checked</Badge>}
                 {w.qaScore !== null && (
                   <span className="text-xs text-slate-500">QA {w.qaScore}/5</span>
+                )}
+                {w.spotCheckable && (
+                  <Link
+                    to={`/review/${w.id}`}
+                    className="text-xs text-indigo-700 hover:underline"
+                    aria-label={`Spot check the work on ${w.externalId ?? 'this task'}`}
+                  >
+                    Spot check
+                  </Link>
                 )}
                 <span className="w-40 text-right text-xs text-slate-500">
                   {formatDuration(w.activeSeconds)} · {formatDateTime(w.at)}

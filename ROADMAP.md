@@ -58,7 +58,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 18  | Pre-labeling hook                            | Shipped | labeling      | L    | -          |
 | 19  | Releasing a claim and a daily task limit     | Shipped | queue         | M    | -          |
 | 20  | Signing out everywhere                       | Shipped | security      | S    | -          |
-| 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
+| 21  | Spot checks and letting go of a review hold  | Shipped | review        | M    | -          |
 | 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
 | 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
@@ -72,42 +72,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 32  | Keeping the audit trail for a set time       | Maybe   | ops           | M    | 26         |
 
 ## Next
-
-### 21. Spot checks and letting go of a review hold
-
-Improves item 4. With a review share under 100%, work that was not drawn
-(`ReviewSample.NOT_DRAWN`, `reviewStatus` `NOT_REQUIRED`) is accepted at once
-and nobody looks at it again. A reviewer who doubts an annotator's work has no
-way to pull some of it in. And a reviewer who walks away holds a submission
-for up to 15 minutes; neither they nor a manager can let it go sooner.
-
-- Spot check: on the annotator page (`routes/project-annotator.tsx`) and the
-  task page, reviewers and managers get "Spot check" on accepted work that no
-  reviewer has seen. It opens the review page in a spot-check mode that takes
-  a QA score, a verdict (fine, would have sent it back) and feedback the
-  annotator sees on "My work".
-- Data: `spotCheck Boolean @default(false)` on `Review`, so the decision is a
-  normal review row and every reader that skips it has to say so.
-- Tricky: money and data have already moved. The work is payable
-  (`payableAt`), may have completed its task and fed consensus. Pulling it
-  back into `PENDING` would change past pay reports, which item 5 made
-  stable on purpose. So a spot check changes no status and no pay; it only
-  records. Undecided: whether a fix during a spot check may refresh the
-  consensus of a completed task. I lean towards yes for tasks that were not
-  adjudicated (item 11 says later reviews leave an adjudicated answer alone).
-- Tricky: the quality page's approval rate. Spot checks are picked, not
-  drawn, so they lean towards bad work. Show them as their own column and
-  keep them out of the approval rate and the reviewed share.
-- Tricky: disputes (item 9). A spot check moves no money, so I would not
-  allow disputing one.
-- Hold: the review page gets "Let go" for the reviewer who holds a
-  submission (a conditional write on `reviewHeldById` being theirs, in
-  `models/reviews.server.ts`), and the review queue, which already shows who
-  holds each submission, gets "Release" for managers, with an audit entry.
-- Tests: `tests/integration/review.test.ts`: a spot check on unsampled work,
-  refused on work that was reviewed or is gold, nothing changes in pay or
-  task status, the quality numbers; letting go of your own hold and not of
-  someone else's, a manager's release.
 
 ### 22. Taking back the last submission
 
@@ -836,6 +800,29 @@ the version and revokes their tokens in that organisation, so a re-add brings
 neither back. The version is per account, so ending sessions signs the person
 out of their other organisations too, and People says so. Still open: a list of sessions with device and
 time, which needs a table of sessions.
+
+### 21. Spot checks and letting go of a review hold
+
+Reviewers and managers get "Spot check" on the annotator page and the task
+page next to accepted work that no reviewer has seen (`NOT_REQUIRED`, not
+gold or qualification, no review yet, not their own). The review page opens
+it in spot-check mode: a QA score, a verdict (fine, or would have sent it
+back, which needs feedback) and feedback the annotator sees on "My work".
+`recordSpotCheck` stores a `Review` with `spotCheck` set and an audit entry,
+under a lock on the submission's row only, and changes no status, pay, task
+or consensus. Every reader of reviews says what it does with them: the
+quality page and its CSV count spot checks in a column of their own and
+keep them out of the approval rate, the reviewed share and the QA score;
+the reviewer's dashboard numbers and the label export's QA score leave them
+out; disputes and the revise page look only at real decisions, so a spot
+check cannot be disputed; "My work" shows its feedback. The review page has
+"Let go of it" for the reviewer who holds a submission, and the review
+queue "Release" for managers, a conditional write on the holder the page
+showed, with an audit entry. Decided on the open point: a spot check takes
+no fix, so it never touches a consensus, adjudicated or not; a reviewer who
+finds a wrong answer says so in the verdict and feedback. Still open: a spot
+check is not offered from the review queue itself, and there is no way to
+pull a batch of someone's work in for spot checks at once.
 
 ### 23. Backup status the app can see
 

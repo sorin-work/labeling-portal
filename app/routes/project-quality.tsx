@@ -44,7 +44,8 @@ type SortKey =
   | 'avgQaScore'
   | 'goldAccuracy'
   | 'avgSeconds'
-  | 'tasksPerHour';
+  | 'tasksPerHour'
+  | 'spotChecks';
 
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'name', label: 'Name' },
@@ -57,6 +58,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'goldAccuracy', label: 'Gold' },
   { key: 'avgSeconds', label: 'Avg time' },
   { key: 'tasksPerHour', label: 'Tasks / hour' },
+  { key: 'spotChecks', label: 'Spot checks' },
 ];
 
 export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
@@ -204,6 +206,14 @@ export default function ProjectQuality({ loaderData }: Route.ComponentProps) {
                     {a.avgSeconds === null ? '–' : formatDuration(a.avgSeconds)}
                   </td>
                   <td className="px-4 py-2 text-right">{a.tasksPerHour ?? '–'}</td>
+                  <td
+                    className="px-4 py-2 text-right"
+                    title="Accepted work a reviewer picked and looked at afterwards. Picked, not drawn, so not in the approval rate, the reviewed share or the QA score"
+                  >
+                    {a.spotChecks === 0
+                      ? '–'
+                      : `${a.spotChecks} (${a.spotCheckSendBacks} would be sent back)`}
+                  </td>
                 </tr>
               ))}
             </tbody>

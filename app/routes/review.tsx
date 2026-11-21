@@ -19,6 +19,12 @@ import {
   shouldRenewHold,
 } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
+import {
+  parseSpotCheckForm,
+  SPOT_CHECK_VERDICTS,
+  spotCheckRefusal,
+  type SpotCheckRefusal,
+} from '~/domain/spot-check';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, formatRelative } from '~/lib/format';
@@ -26,7 +32,9 @@ import { forbidden, notFound } from '~/lib/http';
 import { projectSchema, requireProject } from '~/models/projects.server';
 import {
   holdReview,
+  letGoOfReviewHold,
   recordReview,
+  recordSpotCheck,
   renewReviewHold,
   reserveNextReview,
   type ReviewRefusal,
@@ -37,6 +45,14 @@ import type { Route } from './+types/review';
 export function meta() {
   return [{ title: 'Review submission · Labeling Portal' }];
 }
+
+const SPOT_REFUSED: Record<SpotCheckRefusal | 'not_found', string> = {
+  not_found: 'Submission not found.',
+  not_unseen:
+    'Only accepted work that no reviewer has seen can be spot checked, and this one has been.',
+  gold: 'Gold tasks are scored against their expected answer, so they are not spot checked.',
+  own_work: 'This is your own submission, so someone else has to check it.',
+};
 
 const REFUSED: Record<ReviewRefusal, string> = {
   not_pending: 'Someone already reviewed this submission.',
@@ -50,6 +66,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     include: {
       task: true,
       user: { select: { name: true } },
+      _count: { select: { reviews: true } },
       reviewHeldBy: { select: { name: true } },
       reviews: {
         orderBy: { createdAt: 'desc' },
@@ -60,11 +77,22 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   if (!assignment || assignment.status !== 'SUBMITTED') throw notFound('Submission not found');
   const project = await requireProject(current, assignment.projectId, 'review');
   const hold = activeHold(assignment, current.user.id, new Date());
+  // accepted work that no reviewer has seen opens in spot-check mode
+  const spotCheck =
+    spotCheckRefusal({
+      status: assignment.status,
+      reviewStatus: assignment.reviewStatus,
+      isGold: assignment.task.isGold,
+      isQualification: assignment.task.isQualification,
+      reviews: assignment._count.reviews,
+      ownWork: assignment.userId === current.user.id,
+    }) === null;
 
   return {
     project: { id: project.id, name: project.name },
     schema: projectSchema(project),
     ownWork: assignment.userId === current.user.id,
+    spotCheck,
     hold: hold && { reviewer: hold.reviewer, mine: hold.mine, until: hold.until },
     sampleNote: assignment.reviewSample ? SAMPLE_LABELS[assignment.reviewSample] : null,
     assignment: {
@@ -97,6 +125,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       feedback: r.feedback,
       createdAt: r.createdAt,
       overturned: r.overturnedAt !== null,
+      spotCheck: r.spotCheck,
     })),
   };
 }
@@ -109,19 +138,38 @@ export async function action({ request, params }: Route.ActionArgs) {
   if (assignment.userId === current.user.id) {
     throw forbidden('You cannot review your own submission.');
   }
+  const form = await request.formData();
+  const intent = String(form.get('intent') ?? '');
+
+  // a spot check records a verdict on accepted work and changes nothing else
+  if (intent === 'spot_fine' || intent === 'spot_send_back') {
+    const parsed = parseSpotCheckForm(form);
+    if (!parsed.ok) return data({ error: parsed.error }, { status: 400 });
+    const checked = await recordSpotCheck(assignment.id, current.user.id, parsed.value);
+    if (!checked.ok) return data({ error: SPOT_REFUSED[checked.error] }, { status: 409 });
+    return redirect(`/review/${assignment.id}`);
+  }
+
   if (assignment.reviewStatus !== 'PENDING') {
     return data({ error: REFUSED.not_pending }, { status: 409 });
   }
+  // the reviewer who holds it hands it back before the hold runs out
+  if (intent === 'let-go') {
+    const freed = await letGoOfReviewHold(assignment.id, current.user.id);
+    if (!freed) {
+      return data({ error: 'This submission is not reserved for you.' }, { status: 409 });
+    }
+    return redirect(`/projects/${assignment.projectId}/review`);
+  }
 
-  const form = await request.formData();
-  if (form.get('intent') === 'hold') {
+  if (intent === 'hold') {
     const held = await holdReview(assignment.id, current.user.id);
     if (!held.ok) return data({ error: REFUSED[held.error] }, { status: 409 });
     return redirect(`/review/${assignment.id}`);
   }
   // The page posts this while the reviewer is working. When the hold is no
   // longer theirs the page reloads its data and shows who has it now.
-  if (form.get('intent') === 'renew') {
+  if (intent === 'renew') {
     const renewed = await renewReviewHold(assignment.id, current.user.id);
     return data({ error: null }, { status: renewed ? 200 : 409 });
   }
@@ -200,7 +248,8 @@ export default function Review(props: Route.ComponentProps) {
 }
 
 function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
-  const { project, schema, assignment, task, history, ownWork, hold, sampleNote } = loaderData;
+  const { project, schema, assignment, task, history, ownWork, hold, sampleNote, spotCheck } =
+    loaderData;
   const [score, setScore] = useState<number | null>(null);
   const [fixing, setFixing] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -318,6 +367,8 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
       <aside className="space-y-4">
         {ownWork ? (
           <Alert tone="info">This is your own submission, so someone else has to review it.</Alert>
+        ) : spotCheck ? (
+          <SpotCheckForm busy={navigation.state !== 'idle'} />
         ) : !pending ? (
           <Alert tone="info">Already reviewed.</Alert>
         ) : hold && !hold.mine ? (
@@ -468,6 +519,19 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
             )}
           </Form>
         )}
+        {deciding && (
+          <Form method="post" className="text-sm">
+            <Button
+              name="intent"
+              value="let-go"
+              variant="ghost"
+              disabled={navigation.state !== 'idle'}
+              title="Hands the submission back so another reviewer can take it now"
+            >
+              Let go of it
+            </Button>
+          </Form>
+        )}
         {history.length > 0 && (
           <Card>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -478,7 +542,9 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
                 <li key={h.id}>
                   <div>
                     <span className={cx('font-medium', DECISION_STYLE[h.decision])}>
-                      {h.decision.replace('_', ' ').toLowerCase()}
+                      {h.spotCheck
+                        ? `spot check: ${SPOT_CHECK_VERDICTS[h.decision as keyof typeof SPOT_CHECK_VERDICTS]?.toLowerCase() ?? h.decision.toLowerCase()}`
+                        : h.decision.replace('_', ' ').toLowerCase()}
                     </span>{' '}
                     by {h.reviewer}
                     {h.overturned && (
@@ -505,5 +571,54 @@ function ReviewPage({ loaderData, actionData }: Route.ComponentProps) {
         )}
       </aside>
     </div>
+  );
+}
+
+/**
+ * Spot-check mode: accepted work that no reviewer had seen. A score, a
+ * verdict and feedback the annotator sees on "My work"; nothing about the
+ * work changes.
+ */
+function SpotCheckForm({ busy }: { busy: boolean }) {
+  return (
+    <Form
+      method="post"
+      onKeyDown={noImplicitSubmit}
+      className="space-y-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"
+    >
+      <p className="text-sm text-slate-600">
+        Spot check. This work was accepted without a review. What you record here is shown to the
+        annotator and on the quality page; it does not change the work, its pay or the task.
+      </p>
+      <fieldset>
+        <legend className="mb-1 text-sm font-medium">Quality score</legend>
+        <div className="flex gap-3 text-sm">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <label key={n} className="flex items-center gap-1">
+              <input type="radio" name="qaScore" value={n} required />
+              {n}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <label className="block text-sm font-medium">
+        Feedback for the annotator
+        <textarea
+          name="feedback"
+          rows={4}
+          maxLength={2000}
+          className="mt-1 block w-full rounded-md px-3 py-2 text-sm font-normal ring-1 ring-slate-300"
+          placeholder="Required when you would have sent it back"
+        />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <Button name="intent" value="spot_fine" disabled={busy}>
+          {SPOT_CHECK_VERDICTS.APPROVE}
+        </Button>
+        <Button name="intent" value="spot_send_back" variant="secondary" disabled={busy}>
+          {SPOT_CHECK_VERDICTS.SEND_BACK}
+        </Button>
+      </div>
+    </Form>
   );
 }

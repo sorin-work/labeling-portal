@@ -425,6 +425,8 @@ model Review {
   createdAt       DateTime       @default(now())
   /// set when a dispute overturned this decision; the row itself is kept as it was
   overturnedAt    DateTime?
+  /// a reviewer looked at accepted work no reviewer had seen; it records and changes nothing
+  spotCheck       Boolean        @default(false)
   dispute         Dispute?
   assignment      Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   reviewer        User           @relation(fields: [reviewerId], references: [id], onDelete: Cascade)

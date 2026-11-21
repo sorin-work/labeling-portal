@@ -929,3 +929,268 @@ describe('reviewer reservations', () => {
     expect(saved.reviewStatus).toBe(reviews[0].decision === 'APPROVE' ? 'APPROVED' : 'SENT_BACK');
   });
 });
+
+describe('spot checks', () => {
+  beforeEach(resetDb);
+
+  /** Work in a project that does not review: accepted at once, and its task complete. */
+  async function unseen() {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { reviewRequired: false });
+    const [task] = await createTasks(project.id, [{ text: 'one' }, { text: 'two' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Ann' });
+    const reviewer = await createMember(org.id, 'REVIEWER', { name: 'Rita' });
+    await addToProject(project.id, ann, reviewer);
+    const submission = await submitWork(project, ann.id, { labels: ['positive'] });
+    return {
+      org,
+      project,
+      task,
+      ann,
+      reviewer,
+      submission,
+      cookie: await cookieFor(reviewer, org.id),
+      annCookie: await cookieFor(ann, org.id),
+    };
+  }
+
+  const spotCheck = (id: string, cookie: string, form: Record<string, string>) =>
+    run(reviewAction, makeRequest(`/review/${id}`, { cookie, form }), { assignmentId: id });
+
+  it('records a verdict on unsampled work and changes nothing about it', async () => {
+    const { project, task, ann, submission, cookie, annCookie } = await unseen();
+    const before = await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } });
+    const taskBefore = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(taskBefore.status).toBe('COMPLETE');
+
+    const page = await run(reviewLoader, makeRequest(`/review/${submission.id}`, { cookie }), {
+      assignmentId: submission.id,
+    });
+    expect(payload<{ spotCheck: boolean }>(page).spotCheck).toBe(true);
+
+    const result = await spotCheck(submission.id, cookie, {
+      intent: 'spot_send_back',
+      qaScore: '2',
+      feedback: 'The tone is negative.',
+    });
+    expect(locationOf(result)).toBe(`/review/${submission.id}`);
+
+    const review = await prisma.review.findFirstOrThrow({ where: { assignmentId: submission.id } });
+    expect(review).toMatchObject({ spotCheck: true, decision: 'SEND_BACK', qaScore: 2 });
+    // no status, no pay, no task change
+    const after = await prisma.assignment.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(after).toMatchObject({
+      status: 'SUBMITTED',
+      reviewStatus: 'NOT_REQUIRED',
+      payableAt: before.payableAt,
+      activeSeconds: before.activeSeconds,
+    });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({
+      status: 'COMPLETE',
+      consensus: taskBefore.consensus,
+    });
+    expect(
+      await prisma.activity.count({
+        where: { projectId: project.id, action: 'review.spot_checked' },
+      }),
+    ).toBe(1);
+
+    // the annotator sees the feedback on "My work"
+    const mine = await run(myWorkLoader, makeRequest('/my-work', { cookie: annCookie }));
+    const items = payload<{ items: Array<{ id: string; feedback: string }> }>(mine).items;
+    expect(items.find((i) => i.id === submission.id)?.feedback).toBe('The tone is negative.');
+    // and cannot dispute it: it moved nothing
+    const { openDispute } = await import('~/models/disputes.server');
+    const disputed = await openDispute(submission.id, ann.id, 'I disagree with this.');
+    expect(disputed.ok).toBe(false);
+  });
+
+  it('refuses work a reviewer has seen, a second spot check, gold and own work', async () => {
+    const { org, project, ann, submission, cookie } = await unseen();
+    const fine = { intent: 'spot_fine', qaScore: '5', feedback: '' };
+    expect(statusOf(await spotCheck(submission.id, cookie, fine))).toBe(302);
+    // seen now: a second spot check is refused
+    expect(statusOf(await spotCheck(submission.id, cookie, fine))).toBe(409);
+
+    // reviewed work
+    const reviewing = await createTestProject(org.id, { name: 'Reviewed' });
+    await createTasks(reviewing.id, [{ text: 'r' }]);
+    await addToProject(reviewing.id, ann);
+    const reviewed = await submitWork(reviewing, ann.id, { labels: ['positive'] });
+    const other = await createMember(org.id, 'REVIEWER');
+    await addToProject(reviewing.id, other);
+    await recordReview(reviewed.id, other.id, { decision: 'APPROVE', qaScore: 4, feedback: '' });
+    const otherCookie = await cookieFor(other, org.id);
+    expect(statusOf(await spotCheck(reviewed.id, otherCookie, fine))).toBe(409);
+
+    // gold, which is NOT_REQUIRED as well
+    await prisma.task.updateMany({
+      where: { projectId: project.id, status: 'OPEN' },
+      data: { isGold: true, goldAnswer: { labels: ['positive'] } },
+    });
+    const gold = await submitWork(project, ann.id, { labels: ['positive'] });
+    expect(gold.reviewStatus).toBe('NOT_REQUIRED');
+    expect(statusOf(await spotCheck(gold.id, cookie, fine))).toBe(409);
+    expect(await prisma.review.count({ where: { assignmentId: gold.id } })).toBe(0);
+
+    // own work
+    const annCookie = await cookieFor(ann, org.id);
+    expect(statusOf(await spotCheck(submission.id, annCookie, fine))).toBe(403);
+  });
+
+  it('gives two reviewers spot checking at the same moment one spot check between them', async () => {
+    const { org, project, submission, reviewer } = await unseen();
+    const second = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, second);
+    const { recordSpotCheck } = await import('~/models/reviews.server');
+    const check = { verdict: 'APPROVE' as const, qaScore: 4, feedback: '' };
+    for (let round = 0; round < 3; round++) {
+      await prisma.review.deleteMany({ where: { assignmentId: submission.id } });
+      const results = await Promise.all([
+        recordSpotCheck(submission.id, reviewer.id, check),
+        recordSpotCheck(submission.id, second.id, check),
+      ]);
+      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      expect(results.find((r) => !r.ok)).toEqual({ ok: false, error: 'not_unseen' });
+      expect(await prisma.review.count({ where: { assignmentId: submission.id } })).toBe(1);
+    }
+  });
+
+  it('needs a score, and feedback for "would have sent it back"', async () => {
+    const { submission, cookie } = await unseen();
+    expect(statusOf(await spotCheck(submission.id, cookie, { intent: 'spot_fine' }))).toBe(400);
+    expect(
+      statusOf(await spotCheck(submission.id, cookie, { intent: 'spot_send_back', qaScore: '2' })),
+    ).toBe(400);
+    expect(await prisma.review.count()).toBe(0);
+  });
+
+  it('counts in its own column on the quality page, not in the approval rate', async () => {
+    const { project, ann, submission, reviewer } = await unseen();
+    const { projectQuality } = await import('~/models/quality.server');
+    const { recordSpotCheck } = await import('~/models/reviews.server');
+    await recordSpotCheck(submission.id, reviewer.id, {
+      verdict: 'SEND_BACK',
+      qaScore: 1,
+      feedback: 'Wrong.',
+    });
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const { annotators } = await projectQuality(fresh);
+    expect(annotators.find((a) => a.userId === ann.id)).toMatchObject({
+      reviewedSubmissions: 0,
+      reviewedShare: 0,
+      reviewed: 0,
+      sentBack: 0,
+      approvalRate: null,
+      avgQaScore: null,
+      spotChecks: 1,
+      spotCheckSendBacks: 1,
+    });
+  });
+
+  it('is offered on the task page and the annotator page only where it is allowed', async () => {
+    const { project, task, ann, submission, cookie } = await unseen();
+    const { loader: annotatorLoader } = await import('~/routes/project-annotator');
+    const params = { projectId: project.id, userId: ann.id };
+    const listed = await run(
+      annotatorLoader,
+      makeRequest(`/projects/${project.id}/annotators/${ann.id}`, { cookie }),
+      params,
+    );
+    const work = payload<{ work: Array<{ id: string; spotCheckable: boolean }> }>(listed).work;
+    expect(work.find((w) => w.id === submission.id)?.spotCheckable).toBe(true);
+    const detail = await run(
+      taskLoader,
+      makeRequest(`/projects/${project.id}/tasks/${task.id}`, { cookie }),
+      { projectId: project.id, taskId: task.id },
+    );
+    type Row = { id: string; spotCheckable: boolean };
+    const rows = payload<{ assignments: Row[] }>(detail).assignments;
+    expect(rows.find((a) => a.id === submission.id)?.spotCheckable).toBe(true);
+  });
+});
+
+describe('letting go of a review hold', () => {
+  beforeEach(resetDb);
+
+  async function held() {
+    const base = await setup();
+    const hold = await run(
+      reviewAction,
+      makeRequest(`/review/${base.submission.id}`, {
+        cookie: base.reviewerCookie,
+        form: { intent: 'hold' },
+      }),
+      { assignmentId: base.submission.id },
+    );
+    expect(statusOf(hold)).toBe(302);
+    return base;
+  }
+
+  const letGo = (id: string, cookie: string) =>
+    run(reviewAction, makeRequest(`/review/${id}`, { cookie, form: { intent: 'let-go' } }), {
+      assignmentId: id,
+    });
+
+  const holder = async (id: string) =>
+    (await prisma.assignment.findUniqueOrThrow({ where: { id } })).reviewHeldById;
+
+  it('lets the reviewer who holds a submission let go of it', async () => {
+    const { project, submission, reviewer, reviewerCookie } = await held();
+    expect(await holder(submission.id)).toBe(reviewer.id);
+    const result = await letGo(submission.id, reviewerCookie);
+    expect(locationOf(result)).toBe(`/projects/${project.id}/review`);
+    expect(await holder(submission.id)).toBeNull();
+  });
+
+  it('does not let another reviewer free it', async () => {
+    const { org, project, submission, reviewer } = await held();
+    const other = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, other);
+    expect(statusOf(await letGo(submission.id, await cookieFor(other, org.id)))).toBe(409);
+    expect(await holder(submission.id)).toBe(reviewer.id);
+  });
+
+  it('lets a manager release it from the queue, with an audit entry, and nobody else', async () => {
+    const { org, project, submission, reviewer, reviewerCookie } = await held();
+    const release = (cookie: string, holderId = reviewer.id) =>
+      run(
+        queueAction,
+        makeRequest(`/projects/${project.id}/review`, {
+          cookie,
+          form: { intent: 'release-hold', assignmentId: submission.id, holderId },
+        }),
+        { projectId: project.id },
+      );
+    const other = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, other);
+    expect(statusOf(await release(await cookieFor(other, org.id)))).toBe(403);
+    expect(await holder(submission.id)).toBe(reviewer.id);
+
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const pmCookie = await cookieFor(pm, org.id);
+    const queue = await run(
+      queueLoader,
+      makeRequest(`/projects/${project.id}/review`, { cookie: pmCookie }),
+      { projectId: project.id },
+    );
+    const shown = payload<{ canRelease: boolean; pending: Array<{ holderId: string | null }> }>(
+      queue,
+    );
+    expect(shown.canRelease).toBe(true);
+    expect(shown.pending[0].holderId).toBe(reviewer.id);
+
+    // a hold that changed hands since the page loaded is left alone
+    expect(statusOf(await release(pmCookie, other.id))).toBe(302);
+    expect(await holder(submission.id)).toBe(reviewer.id);
+
+    expect(statusOf(await release(pmCookie))).toBe(302);
+    expect(await holder(submission.id)).toBeNull();
+    const entry = await prisma.activity.findFirstOrThrow({
+      where: { action: 'review.hold_released' },
+    });
+    expect(entry).toMatchObject({ actorId: pm.id, projectId: project.id });
+    // the reviewer's page no longer holds it, and anyone may take it
+    expect(statusOf(await letGo(submission.id, reviewerCookie))).toBe(409);
+  });
+});

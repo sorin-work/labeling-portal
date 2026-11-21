@@ -33,6 +33,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       'avg_seconds',
       'tasks_per_hour',
       'flagged',
+      'spot_checks',
+      'spot_checks_would_send_back',
     ],
     annotators.map((a) => [
       a.name,
@@ -47,6 +49,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       a.avgSeconds,
       a.tasksPerHour,
       a.flagged ? 'yes' : 'no',
+      a.spotChecks,
+      a.spotCheckSendBacks,
     ]),
   );
   return new Response(csv, {

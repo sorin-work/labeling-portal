@@ -11,7 +11,7 @@ import {
   skipAssignment,
   submitAssignment,
 } from '~/models/queue.server';
-import { holdReview, recordReview } from '~/models/reviews.server';
+import { holdReview, recordReview, recordSpotCheck } from '~/models/reviews.server';
 
 import {
   addToProject,
@@ -252,6 +252,38 @@ describe('the task row before the assignment row', () => {
         ),
       ).toBe(true);
     }
+    holder.release();
+    await holder.done;
+    expect((await pending).ok).toBe(true);
+  });
+
+  it('a spot check takes only the submission’s row, and never the task row', async () => {
+    const { org, project, ann } = await setup();
+    const claim = await claimNextTask(project, ann.id, new Date(Date.now() - 60_000));
+    if (!claim.ok) throw new Error('no claim');
+    await submitAssignment(claim.assignment.id, ann.id, {
+      answer: { labels: ['positive'] },
+      activeSeconds: 1,
+      reviewRequired: false,
+    });
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    const holder = hold(
+      Prisma.sql`SELECT id FROM "Assignment" WHERE id = ${claim.assignment.id} FOR UPDATE`,
+    );
+    await holder.ready;
+    const pending = recordSpotCheck(claim.assignment.id, reviewer.id, {
+      verdict: 'APPROVE',
+      qaScore: 4,
+      feedback: '',
+    });
+    await settle();
+    // waiting on the submission, holding no task row
+    expect(
+      await lockable(
+        Prisma.sql`SELECT id FROM "Task" WHERE id = ${claim.assignment.taskId} FOR NO KEY UPDATE NOWAIT`,
+      ),
+    ).toBe(true);
+    expect(await prisma.review.count()).toBe(0);
     holder.release();
     await holder.done;
     expect((await pending).ok).toBe(true);
