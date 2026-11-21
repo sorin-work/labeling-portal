@@ -87,6 +87,34 @@ describe('closing a pay period', () => {
     expect(april).toMatchObject({ ok: true, totalCents: 0 });
   });
 
+  it('waits five minutes after midnight, so work accepted just before it is in the run', async () => {
+    const s = await setup();
+    // a fourth task accepted at 23:59:50 on the last day
+    const late = await submitWork(
+      s.project,
+      s.ann.id,
+      { labels: ['positive'] },
+      {
+        now: new Date('2026-03-31T23:54:50Z'),
+      },
+    );
+    expect(late.payableAt?.toISOString()).toBe('2026-03-31T23:59:50.000Z');
+    expect(
+      await closePayRun(s.org.id, s.admin.id, MARCH, '', new Date('2026-04-01T00:01:00Z')),
+    ).toEqual({ ok: false, error: 'not_over' });
+    const closed = await closePayRun(
+      s.org.id,
+      s.admin.id,
+      MARCH,
+      '',
+      new Date('2026-04-01T00:05:00Z'),
+    );
+    expect(closed).toMatchObject({ ok: true, totalCents: 140 });
+    expect((await prisma.assignment.findUniqueOrThrow({ where: { id: late.id } })).payRunId).toBe(
+      closed.ok ? closed.runId : null,
+    );
+  });
+
   it('is for admins: a project manager may not close a period', async () => {
     const s = await setup();
     const post = (cookie: string) =>

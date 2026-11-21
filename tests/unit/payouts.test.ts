@@ -213,7 +213,9 @@ describe('closing a period', () => {
     const march = periodBounds({ from: '2026-03-01', to: '2026-03-31' });
     expect(march.end.toISOString()).toBe('2026-04-01T00:00:00.000Z');
     expect(closeRefusal(march, new Date('2026-03-31T23:59:59Z'), [])).toBe('not_over');
-    expect(closeRefusal(march, new Date('2026-04-01T00:00:00Z'), [])).toBeNull();
+    // a write that began before midnight may still be running just after it
+    expect(closeRefusal(march, new Date('2026-04-01T00:04:59Z'), [])).toBe('not_over');
+    expect(closeRefusal(march, new Date('2026-04-01T00:05:00Z'), [])).toBeNull();
     const april = periodBounds({ from: '2026-04-01', to: '2026-04-30' });
     const later = new Date('2026-06-01T00:00:00Z');
     expect(closeRefusal(april, later, [march])).toBeNull();
