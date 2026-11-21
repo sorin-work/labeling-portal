@@ -4,7 +4,7 @@ import { redirect } from 'react-router';
 import { prisma } from './db.server';
 import { verifyPassword } from './password.server';
 import { RateLimiter } from './rate-limit.server';
-import { getSession } from './session.server';
+import { getSession, sessionVersionOf } from './session.server';
 import { hashToken, TOKEN_PREFIX } from './tokens.server';
 
 export type CurrentUser = {
@@ -39,10 +39,13 @@ export async function getCurrentUser(request: Request): Promise<CurrentUser | nu
   if (!userId || !orgId) return null;
   const membership = await prisma.membership.findUnique({
     where: { orgId_userId: { orgId, userId } },
-    include: { user: { select: { id: true, email: true, name: true } } },
+    include: { user: { select: { id: true, email: true, name: true, sessionVersion: true } } },
   });
   if (!membership) return null;
-  const { user, ...rest } = membership;
+  // every session made before the last "sign out everywhere" or password change
+  if (membership.user.sessionVersion !== sessionVersionOf(session.get('v'))) return null;
+  const { user: account, ...rest } = membership;
+  const user = { id: account.id, email: account.email, name: account.name };
   return { user, membership: { id: rest.id, orgId: rest.orgId, role: rest.role } };
 }
 
