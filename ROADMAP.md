@@ -27,6 +27,10 @@ brings its own migration under `prisma/migrations`. File names below are
 relative to `app/` unless they start with `prisma/`, `tests/`, `docs/` or
 `docker/`.
 
+Items 1 to 18 have shipped. Items from 19 on were written after that, and an
+item that improves a shipped one starts by naming it and the open point it
+takes up.
+
 "Depends on" lists real prerequisites only. Items that merely touch the same
 file are not listed there; the bigger overlaps are mentioned in the items.
 
@@ -52,8 +56,208 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
 | 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Shipped | labeling      | L    | -          |
+| 19  | Releasing a claim and a daily task limit     | Next    | queue         | M    | -          |
+| 20  | Signing out everywhere                       | Next    | security      | S    | -          |
+| 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
+| 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
+| 23  | Backup status the app can see                | Next    | ops           | S    | -          |
 
 ## Next
+
+### 19. Releasing a claim and a daily task limit
+
+Improves item 12, which left both out. A claim somebody walked away from
+keeps its slot until the time limit runs out, which can be eight hours
+(`timeLimitMinutes` goes up to 480) and more with extensions. A manager sees
+it under "Claims" on the task page (`routes/task-detail.tsx`) and can do
+nothing about it. And one fast annotator can still label most of a project in
+a day, which is bad for agreement numbers and for everyone else's pay.
+
+- Release: an `intent=release-claim` on the task page for admins and project
+  managers, next to `escalate` and the gold intents. A new
+  `releaseClaim(assignmentId, actor, now)` in `models/queue.server.ts` does
+  what `releaseAssignment` does without the owner check: the task row first
+  (`lockTaskOfAssignment`), then a conditional `updateMany` from `ACTIVE` to
+  `RELEASED` with `NO_DRAFT`, and an audit entry (`assignment.released`:
+  whose claim, which task) in the same transaction, as item 15 does for every
+  manager action.
+- The annotator's open page needs nothing new: submitting answers "This task
+  is no longer yours" and the draft save answers 409 `not_active`, both of
+  which exist.
+- Daily limit: `dailyTaskLimit Int?` on `Project`, empty for no limit, in the
+  settings form (`domain/project-form.ts`) and in the settings audit diff.
+  `claimNextTask` counts the person's submissions in the project since the
+  start of the UTC day, the same count as "done today" on the work page, and
+  answers `{ ok: false, reason: 'limit' }`. `ClaimResult` gets the reason and
+  `lib/queue-messages.ts` a text that says when the next day starts.
+- Tricky: a release throws away the annotator's draft and, like their own
+  release, credits no time. On an hourly project that is unpaid work. The
+  confirmation should say how long the claim has run and whether it has a
+  draft, and the item has to decide whether a manager's release credits the
+  time the draft saves recorded (`draftSeconds`). I lean towards crediting it
+  through the same `lockWorkClock` and `creditTime` path as a submission,
+  because the annotator did nothing wrong.
+- Tricky: `countAvailable` feeds "N tasks available" and the Start button on
+  the dashboard. It must answer 0 for someone at the limit, or the dashboard
+  offers work that the claim refuses.
+- Tricky: two tabs claiming at the same moment can both pass the count. The
+  claim does not hold anything per person today. Either count inside a lock
+  on the person (the work clock row that submissions already lock) or accept
+  that the limit can be passed by one. I lean towards the lock, since the
+  limit is a promise to the other annotators.
+- Undecided: whether skipped tasks count towards the limit (I lean no, a skip
+  earns nothing), and whether a manager can raise the limit for one person.
+  I would leave the second out.
+- Tests: in `tests/integration/queue.test.ts`: a manager releases a claim,
+  a reviewer may not, an already submitted claim is not touched, the
+  annotator's submit after a release is refused; the limit with `now` passed
+  in, across a UTC midnight, two claims at once, and `countAvailable`
+  agreeing with the claim.
+
+### 20. Signing out everywhere
+
+Improves the sign-in and the People page, which came before the roadmap. The
+session is a signed cookie (`lib/session.server.ts`) that lives for 14 days
+and is checked only against the membership (`getCurrentUser` in
+`lib/auth.server.ts`). Nothing on the server knows which cookies exist. When
+an admin sets a new password for someone whose account was taken over
+(`setPassword` in `models/people.server.ts`), or a person changes their own
+on the account page, every cookie made before keeps working for up to two
+weeks. Signing out removes the cookie in that one browser only.
+
+- Data: `sessionVersion Int @default(0)` on `User`. The cookie carries the
+  version it was made with (`SessionData` gets `v`). `getCurrentUser` already
+  reads the membership with the user; it reads `sessionVersion` in the same
+  query and treats a cookie with another version as no session. No extra
+  query per request.
+- The version goes up when an admin sets a password, when a person changes
+  their own (the tab that changed it gets a fresh cookie and stays signed
+  in), and with a new "Sign out everywhere" button on the account page. On
+  People an admin gets "End sessions" for a person. Both are audit entries
+  (`person.sessions_ended`).
+- Removing a person already works, because the membership is gone. A role
+  change is read on every request and needs nothing.
+- Tricky: cookies made before the upgrade have no `v`. Reading a missing `v`
+  as 0 signs nobody out by the upgrade; reading it as invalid signs everyone
+  out once. I lean towards 0.
+- Tricky: API tokens (item 16) are not sessions. A password change does not
+  revoke them, and a script that stops working without a word is its own
+  problem. I lean towards listing the person's active tokens on the
+  confirmation with a link to revoke them, and leaving them alone otherwise.
+- Tricky: an open work page whose session ended gets a redirect from its next
+  draft save. The page already says "Draft not saved" for a sign-out; check
+  that this path still reaches it.
+- Left out: a list of sessions with device and time. It needs a table of
+  sessions and a write on every sign-in, which a version number does not.
+- Tests: integration tests next to the account and people tests: an old
+  cookie is refused after `setPassword`, the tab that changed its own
+  password stays signed in, a cookie without `v` is accepted, and both new
+  actions are in the audit trail.
+
+### 21. Spot checks and letting go of a review hold
+
+Improves item 4. With a review share under 100%, work that was not drawn
+(`ReviewSample.NOT_DRAWN`, `reviewStatus` `NOT_REQUIRED`) is accepted at once
+and nobody looks at it again. A reviewer who doubts an annotator's work has no
+way to pull some of it in. And a reviewer who walks away holds a submission
+for up to 15 minutes; neither they nor a manager can let it go sooner.
+
+- Spot check: on the annotator page (`routes/project-annotator.tsx`) and the
+  task page, reviewers and managers get "Spot check" on accepted work that no
+  reviewer has seen. It opens the review page in a spot-check mode that takes
+  a QA score, a verdict (fine, would have sent it back) and feedback the
+  annotator sees on "My work".
+- Data: `spotCheck Boolean @default(false)` on `Review`, so the decision is a
+  normal review row and every reader that skips it has to say so.
+- Tricky: money and data have already moved. The work is payable
+  (`payableAt`), may have completed its task and fed consensus. Pulling it
+  back into `PENDING` would change past pay reports, which item 5 made
+  stable on purpose. So a spot check changes no status and no pay; it only
+  records. Undecided: whether a fix during a spot check may refresh the
+  consensus of a completed task. I lean towards yes for tasks that were not
+  adjudicated (item 11 says later reviews leave an adjudicated answer alone).
+- Tricky: the quality page's approval rate. Spot checks are picked, not
+  drawn, so they lean towards bad work. Show them as their own column and
+  keep them out of the approval rate and the reviewed share.
+- Tricky: disputes (item 9). A spot check moves no money, so I would not
+  allow disputing one.
+- Hold: the review page gets "Let go" for the reviewer who holds a
+  submission (a conditional write on `reviewHeldById` being theirs, in
+  `models/reviews.server.ts`), and the review queue, which already shows who
+  holds each submission, gets "Release" for managers, with an audit entry.
+- Tests: `tests/integration/review.test.ts`: a spot check on unsampled work,
+  refused on work that was reviewed or is gold, nothing changes in pay or
+  task status, the quality numbers; letting go of your own hold and not of
+  someone else's, a manager's release.
+
+### 22. Taking back the last submission
+
+Improves item 3, which left "submit on pick" out because a slip cannot be
+taken back once the next task has loaded. After "Submit and next" the answer
+is stored, the time credited (`recordCredit`), a gold task scored, and work
+that needs no review may already have completed its task
+(`refreshTaskStatus` in `submitAssignment`). The only way to change it is to
+wait for a reviewer to send it back.
+
+- The work page shows "Take back the last task" for a short while after a
+  submission, say two minutes. Taking it back turns the submission into the
+  same state as sent-back work that the annotator revises on
+  `/my-work/:assignmentId` (`resubmitAssignment` and the revise draft exist),
+  with a marker that the annotator asked for it, not a reviewer.
+- Allowed only while nothing downstream has read it: review `PENDING` and
+  not held by a reviewer, or `NOT_REQUIRED` on a task that is not complete
+  yet. The write states all of that in its `where`, like every other write
+  that decides a submission.
+- Tricky: gold. With gold feedback on, the annotator has seen the expected
+  answer, so a gold task must not be taken back. With feedback off the
+  absence of the link would tell gold apart, so there it has to be offered
+  like on any other task and the gold score recomputed on resubmit. The rule
+  is easier to get right in `domain/` as a pure function of the submission's
+  state, with unit tests for every case.
+- Tricky: time and pay. The credited interval of the submission stays, and
+  revising adds time with the cap item 5 set for revisions. The rate frozen
+  at submission stays as well.
+- Tricky: review sampling (item 4) was drawn at submission. A taken-back
+  submission keeps its draw, or taking back becomes a way to redraw.
+- Then "submit on pick" for single-label classification can be a project
+  setting, in the same PR or the next one. The label key submits, and the
+  take-back is the way out of a slip.
+- Undecided: a key. Every free letter is a label key on some project, and
+  taking one away changes the keys of existing projects, as `r` did in item 13. I lean towards no key at first.
+- Tests: `tests/integration/queue.test.ts` for each allowed and refused
+  state, gold with and without feedback, the sampling outcome kept; unit
+  tests for the rule.
+
+### 23. Backup status the app can see
+
+Improves item 7, whose notes say that nothing warns when a dump fails apart
+from the service's log. The backup service and the app share nothing but the
+database, so nobody who uses the app notices that the last good dump is a
+month old.
+
+- Data: a `BackupRun` table (started, finished, file, bytes, ok, message)
+  made by a Prisma migration like every other table. `docker/backup.sh`
+  writes a row with `psql` after each attempt, and copes with the table not
+  being there yet (an older app, or a stack that is still migrating).
+- The admin's needs-attention list (`models/attention.server.ts`) gets "The
+  last dump failed" and "No dump for N hours" once the service has written at
+  least one row, so a stack without the backup profile is not warned. `/healthz`
+  could carry the time of the last good dump without turning it into a 503;
+  undecided, I lean towards the needs-attention list only.
+- Tricky: the row of a dump is written after the dump, so it is in the next
+  dump, not its own. After a restore the table ends at the dump before the
+  one that was restored. Say so on the page instead of pretending.
+- Tricky: `docker/check-backup.sh` compares the row count of every table
+  between the database and the restore. A row written after the dump breaks
+  that comparison, so the check has to leave `BackupRun` out or run with
+  status writes off.
+- Undecided: encrypting dumps. The `postgres:17-alpine` image has `openssl`,
+  so `openssl enc` with a passphrase file would work, but a restore then
+  needs the passphrase and a lost passphrase is a lost backup. I lean
+  towards leaving encryption to the disk and documenting that.
+- Tests: an integration test for the attention items from made-up rows;
+  `docker/check-backup-loop.sh` checks that the script writes a row for a
+  good and a failed dump.
 
 ## Later
 
