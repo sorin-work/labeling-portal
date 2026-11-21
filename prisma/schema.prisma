@@ -101,15 +101,17 @@ enum Role {
 }
 
 model Organization {
-  id          String             @id @default(cuid())
-  name        String
-  slug        String             @unique
-  createdAt   DateTime           @default(now())
-  memberships Membership[]
-  projects    Project[]
-  credited    CreditedInterval[]
-  activity    Activity[]
-  apiTokens   ApiToken[]
+  id              String             @id @default(cuid())
+  name            String
+  slug            String             @unique
+  /// admins and project managers must have two-step sign-in on
+  twoStepRequired Boolean            @default(false)
+  createdAt       DateTime           @default(now())
+  memberships     Membership[]
+  projects        Project[]
+  credited        CreditedInterval[]
+  activity        Activity[]
+  apiTokens       ApiToken[]
 }
 
 model User {
@@ -119,6 +121,14 @@ model User {
   passwordHash          String
   /// goes up to end every session: a cookie made with another number is no session
   sessionVersion        Int                    @default(0)
+  /// the two-step secret, encrypted with TOTP_KEY (lib/secret-box.server.ts)
+  totpSecret            String?
+  /// a secret being set up, encrypted, until its first code is right
+  totpPending           String?
+  totpEnabledAt         DateTime?
+  /// the time step of the last code accepted; a code is never taken twice
+  totpLastStep          Int?
+  recoveryCodes         RecoveryCode[]
   createdAt             DateTime               @default(now())
   memberships           Membership[]
   projects              ProjectMember[]
@@ -542,4 +552,17 @@ model Job {
 
   @@index([runAt])
   @@index([key])
+}
+
+/// One-time codes for signing in without the authenticator app. Only the
+/// SHA-256 of a code is kept; it is shown once, when it is made.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
 }
