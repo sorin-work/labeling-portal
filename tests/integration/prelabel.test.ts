@@ -346,8 +346,20 @@ describe('a suggestion on the work page and in a submission', () => {
       if (took) await post({ intent: 'take-suggestion' });
       return post({ intent: 'submit', answer: JSON.stringify(answer), fromSuggestion: '1' });
     };
-    return { ...w, id, cookie, submit };
+    return { ...w, id, cookie, submit, post };
   }
+
+  it('takes the mark back when the annotator undoes past taking the suggestion', async () => {
+    const { id, post } = await claimed();
+    await post({ intent: 'take-suggestion' });
+    expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).fromSuggestion).toBe(
+      true,
+    );
+    await post({ intent: 'untake-suggestion' });
+    expect((await prisma.assignment.findUniqueOrThrow({ where: { id } })).fromSuggestion).toBe(
+      false,
+    );
+  });
 
   it('is sent with the task, apart from the answer, which starts empty', async () => {
     const { id, cookie } = await claimed();

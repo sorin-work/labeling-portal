@@ -274,6 +274,8 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
           {editable ? 'Your revised answer' : 'Your answer'}
         </h2>
         <LabelingInterface
+          // a history of its own for editing; going read-only and back adds no steps
+          key={editable ? 'edit' : 'view'}
           schema={schema}
           data={taskData}
           value={editable ? value : answer}

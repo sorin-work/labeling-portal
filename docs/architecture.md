@@ -523,8 +523,21 @@ meanings on one page.
   no key, approving takes two keys. Removing a box takes Delete or Backspace
   on a box that was selected first, and undo brings it back. Removing a span
   takes Delete (Backspace is left to text boxes), a span is let go when the
-  cursor moves into a text box, and the last removal can be put back with the
-  "Undo" next to it or Ctrl+Z.
+  cursor moves into a text box, and undo brings it back.
+- **Undo and redo for spans** use the same `domain/history.ts` as boxes, the
+  same keys (Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y for redo, in both interfaces)
+  and two buttons. Marking, removing and
+  changing the type of a span are a step each, and the picked span travels
+  with every step. An answer set from outside, "Start from the suggestion"
+  or a tab's unsaved work put back, is a step of its own, so undo returns to
+  the answer before it and stops there. An undo back to the answer before
+  the suggestion also takes back the server's mark that it was taken
+  (`intent=untake-suggestion`), and a redo marks it again, so the quality
+  page does not count an answer as started from a suggestion it no longer
+  holds. The live region says what came back,
+  went or changed type (`describeSpanStep` in `domain/spans.ts`). The history
+  lives in memory for one assignment: a reload starts from the draft with
+  none, as for boxes.
 - **Rows that are only listed.** A row marked `passive` shows up in the list
   of shortcuts but is not handed out by the key map: Tab is the browser's,
   and Space and Escape in the box interface only mean something while the
@@ -926,6 +939,42 @@ expired.
   request and needs nothing.
 - **Not here**: a list of sessions with device and time. That needs a table of
   sessions and a write on every sign-in, which a version number does not.
+
+## Notifications
+
+The app sends no mail. People are told about their work inside it: a
+`Notification` row (person, organisation, kind, project, link, detail,
+created, read) is written in the same transaction as the event, through
+`notify` in `app/models/notifications.server.ts`, so a refused or rolled
+back change tells nobody, and nobody is told about their own action. The
+header shows the unread count for the signed-in organisation, one count on
+`(userId, readAt)` per page, and `/notifications` lists them 50 to a page,
+unread ones first, with "Show older". Loading the page changes nothing, so a
+link from another site or a prefetch cannot mark anything read: once it is
+on screen the page posts a mark-as-read (also a "Mark all as read" button),
+which covers every unread one up to the newest one shown, so one that came
+in after the page loaded stays unread. That post also removes read ones
+older than 90 days, so no background job is needed for it. The notices for
+changed instructions go to every member of the project, so they are written
+after the settings save has committed and do not hold the project row.
+
+| Event                                           | Who is told                                |
+| ----------------------------------------------- | ------------------------------------------ |
+| Work sent back or fixed (`recordReview`)        | the annotator                              |
+| A dispute opened                                | the organisation's admins and managers     |
+| A dispute settled                               | the annotator and the reviewer who decided |
+| A gold rescore changed a score (`applyRescore`) | that annotator, only with gold feedback on |
+| A claim released by a manager (`releaseClaim`)  | the annotator                              |
+| Changed instructions (settings save)            | the project's members                      |
+
+A notification holds what its sentence needs (a task number, an outcome,
+two scores, who acted), never an answer, feedback or a reason. A rescore
+says the task was gold, which gold feedback already tells the annotator
+after they hand it in; without feedback no notice is written, or it would
+mark which tasks were gold. A dispute goes to the managers and not to every
+reviewer who could settle it; reviewers see the count on the Disputes tab.
+Mail through an SMTP server the owner runs was left out: it brings bounces
+and unsubscribing, and can be a later item.
 
 ## Audit trail
 

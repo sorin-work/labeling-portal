@@ -19,6 +19,7 @@ or fix the work.
 - **Keyboard shortcuts** for every action: a key for each label (1 to 9, 0,
   then letters), a rubric that can be typed, keys for skipping, reviewing and
   fixing, and a list of them behind `?` on every labeling page
+- **Undo and redo** for entity spans and boxes (Ctrl+Z, Ctrl+Shift+Z)
 - **Box editing**: move and resize boxes by dragging or with the arrow keys,
   zoom and pan the image, undo and redo. Reviewers and managers get the same
   zoomable picture without the editing
@@ -77,6 +78,10 @@ or fix the work.
 - **Export** of finished labels as JSON Lines or CSV (both can be imported
   again), COCO, YOLO or Pascal VOC for boxes and CoNLL tags for entities,
   with pseudonyms in place of annotator addresses
+- **Notifications** inside the app (no mail): send-backs and corrections,
+  disputes opened and settled, a changed gold score where gold feedback is
+  on, a claim a manager released and changed instructions, with an unread
+  count in the header
 - **Audit trail**: every change managers, reviewers and admins make to
   projects, pay, schema, members, people, gold tasks, reviews and disputes,
   plus sign-ins, lockouts and downloads, on a project's activity tab and on

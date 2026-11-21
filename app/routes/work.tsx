@@ -26,6 +26,7 @@ import {
 import { extensionPayNote } from '~/domain/active-time';
 import { startOfUtcDay } from '~/domain/daily-limit';
 import { droppedNote, fitDraft } from '~/domain/drafts';
+import { sameAnswer } from '~/domain/gold';
 import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { SKIP_REASONS } from '~/domain/skip';
@@ -41,6 +42,7 @@ import { notFound } from '~/lib/http';
 import { projectSchema } from '~/models/projects.server';
 import {
   claimNextTask,
+  clearSuggestionTaken,
   extendAssignment,
   releaseAssignment,
   markSuggestionTaken,
@@ -183,6 +185,11 @@ export async function action({ request, params }: Route.ActionArgs) {
     const marked = await markSuggestionTaken(assignment.id, user.id);
     return data({ error: marked ? null : 'This task is no longer yours.' });
   }
+  if (intent === 'untake-suggestion') {
+    // undone past "Start from the suggestion": the answer is no longer started from it
+    const cleared = await clearSuggestionTaken(assignment.id, user.id);
+    return data({ error: cleared ? null : 'This task is no longer yours.' });
+  }
 
   if (intent === 'take-back') {
     const id = String(form.get('submissionId') ?? '');
@@ -275,12 +282,34 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
   const [answer, setAnswer] = useState<Answer | null>(assignment.draft);
   const [fromSuggestion, setFromSuggestion] = useState(loaderData.suggestion?.taken ?? false);
   const suggestionTaken = useFetcher();
+  // the answer just before the suggestion was taken on this page, so an undo
+  // that goes back to it can take the mark back too
+  const beforeTake = useRef<Answer | null | undefined>(undefined);
   const takeSuggestion = () => {
     if (!loaderData.suggestion) return;
+    beforeTake.current = answer;
     setAnswer(structuredClone(loaderData.suggestion.answer));
     setFromSuggestion(true);
     // the server keeps that it was taken; the submission reads it from there
     suggestionTaken.submit({ intent: 'take-suggestion' }, { method: 'post' });
+  };
+  /**
+   * Every change to the answer. Undo can go back past "Start from the
+   * suggestion" (spans keep a history): then the answer is not started from
+   * it any more, and the server is told, and a redo marks it again.
+   */
+  const changeAnswer = (next: Answer) => {
+    setAnswer(next);
+    const suggestion = loaderData.suggestion?.answer;
+    if (beforeTake.current === undefined || !suggestion) return;
+    const before = beforeTake.current ?? emptyAnswer(schema, imageSize);
+    if (fromSuggestion && sameAnswer(next, before) && !sameAnswer(next, suggestion)) {
+      setFromSuggestion(false);
+      suggestionTaken.submit({ intent: 'untake-suggestion' }, { method: 'post' });
+    } else if (!fromSuggestion && sameAnswer(next, suggestion)) {
+      setFromSuggestion(true);
+      suggestionTaken.submit({ intent: 'take-suggestion' }, { method: 'post' });
+    }
   };
   // A text without entities or an image without objects is submitted as it
   // is: nothing marked is the answer. For boxes that needs the loaded image.
@@ -399,7 +428,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
               schema={schema}
               data={task.data}
               value={answer}
-              onChange={setAnswer}
+              onChange={changeAnswer}
               onImageSize={setImageSize}
               onImageFailed={setImageFailed}
               viewKey={assignment.id}

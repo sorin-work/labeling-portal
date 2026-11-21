@@ -30,6 +30,7 @@ export default [
     route('people', 'routes/people.tsx'),
     route('audit', 'routes/audit.tsx'),
     route('account', 'routes/account.tsx'),
+    route('notifications', 'routes/notifications.tsx'),
     route('my-work/:assignmentId', 'routes/my-work-revise.tsx'),
     route('projects/:projectId', 'routes/project-layout.tsx', [
       index('routes/project-overview.tsx'),
