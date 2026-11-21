@@ -32,7 +32,11 @@ mkdir "$work/bin"
 cat >"$work/bin/pg_dump" <<'STUB'
 #!/bin/sh
 echo attempt >>"$STATE/attempts"
-[ ! -e "$STATE/fail" ] || exit 1
+if [ -e "$STATE/fail" ]; then
+  echo "pg_dump: error: connection to server failed" >&2
+  echo "pg_dump: detail: it's down" >&2
+  exit 1
+fi
 for arg in "$@"; do
   case $arg in
     --file=*)
@@ -43,8 +47,11 @@ for arg in "$@"; do
 done
 STUB
 
-# psql has three jobs. The loop asks how many tables there are: none with
+# psql has four jobs. The loop asks how many tables there are: none with
 # "no-tables", as on a new stack before the app has applied the migrations.
+# After each dump it writes a row to "BackupRun", which is kept here as one
+# line of its variables in $STATE/runs; with "no-status-table" the table is
+# missing and the insert fails.
 # A restore asks whether a database exists and who is connected to one. And
 # a restore renames databases, which this does to the pretend set the way the
 # server would: a rename fails when the database is missing, when the new
@@ -84,6 +91,11 @@ case "$*" in
       esac
     done
     finish
+    ;;
+  *" ok="*)
+    cat >/dev/null
+    [ ! -e "$STATE/no-status-table" ] || exit 3
+    echo "$*" >>"$STATE/runs"
     ;;
   *pg_database*)
     name=$(echo "$*" | sed -E "s/.*datname = '([^']+)'.*/\1/")
@@ -173,8 +185,10 @@ begin() {
   : >"$STATE/naps"
   : >"$STATE/calls"
   : >"$STATE/log"
+  : >"$STATE/runs"
   export STATE BACKUP_DIR ROUNDS AHEAD
   export BACKUP_KEEP=3 BACKUP_INTERVAL_SECONDS=$DAY PGDATABASE=labeling
+  unset BACKUP_STATUS
 }
 
 # Runs the loop until the stand-in for sleep stops it. The timeout is for a
@@ -205,6 +219,27 @@ expect() {
 begin "no dumps yet: one dump, then it waits"
 run_loop
 expect 1 1
+
+begin "a dump that worked is recorded with its file, size and interval"
+run_loop
+expect 1 1
+written=$(ls "$BACKUP_DIR" | grep '\.dump$')
+[ "$(count "$STATE/runs")" -eq 1 ] || fail "expected one row, saw $(count "$STATE/runs")"
+for part in "ok=true" "file=$written" "bytes=4" "interval=$DAY" "message= "; do
+  grep -q -F -- "$part" "$STATE/runs" || fail "the row has no $part: $(cat "$STATE/runs")"
+done
+
+begin "without the BackupRun table the dump still counts, and the log says so"
+touch "$STATE/no-status-table"
+run_loop
+expect 1 1
+grep -q "could not record this attempt" "$STATE/log" || fail "the log does not say that the row was not written"
+
+begin "BACKUP_STATUS=off writes no rows"
+export BACKUP_STATUS=off
+run_loop
+expect 1 1
+[ "$(count "$STATE/runs")" -eq 0 ] || fail "a row was written with BACKUP_STATUS=off"
 
 begin "a new stack without tables: it waits and dumps nothing"
 touch "$STATE/no-tables"
@@ -317,6 +352,10 @@ run_loop
 [ "$(dump_count)" -eq 3 ] || fail "expected the 3 old dumps to be left alone, found $(dump_count)"
 [ "$(count "$STATE/attempts")" -le "$(count "$STATE/naps")" ] || fail "two attempts without a pause in between"
 [ -z "$(ls -A "$BACKUP_DIR" | grep '\.partial$' || true)" ] || fail "a partial dump was left behind"
+[ "$(count "$STATE/runs")" -eq "$(count "$STATE/attempts")" ] || fail "not every failed attempt has a row"
+grep -q -F "ok=false" "$STATE/runs" || fail "the failed attempt is not recorded as failed"
+grep -q -F "message=pg_dump: detail: it's down" "$STATE/runs" || fail "the row does not carry the last line pg_dump wrote: $(cat "$STATE/runs")"
+grep -q "pg_dump: error: connection to server failed" "$STATE/log" || fail "what pg_dump said is not in the log"
 echo "ok: $case_name"
 
 begin "once, with every other dump dated in the future: all of them stay"
