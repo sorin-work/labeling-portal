@@ -44,7 +44,7 @@ export async function action({ request }: Route.ActionArgs) {
   if (!user || user.sessionVersion !== pending.v) throw redirect('/login');
 
   const key = `${pending.userId}|${clientAddress(request) ?? 'any'}`;
-  const limit = twoStepLimiter.hit(key);
+  const limit = await twoStepLimiter.hit(key);
   if (!limit.allowed) {
     if (limit.justLocked) {
       await logActivity(prisma, {
@@ -71,7 +71,7 @@ export async function action({ request }: Route.ActionArgs) {
             : 'That code is not right.';
     return data<ActionData>({ error }, { status: 401 });
   }
-  twoStepLimiter.reset(key);
+  await twoStepLimiter.reset(key);
   await logActivity(prisma, {
     orgId: pending.orgId,
     actorId: pending.userId,

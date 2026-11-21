@@ -36,7 +36,7 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: 'Enter your email and password.', email }, { status: 400 });
   }
   const key = email.trim().toLowerCase();
-  const limit = loginLimiter.hit(key);
+  const limit = await loginLimiter.hit(key);
   if (!limit.allowed) {
     if (limit.justLocked) await recordLockout(key);
     const minutes = Math.ceil(limit.retryAfterSeconds / 60);
@@ -52,7 +52,7 @@ export async function action({ request }: Route.ActionArgs) {
   if (!result) {
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
-  loginLimiter.reset(key);
+  await loginLimiter.reset(key);
   const signingIn = {
     userId: result.user.id,
     orgId: result.membership.orgId,

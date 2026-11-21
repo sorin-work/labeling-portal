@@ -101,8 +101,8 @@ export function apiError(status: number, error: string, headers?: HeadersInit): 
   return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store', ...headers } });
 }
 
-/** 120 requests a minute per token, in memory and per process like the sign-in limiter. */
-export const apiLimiter = new RateLimiter(120, 60_000);
+/** 120 requests a minute per token, counted in the database for every process together. */
+export const apiLimiter = new RateLimiter('api', 120, 60_000);
 
 /** `lastUsedAt` is written at most this often, so a read is not a write every time. */
 const LAST_USED_EVERY_MS = 60_000;
@@ -138,7 +138,7 @@ export async function requireApiUser(request: Request, now = new Date()): Promis
   });
   if (!membership)
     throw apiError(401, 'The token belongs to someone who has left the organisation.');
-  const limit = apiLimiter.hit(token.id, now.getTime());
+  const limit = await apiLimiter.hit(token.id, now.getTime());
   if (!limit.allowed) {
     throw apiError(429, 'Too many requests with this token.', {
       'Retry-After': String(limit.retryAfterSeconds),
