@@ -79,6 +79,13 @@ export class RateLimiter {
     };
   }
 
+  /** Takes one attempt back, for a try that was reserved and turned out right. */
+  async giveBack(key: string, detail?: string): Promise<void> {
+    await prisma.$executeRaw`
+      UPDATE "RateLimitHit" SET count = GREATEST(count - 1, 0)
+      WHERE key = ${this.key(key, detail)}`;
+  }
+
   async reset(key: string, detail?: string): Promise<void> {
     await prisma.rateLimitHit.deleteMany({ where: { key: this.key(key, detail) } });
   }
@@ -128,6 +135,13 @@ export const loginLimiter = new RateLimiter('login', 10, 15 * 60_000);
  */
 export const loginEmailLimiter = new RateLimiter('login-email', 30, 15 * 60_000);
 export const BUSY_EMAIL_TRIES = 3;
+
+/** The wait of a slowed sign-in. An object, so that tests can see the waits instead of sitting them out. */
+export const signInPause = {
+  wait(ms: number): Promise<void> {
+    return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+  },
+};
 
 /**
  * Five wrong second-step codes per account and client address per fifteen

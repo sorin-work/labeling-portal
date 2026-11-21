@@ -4,7 +4,13 @@ import { Alert, Button, Field, Input } from '~/components/ui';
 import { authenticate, getCurrentUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { clientAddress } from '~/lib/client-address.server';
-import { BUSY_EMAIL_TRIES, loginEmailLimiter, loginLimiter } from '~/lib/rate-limit.server';
+import { signInDelayMs, signInKey } from '~/domain/sign-in-delay';
+import {
+  BUSY_EMAIL_TRIES,
+  loginEmailLimiter,
+  loginLimiter,
+  signInPause,
+} from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
 import { createUserSession, startPendingSignIn } from '~/lib/session.server';
 import { logActivity } from '~/models/activity.server';
@@ -40,30 +46,36 @@ export async function action({ request }: Route.ActionArgs) {
       { status: 400 },
     );
   }
-  const key = email.trim().toLowerCase();
-  const address = clientAddress(request) ?? 'any';
-  // only wrong passwords count, per email and address; while many places are
-  // guessing at an email, each address gets fewer tries of its own
-  const [pair, everywhere] = await Promise.all([
-    loginLimiter.peek(key, Date.now(), address),
-    loginEmailLimiter.peek(key),
-  ]);
-  const tries =
-    everywhere.count >= loginEmailLimiter.limitPerWindow
-      ? BUSY_EMAIL_TRIES
-      : loginLimiter.limitPerWindow;
-  if (pair.count >= tries) return tooMany(email, pair.retryAfterSeconds || 15 * 60);
+  const key = signInKey(email);
+  const address = clientAddress(request);
+  // the try is reserved before the password is checked, in one statement, so
+  // a burst of parallel requests gets no more tries than one at a time; a
+  // right password gives its try back
+  const reserved = await loginLimiter.hit(key, Date.now(), address ?? 'any');
+  if (address === null) {
+    // all clients look alike, so nobody is refused, which would lock the
+    // owner out too: wrong attempts are slowed down instead
+    await signInPause.wait(signInDelayMs(reserved.count));
+  } else {
+    // per email and address; while many places guess at an email, each
+    // address gets fewer tries of its own
+    const everywhere = await loginEmailLimiter.peek(key);
+    const tries =
+      everywhere.count >= loginEmailLimiter.limitPerWindow
+        ? BUSY_EMAIL_TRIES
+        : loginLimiter.limitPerWindow;
+    if (reserved.count > tries) {
+      // recorded once, by the first refused try of this email and address
+      if (reserved.count === tries + 1) await recordLockout(key);
+      return tooMany(email, reserved.retryAfterSeconds || 15 * 60);
+    }
+  }
   const result = await authenticate(email, password);
   if (!result) {
-    const [counted] = await Promise.all([
-      loginLimiter.hit(key, Date.now(), address),
-      loginEmailLimiter.hit(key),
-    ]);
-    // recorded once, by the wrong password that locks this email and address
-    if (counted.count === tries) await recordLockout(key);
+    await loginEmailLimiter.hit(key);
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
-  await loginLimiter.reset(key, address);
+  await loginLimiter.giveBack(key, address ?? 'any');
   const signingIn = {
     userId: result.user.id,
     orgId: result.membership.orgId,
