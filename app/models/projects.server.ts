@@ -303,7 +303,8 @@ export async function updateProject(
   actorId: string,
   now = new Date(),
 ): Promise<UpdateProjectResult> {
-  return prisma.$transaction(async (tx) => {
+  let tellMembers: { orgId: string; name: string } | null = null;
+  const result: UpdateProjectResult = await prisma.$transaction(async (tx) => {
     // One save at a time per project, so the check and the write below see
     // the same saved schema. This is the lock an UPDATE of the row takes
     // anyway. FOR UPDATE would also keep back everything that inserts a row
@@ -367,29 +368,35 @@ export async function updateProject(
         createdAt: now,
       });
     }
-    // the people who work on the project hear that the instructions changed,
-    // as the work page's banner tells them when they next open a task
-    if (instructionsChanged) {
-      const [members, actor] = await Promise.all([
-        tx.projectMember.findMany({ where: { projectId }, select: { userId: true } }),
-        tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { name: true } }),
-      ]);
-      await notify(
-        tx,
-        members.map((m) => ({
-          userId: m.userId,
-          orgId: before.orgId,
-          projectId,
-          kind: 'project.instructions' as const,
-          link: `/projects/${projectId}`,
-          detail: { projectName: project.name, actorName: actor.name },
-          createdAt: now,
-        })),
-        actorId,
-      );
-    }
+    if (instructionsChanged) tellMembers = { orgId: before.orgId, name: project.name };
     return { ok: true, project, changes, schemaChange };
   });
+  // The people who work on the project hear that the instructions changed,
+  // as the work page's banner tells them when they next open a task. Written
+  // after the save has committed, so a long member list does not keep the
+  // project row (and the submissions that read it) waiting. A failure here
+  // leaves the save in place and only the notices missing.
+  if (result.ok && tellMembers) {
+    const { orgId, name } = tellMembers;
+    const [members, actor] = await Promise.all([
+      prisma.projectMember.findMany({ where: { projectId }, select: { userId: true } }),
+      prisma.user.findUniqueOrThrow({ where: { id: actorId }, select: { name: true } }),
+    ]);
+    await notify(
+      prisma,
+      members.map((m) => ({
+        userId: m.userId,
+        orgId,
+        projectId,
+        kind: 'project.instructions' as const,
+        link: `/projects/${projectId}`,
+        detail: { projectName: name, actorName: actor.name },
+        createdAt: now,
+      })),
+      actorId,
+    );
+  }
+  return result;
 }
 
 /**
