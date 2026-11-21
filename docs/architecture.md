@@ -857,8 +857,11 @@ same way.
 - **A claim a manager releases is paid on hourly projects.** The annotator
   did nothing wrong, so `releaseClaim` credits the time the draft saves
   recorded (`draftSeconds`) through the same `lockWorkClock` and
-  `creditTime` path as a submission, capped like a first submission and
-  ending at the claim's limit when it had run out. The released row gets the
+  `creditTime` path as a submission, capped like a first submission. A
+  claim past its time limit has run out even when no expiry has marked it
+  yet: the release marks it expired and credits nothing, as the expiry
+  would, so which of the two runs first never changes the pay. The released
+  row gets the
   credited seconds, the project's rate and pay mode and a `payableAt` of the
   release, so it falls into the period of that day. Payouts and earnings
   read it as time without a task (`PaidWork.released`). The check
