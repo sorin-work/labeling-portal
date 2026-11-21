@@ -202,6 +202,12 @@ in a circle:
    the submission to reserve and the reviewer's other reservations in one
    statement `ORDER BY id`).
 
+Closing a pay period adds one lock in front of this order, the
+organisation's pay run lock, which a close takes before any assignment row.
+The one exception is a write that sets a payable date: it takes the lock
+shared after its own rows, which cannot close a circle for the reason given
+under "Pay runs" below.
+
 The slot counter is why the task row comes before the assignment row: when an
 assignment enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release,
 an expiry, a deletion), the trigger updates its task's row inside the
@@ -1255,9 +1261,67 @@ same way.
 - **Who sees what.** `/payouts` is for managers and shows the organisation.
   `/earnings` shows a person their own blocks, computed by the same code as
   their line on `/payouts`. Gold tasks are paid like other tasks, the
-  qualification test is not. The portal does not record payments, and the
-  earnings page says so: it separates what is payable for the period from
-  what is waiting for review and what was sent back.
+  qualification test is not. The earnings page separates what is payable
+  for the period from what is waiting for review and what was sent back, and
+  marks payable work as paid once a closed run holds it.
+
+## Pay runs
+
+An admin closes a period on `/payouts` as paid (`closePayRun` in
+`app/models/pay-runs.server.ts`). That copies the payout report of the
+period, for every project, into a `PayRun` and its `PayRunLine`s, with the
+names, rates and amounts as they are at that moment, and sets
+`Assignment.payRunId` on every piece of work in it. The CSV of a closed run
+is read from its lines, so it is the same file forever, whatever is renamed
+or deleted later. `/earnings` shows each block as paid, with the day the run
+was closed, or as not paid yet. A closing is in the audit trail
+(`payrun.closed`), and so is each download of a run's CSV.
+
+- **Only a period that is over.** Work becomes payable at the moment it is
+  accepted, so a period whose last day has not ended in UTC could still
+  gain work after the close; such a close is refused (`closeRefusal` in
+  `app/domain/pay-runs.ts`), and so is one in the first five minutes after
+  the period ends (`CLOSE_GRACE_MS`): that is longer than any transaction may
+  run (30 seconds), so work accepted by a transaction that began just before
+  midnight has been written, or given up, before the close looks. Two runs
+  never share a day.
+- **No work in two runs.** The close marks exactly the payable rows of the
+  period that have no run (`payRunId IS NULL`), after locking them, and
+  computes the lines from those rows, so the lines and the marks agree.
+- **A closed run never changes.** Triggers refuse `UPDATE`, `DELETE` and
+  `TRUNCATE` on `PayRun` and `PayRunLine`, except the cascade of deleting
+  the whole organisation. Work a run paid keeps its run, payable date,
+  active time, rate, pay mode and status (`Assignment_paid_is_final`); a
+  gold rescore or an overturned correction that leaves it accepted is still
+  allowed. A run is never reopened. Mistakes and bonuses would need
+  adjustment lines, which are not built yet.
+- **Late credit goes to the next run.** Nothing may become payable inside a
+  closed period. When a write gives work a payable date on a day a run
+  covers (a resubmission of work taken back keeps the date of its first
+  submission, for one), a trigger moves the date to the moment of the write
+  (`Assignment_payable_not_in_closed_run`), which no run covers yet, so the
+  work is paid with the next run. Revising time is added only to work that
+  is not payable yet (sent back), so a closed run never misses time it paid
+  for, and time added later is paid with the work in the run that pays it.
+- **Lock order.** Closing takes the organisation's pay run lock (a
+  transaction advisory lock on `pay-run:<orgId>`) exclusively, then the
+  assignment rows of the period in id order with `FOR NO KEY UPDATE` (so the
+  foreign-key checks of reviews, disputes, spot checks and rescores on those
+  rows do not wait), and no task row or work clock. Every write that sets a
+  payable date takes the same lock shared, in the trigger above, so a close
+  and such a write run one after the other: either the write sees the run
+  and moves the date, or the close sees the written date and pays it.
+- **The one exception to "pay run lock first".** The trigger takes the
+  shared lock after its transaction already holds its task and assignment
+  rows, so it is the one place where the pay run lock comes after rows. It
+  cannot close a circle today: the close only waits for rows that are
+  already payable in the period and have no run, and no write sets a new
+  payable date on such a row. The writes that set one start from a row that
+  is not payable (a submission, a review decision, an overturned send-back,
+  a resubmission, a manager's release); taking work back clears the date,
+  which takes no lock; an overturned correction keeps its date. A future
+  write that moves the payable date of work that is already payable has to
+  take the pay run lock before its rows.
 
 ## Changing the schema once work exists
 

@@ -55,6 +55,7 @@ export const ACTIVITY_ACTIONS = {
   'export.labels': 'Labels downloaded',
   'export.quality': 'Quality table downloaded',
   'export.payouts': 'Pay report downloaded',
+  'payrun.closed': 'Pay period closed as paid',
 } as const;
 
 export type ActivityAction = keyof typeof ACTIVITY_ACTIONS;
@@ -330,7 +331,14 @@ export function describeActivity(action: string, detail: unknown): string {
     case 'export.quality':
       return `downloaded the quality table${project}`;
     case 'export.payouts':
-      return `downloaded the pay report for ${String(d.from)} to ${String(d.to)}${project}`;
+      return d.runId
+        ? `downloaded the closed pay run for ${String(d.from)} to ${String(d.to)}`
+        : `downloaded the pay report for ${String(d.from)} to ${String(d.to)}${project}`;
+    case 'payrun.closed': {
+      const total =
+        typeof d.totalCents === 'number' ? `$${centsToDecimal(d.totalCents)}` : 'an amount';
+      return `closed ${String(d.from)} to ${String(d.to)} as paid: ${total} for ${plural(d.people, 'person', 'people')}`;
+    }
     default:
       return action;
   }

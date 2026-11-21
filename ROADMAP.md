@@ -62,7 +62,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 22  | Taking back the last submission              | Shipped | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
 | 24  | Notifications inside the app                 | Shipped | ui            | M    | -          |
-| 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
+| 25  | Marking a pay period as paid                 | Shipped | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Shipped | ops           | M    | -          |
 | 27  | Undo and redo for entity spans               | Shipped | labeling      | S    | -          |
 | 28  | Two-step sign-in                             | Shipped | security      | M    | 20         |
@@ -76,38 +76,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 Everything that was here has shipped.
 
 ## Later
-
-### 25. Marking a pay period as paid
-
-Improves item 5, which says on the page that nothing is marked as paid. The
-payouts report is worked out again every time it is opened, and the CSV is
-what the owner pays from. Nothing records which CSV was paid, so paying a
-period twice, or forgetting a person, is only noticed by hand.
-
-- Data: `PayRun` (organisation, from, to, who closed it, when, total, note)
-  and `PayRunLine` (person, project, pay mode, rate, units, amount), copied
-  from `payoutReport` when an admin closes the period on `/payouts`. Each
-  payable assignment gets `payRunId`, set in the closing transaction with
-  `payRunId IS NULL` in the `where`, so no work is in two runs.
-- `/earnings` shows each block as paid (with the run's date) or not yet, and
-  `/payouts` lists the runs with their CSV, read from the lines, so the file
-  of a closed run is the same forever.
-- Tricky: the period. Work becomes payable "now" (`payableAt`), so closing a
-  period that ends today or later lets new work fall into it after the close.
-  Refuse a period that is not over in UTC, and refuse one that overlaps a run.
-- Tricky: hourly work is credited by stretches of time (`CreditedInterval`),
-  and a revision adds time later. Added time after the close belongs to the
-  next run, not to the closed one; that needs the credit to know its own date.
-- Tricky: an overturned send-back (item 9) becomes payable at the overturn, so
-  it lands in an open period, which is right. Nothing should ever move
-  `payableAt` into a closed period; a check constraint or a trigger can say
-  so.
-- Undecided: reopening a run. I lean towards no, with adjustment lines (an
-  amount and a reason, for one person) for mistakes and bonuses.
-- Audit entries for closing and for adjustments.
-- Tests: `tests/integration/payouts.test.ts`: close, refuse overlap and an
-  open period, earnings show paid, no assignment in two runs, revision time
-  after the close goes to the next run.
 
 ### 29. Ranking several responses
 
@@ -739,6 +707,24 @@ notices are written after the settings save commits. Left
 out, as the item suggested: mail through an SMTP server. Still open: no
 notice reaches someone who never opens the app, and a qualification test or
 a review queue that fills up tells nobody.
+
+### 25. Marking a pay period as paid
+
+`PayRun` and `PayRunLine`, copied from the payout report when an admin
+closes a period on `/payouts`, and `Assignment.payRunId` set in the same
+transaction on exactly the locked payable rows without a run. A period that
+is not over in UTC, or that overlaps a run, is refused. The CSV of a run is
+read from its lines, and `/earnings` shows each block as paid (with the day)
+or not yet. Triggers make runs and their lines append-only, keep the pay
+fields of paid work as they were, and move a payable date that lands on a
+closed day to the moment of the write, so late credit is paid in the next
+run; a pay run advisory lock orders a close against such writes. Closing
+and each run CSV download are in the audit trail. Decided: runs are never
+reopened. Revision time only goes to work that is not payable yet, so the
+credit needs no date of its own. Left out: adjustment lines for mistakes and
+bonuses, which the item leaned towards; they are the way to correct a run,
+and a later item. Still open: closing is for the whole organisation, not per
+project.
 
 ### 26. Background jobs that survive a restart
 

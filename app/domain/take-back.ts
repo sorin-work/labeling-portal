@@ -34,6 +34,8 @@ export type TakeBackState = {
    * extra slots or has a stored agreement)
    */
   agreementChecked: boolean;
+  /** a closed pay run paid it already (possible right after midnight) */
+  paid: boolean;
   isGold: boolean;
   /** the project shows the expected answer after a gold task is handed in */
   goldFeedback: boolean;
@@ -73,7 +75,7 @@ export function takeBackRefusal(state: TakeBackState, now: Date): TakeBackRefusa
   if (state.reviewStatus === 'PENDING') return state.held ? 'held' : null;
   if (state.reviewStatus === 'NOT_REQUIRED') {
     // accepted answers that were measured for agreement have been read
-    if (state.taskStatus !== 'OPEN' || state.agreementChecked) return 'complete';
+    if (state.taskStatus !== 'OPEN' || state.agreementChecked || state.paid) return 'complete';
     return null;
   }
   return 'reviewed';

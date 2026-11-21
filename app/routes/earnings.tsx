@@ -5,7 +5,7 @@ import { formatDuration } from '~/components/use-active-time';
 import { formatCents, type ProjectPayout } from '~/domain/payouts';
 import { requireUser } from '~/lib/auth.server';
 import { readRange } from '~/lib/dates';
-import { earningsReport } from '~/models/payouts.server';
+import { earningsReport, paidSplit } from '~/models/payouts.server';
 
 import type { Route } from './+types/earnings';
 
@@ -20,7 +20,11 @@ export function meta() {
 export async function loader({ request }: Route.LoaderArgs) {
   const { user, membership } = await requireUser(request);
   const range = readRange(new URL(request.url));
-  return { range, ...(await earningsReport(membership.orgId, user.id, range)) };
+  const [report, split] = await Promise.all([
+    earningsReport(membership.orgId, user.id, range),
+    paidSplit(membership.orgId, user.id, range),
+  ]);
+  return { range, ...report, split };
 }
 
 const tasks = (n: number) => (n === 1 ? '1 task' : `${n} tasks`);
@@ -49,7 +53,7 @@ const tableClass = 'w-full text-sm';
 const headClass = 'bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500';
 
 export default function Earnings({ loaderData }: Route.ComponentProps) {
-  const { range, payable, waiting, sentBack } = loaderData;
+  const { range, payable, waiting, sentBack, split } = loaderData;
   const notPayable = waiting.tasks + sentBack.tasks;
 
   return (
@@ -93,9 +97,8 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
         />
       </div>
       <p className="text-sm text-slate-600">
-        Nothing on this page is marked as paid: the portal does not record payments. “Payable” is
-        what you are owed for the period. When it is paid out is between you and your project
-        manager.
+        “Payable” is what you earned in the period. Work in a period an admin has closed as paid
+        shows as paid, with the day it was closed; the rest is not paid yet.
       </p>
 
       <section className="space-y-2">
@@ -110,6 +113,7 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
               <thead className={headClass}>
                 <tr>
                   <th className="px-4 py-2">Project</th>
+                  <th className="px-4 py-2">State</th>
                   <th className="px-4 py-2 text-right">Accepted tasks</th>
                   <th className="px-4 py-2 text-right">Active time</th>
                   <th className="px-4 py-2 text-right">Rate</th>
@@ -117,9 +121,17 @@ export default function Earnings({ loaderData }: Route.ComponentProps) {
                 </tr>
               </thead>
               <tbody>
-                <BlockRows blocks={payable.blocks} />
+                {split.paid.map((run) => (
+                  <BlockRows
+                    key={run.runId}
+                    blocks={run.blocks}
+                    state={`Paid, closed ${run.closedAt.toISOString().slice(0, 10)}`}
+                  />
+                ))}
+                <BlockRows blocks={split.unpaid.blocks} state="Not paid yet" />
                 <tr className="border-t border-slate-200 bg-slate-50/60 font-medium">
                   <td className="px-4 py-2">Total</td>
+                  <td />
                   <td className="px-4 py-2 text-right">{payable.tasks}</td>
                   <td className="px-4 py-2 text-right">{formatDuration(payable.seconds)}</td>
                   <td />

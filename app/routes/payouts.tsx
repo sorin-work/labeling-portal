@@ -1,12 +1,15 @@
 import { Fragment } from 'react';
-import { Form, Link } from 'react-router';
+import { data, Form, Link } from 'react-router';
 
-import { Button, EmptyState, Input, PageHeader, StatCard } from '~/components/ui';
+import { Alert, Button, EmptyState, Input, PageHeader, StatCard } from '~/components/ui';
 import { formatDuration } from '~/components/use-active-time';
+import { CLOSE_REFUSALS, closeRefusal, periodBounds } from '~/domain/pay-runs';
 import { formatCents } from '~/domain/payouts';
 import { requireRole } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { readRange } from '~/lib/dates';
+import { parseDay, readRange, toDay } from '~/lib/dates';
+import { redirectWithFlash } from '~/lib/flash.server';
+import { closePayRun, listPayRuns } from '~/models/pay-runs.server';
 import { payoutReport } from '~/models/payouts.server';
 
 import type { Route } from './+types/payouts';
@@ -15,23 +18,74 @@ export function meta() {
   return [{ title: 'Payouts · Labeling Portal' }];
 }
 
+const lastDay = (end: Date) => toDay(new Date(end.getTime() - 24 * 3600_000));
+
 export async function loader({ request }: Route.LoaderArgs) {
   const { membership } = await requireRole(request, ['ADMIN', 'PROJECT_MANAGER']);
   const range = readRange(new URL(request.url));
   const projectId = new URL(request.url).searchParams.get('project') || null;
-  const [report, projects] = await Promise.all([
+  const [report, projects, runs] = await Promise.all([
     payoutReport(membership.orgId, range, projectId),
     prisma.project.findMany({
       where: { orgId: membership.orgId },
       orderBy: { name: 'asc' },
       select: { id: true, name: true },
     }),
+    listPayRuns(membership.orgId),
   ]);
-  return { range, projectId, projects, ...report };
+  // whether the range on screen can be closed, for the button; the action checks again
+  const closable = closeRefusal(
+    periodBounds(range),
+    new Date(),
+    runs.map((r) => ({ start: r.periodStart, end: r.periodEnd })),
+  );
+  return {
+    range,
+    projectId,
+    projects,
+    ...report,
+    canClose: membership.role === 'ADMIN',
+    closeRefused: closable ? CLOSE_REFUSALS[closable] : null,
+    runs: runs.map((r) => ({
+      id: r.id,
+      from: toDay(r.periodStart),
+      to: lastDay(r.periodEnd),
+      closedBy: r.closedByName,
+      closedAt: r.closedAt,
+      totalCents: r.totalCents,
+      note: r.note,
+      lines: r._count.lines,
+    })),
+  };
 }
 
-export default function Payouts({ loaderData }: Route.ComponentProps) {
-  const { range, lines, totalCents, pending, projects, projectId } = loaderData;
+/**
+ * POST: an admin closes the period on screen as paid, for the whole
+ * organisation. Refused for a period that is not over or that overlaps a
+ * closed run.
+ */
+export async function action({ request }: Route.ActionArgs) {
+  const { membership, user } = await requireRole(request, ['ADMIN']);
+  const form = await request.formData();
+  const from = parseDay(String(form.get('from') ?? ''));
+  const to = parseDay(String(form.get('to') ?? ''));
+  if (!from || !to) return data({ error: 'Choose the first and the last day.' }, { status: 400 });
+  const range = { from, to };
+  const note = String(form.get('note') ?? '')
+    .trim()
+    .slice(0, 500);
+  const closed = await closePayRun(membership.orgId, user.id, range, note);
+  if (!closed.ok) return data({ error: CLOSE_REFUSALS[closed.error] }, { status: 409 });
+  return redirectWithFlash(
+    request,
+    `/payouts?from=${range.from}&to=${range.to}`,
+    `Closed ${range.from} to ${range.to} as paid: ${formatCents(closed.totalCents)}. Its CSV is kept as it is now.`,
+  );
+}
+
+export default function Payouts({ loaderData, actionData }: Route.ComponentProps) {
+  const { range, lines, totalCents, pending, projects, projectId, runs, canClose, closeRefused } =
+    loaderData;
   const query = new URLSearchParams({
     ...range,
     ...(projectId ? { project: projectId } : {}),
@@ -79,6 +133,36 @@ export default function Payouts({ loaderData }: Route.ComponentProps) {
           This month
         </Link>
       </Form>
+
+      {actionData?.error && <Alert>{actionData.error}</Alert>}
+      {canClose && !projectId && (
+        <Form
+          method="post"
+          className="flex flex-wrap items-end gap-3 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-slate-200"
+          onSubmit={(event) => {
+            if (
+              !confirm(
+                `Close ${range.from} to ${range.to} as paid? A closed run cannot be reopened.`,
+              )
+            )
+              event.preventDefault();
+          }}
+        >
+          <input type="hidden" name="from" value={range.from} />
+          <input type="hidden" name="to" value={range.to} />
+          <label className="min-w-64 flex-1">
+            <span className="mb-1 block text-slate-600">Note (optional)</span>
+            <Input name="note" maxLength={500} placeholder="Paid by bank transfer on ..." />
+          </label>
+          <Button type="submit" disabled={closeRefused !== null}>
+            Close this period as paid
+          </Button>
+          <p className="w-full text-slate-500">
+            {closeRefused ??
+              'Copies this report for every project into a closed run and marks the work in it as paid. Work that becomes payable for a closed day later is paid in the next run.'}
+          </p>
+        </Form>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Total owed" value={formatCents(totalCents)} />
@@ -151,6 +235,36 @@ export default function Payouts({ loaderData }: Route.ComponentProps) {
           </table>
         </div>
       )}
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Closed runs
+        </h2>
+        {runs.length === 0 ? (
+          <EmptyState title="No period has been closed as paid yet" />
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-lg bg-white text-sm shadow-sm ring-1 ring-slate-200">
+            {runs.map((run) => (
+              <li key={run.id} className="flex flex-wrap items-center gap-3 px-4 py-2">
+                <span className="font-medium">
+                  {run.from} to {run.to}
+                </span>
+                <span>{formatCents(run.totalCents)}</span>
+                <span className="text-slate-500">
+                  closed by {run.closedBy} on {run.closedAt.toISOString().slice(0, 10)}
+                  {run.note && ` · ${run.note}`}
+                </span>
+                <a
+                  href={`/payouts/runs/${run.id}/export`}
+                  download
+                  className="ml-auto text-indigo-700 hover:underline"
+                >
+                  CSV
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

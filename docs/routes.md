@@ -34,7 +34,7 @@ lists who can open each page.
 | `/my-work`                          | Your submissions, feedback, corrections  | annotators                                   |
 | `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work               |
 | `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators)  |
-| `/payouts`                          | Pay report for a date range              | admin, project manager                       |
+| `/payouts`                          | Pay report; closed runs; close (admin)   | admin, project manager                       |
 | `/people`                           | Members, roles, passwords, sessions      | admin                                        |
 | `/audit`                            | The organisation's audit trail           | admin                                        |
 | `/account`                          | Your password, sessions, API tokens      | signed in                                    |
@@ -76,6 +76,7 @@ These are resource routes that return files or JSON instead of pages.
 | `GET /projects/:id/example?format=csv\|jsonl`                  | Example import file for the project's schema                             |
 | `GET /projects/:id/quality.csv`                                | Annotator quality table                                                  |
 | `GET /payouts/export?from=&to=`                                | Payout CSV, one row per person, project, rate                            |
+| `GET /payouts/runs/:runId/export`                              | The CSV of a closed pay run, read from its copied lines                  |
 | `GET /audit/export?person=&action=&project=&from=&to=`         | Audit CSV with the filters of `/audit`, oldest first (admins)            |
 
 Projects from another organisation answer 404, not 403, so their ids cannot

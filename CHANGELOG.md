@@ -207,6 +207,12 @@
 
 ### Pay and export
 
+- Closing a pay period as paid. On `/payouts` an admin closes a period that
+  is over; the report is copied into a pay run with its own CSV that never
+  changes, and the work in it is marked so it is in one run only. Runs are
+  never reopened or changed. Work that would become payable on a closed day
+  later is paid in the next run instead. `/earnings` shows paid and not yet
+  paid work, and closings are in the audit trail
 - A claim a manager releases on an hourly project is paid the working time
   its draft saves recorded, credited like a submission's time, so the same
   minutes are not paid twice. It shows on the payouts and earnings pages as

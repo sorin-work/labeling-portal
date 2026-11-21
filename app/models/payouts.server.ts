@@ -18,6 +18,7 @@ function bounds(range: PayoutRange): { gte: Date; lt: Date } {
 
 const WORK_SELECT = {
   status: true,
+  payRunId: true,
   activeSeconds: true,
   rateCents: true,
   payMode: true,
@@ -136,5 +137,38 @@ export async function earningsReport(orgId: string, userId: string, range: Payou
     payable: ownBlocks(payable),
     waiting: ownBlocks(waiting.map(toPaidWork)),
     sentBack: ownBlocks(sentBack.map(toPaidWork)),
+  };
+}
+
+/**
+ * The person's payable work in the range split by whether a closed run paid
+ * it: the unpaid blocks, and the blocks of each run that paid some of it,
+ * with the run's date.
+ */
+export async function paidSplit(orgId: string, userId: string, range: PayoutRange) {
+  const rows = await prisma.assignment.findMany({
+    where: {
+      project: { orgId },
+      userId,
+      status: { in: ['SUBMITTED', 'RELEASED'] },
+      payableAt: bounds(range),
+    },
+    select: WORK_SELECT,
+  });
+  const byRun = new Map<string | null, WorkRow[]>();
+  for (const row of rows) byRun.set(row.payRunId, [...(byRun.get(row.payRunId) ?? []), row]);
+  const runIds = [...byRun.keys()].filter((id): id is string => id !== null);
+  const runs = await prisma.payRun.findMany({
+    where: { id: { in: runIds } },
+    orderBy: { periodStart: 'asc' },
+    select: { id: true, closedAt: true },
+  });
+  return {
+    unpaid: ownBlocks((byRun.get(null) ?? []).map(toPaidWork)),
+    paid: runs.map((run) => ({
+      runId: run.id,
+      closedAt: run.closedAt,
+      ...ownBlocks((byRun.get(run.id) ?? []).map(toPaidWork)),
+    })),
   };
 }
