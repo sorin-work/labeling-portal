@@ -18,6 +18,7 @@ import { forbidden, notFound } from '~/lib/http';
 import { can, type Capability } from '~/lib/permissions';
 
 import { logActivity } from './activity.server';
+import { notify } from './notifications.server';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -365,6 +366,27 @@ export async function updateProject(
         detail: { changes: fieldChanges } as Prisma.InputJsonValue,
         createdAt: now,
       });
+    }
+    // the people who work on the project hear that the instructions changed,
+    // as the work page's banner tells them when they next open a task
+    if (instructionsChanged) {
+      const [members, actor] = await Promise.all([
+        tx.projectMember.findMany({ where: { projectId }, select: { userId: true } }),
+        tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { name: true } }),
+      ]);
+      await notify(
+        tx,
+        members.map((m) => ({
+          userId: m.userId,
+          orgId: before.orgId,
+          projectId,
+          kind: 'project.instructions' as const,
+          link: `/projects/${projectId}`,
+          detail: { projectName: project.name, actorName: actor.name },
+          createdAt: now,
+        })),
+        actorId,
+      );
     }
     return { ok: true, project, changes, schemaChange };
   });

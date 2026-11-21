@@ -110,6 +110,7 @@ model Organization {
   credited    CreditedInterval[]
   activity    Activity[]
   apiTokens   ApiToken[]
+  notifications Notification[]
 }
 
 model User {
@@ -133,6 +134,7 @@ model User {
   activity              Activity[]
   credited              CreditedInterval[]
   apiTokens             ApiToken[]
+  notifications         Notification[]
 }
 
 model Membership {
@@ -210,6 +212,7 @@ model Project {
   assignments              Assignment[]
   qualificationAttempts    QualificationAttempt[]
   activity                 Activity[]
+  notifications            Notification[]
   queueSecret              QueueSecret?
 
   @@index([orgId])
@@ -520,4 +523,26 @@ model BackupRun {
   intervalSeconds Int
 
   @@index([finishedAt])
+}
+
+/// Something a person is told inside the app, written in the same
+/// transaction as what it is about. Read ones older than 90 days are removed.
+model Notification {
+  id        String       @id @default(cuid())
+  userId    String
+  orgId     String
+  projectId String?
+  /// one of NOTIFICATION_KINDS in app/domain/notifications.ts
+  kind      String
+  /// what the sentence needs (task number, outcome, scores); never an answer
+  detail    Json         @default("{}")
+  /// where the notification leads, a path inside the app
+  link      String
+  createdAt DateTime     @default(now())
+  readAt    DateTime?
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project   Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
 }

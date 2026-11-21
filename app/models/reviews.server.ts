@@ -13,6 +13,7 @@ import { spotCheckRefusal, type SpotCheckForm, type SpotCheckRefusal } from '~/d
 import { lockTaskOfAssignment, prisma, retryOnLockConflict, utc } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
+import { notify } from './notifications.server';
 import { refreshTaskStatus } from './tasks.server';
 
 const STATUS_AFTER: Record<ReviewDecision, ReviewStatus> = {
@@ -298,6 +299,33 @@ export async function recordReview(
     });
     await refreshTaskStatus(assignment.taskId, tx, now);
     await logDecision(tx, assignment, reviewerId, input, now);
+    // the annotator hears of work that came back or was corrected; an
+    // approval needs nothing from them
+    if (input.decision !== 'APPROVE') {
+      const [project, task, reviewer] = await Promise.all([
+        tx.project.findUniqueOrThrow({
+          where: { id: assignment.projectId },
+          select: { orgId: true, name: true },
+        }),
+        tx.task.findUniqueOrThrow({ where: { id: assignment.taskId }, select: { position: true } }),
+        tx.user.findUniqueOrThrow({ where: { id: reviewerId }, select: { name: true } }),
+      ]);
+      await notify(
+        tx,
+        [
+          {
+            userId: assignment.userId,
+            orgId: project.orgId,
+            projectId: assignment.projectId,
+            kind: input.decision === 'SEND_BACK' ? 'review.sent_back' : 'review.fixed',
+            link: `/my-work/${assignment.id}`,
+            detail: { projectName: project.name, position: task.position, actorName: reviewer.name },
+            createdAt: now,
+          },
+        ],
+        reviewerId,
+      );
+    }
     return { ok: true, review, assignment };
   });
 }

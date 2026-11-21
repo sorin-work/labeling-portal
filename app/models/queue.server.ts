@@ -28,6 +28,7 @@ import {
 } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
+import { notify } from './notifications.server';
 import { blockedByDispute } from './disputes.server';
 import { scoreGoldSubmission } from './gold.server';
 import { isAnnotatorFlagged } from './quality.server';
@@ -996,6 +997,25 @@ export async function releaseClaim(
         },
         createdAt: now,
       });
+      const [named, actor] = await Promise.all([
+        tx.project.findUniqueOrThrow({ where: { id: project.id }, select: { name: true } }),
+        tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { name: true } }),
+      ]);
+      await notify(
+        tx,
+        [
+          {
+            userId: owner.userId,
+            orgId: project.orgId,
+            projectId: project.id,
+            kind: 'claim.released',
+            link: `/projects/${project.id}`,
+            detail: { projectName: named.name, position: task.position, actorName: actor.name },
+            createdAt: now,
+          },
+        ],
+        actorId,
+      );
       return { ok: true, creditedSeconds: credit.seconds } as const;
     }),
   );
