@@ -266,6 +266,121 @@ describe('queue order', () => {
     expect(await prisma.assignment.count({ where: { taskId: gold[0].id } })).toBe(0);
   });
 
+  it('falls back to gold when the regular task it waited for fills up meanwhile', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 2 });
+    await prisma.project.update({ where: { id: project.id }, data: { goldEvery: 3 } });
+    const [regular] = await createTasks(project.id, rows(1));
+    const gold = await createTasks(project.id, rows(1, 'gold'));
+    await makeGold(gold.map((t) => t.id));
+    const [ann, first, second] = await annotators(org.id, project.id, 3);
+    const spaced = await reload(project.id);
+
+    // another transaction holds the regular task and fills both of its slots
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${regular.id} FOR UPDATE`;
+        for (const user of [first, second]) {
+          await tx.assignment.create({
+            data: {
+              projectId: project.id,
+              taskId: regular.id,
+              userId: user.id,
+              expiresAt: new Date(Date.now() + 30 * 60_000),
+            },
+          });
+        }
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    const pending = claimNextTask(spaced, ann.id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    await holder;
+    const claim = await pending;
+    // nothing regular is left for them, so the queue still serves what is there
+    expect(claim.ok && claim.assignment.taskId).toBe(gold[0].id);
+    expect(await prisma.assignment.count({ where: { taskId: regular.id } })).toBe(2);
+  });
+
+  it('two claims waiting with opposite shuffled orders do not deadlock', async () => {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, { overlap: 1 });
+    await prisma.project.update({ where: { id: project.id }, data: { queueOrder: 'SHUFFLED' } });
+    const tasks = await createTasks(project.id, rows(2));
+    const people = await annotators(org.id, project.id, 12);
+    const fillers = await annotators(org.id, project.id, 2);
+    const shuffled = await reload(project.id);
+    const secret = await prisma.$transaction((tx) => queueSecretFor(tx, project.id));
+    // two annotators whose shuffled orders start with different tasks
+    const firstOf = new Map<string, string>();
+    for (const person of people) {
+      const next = await prisma.$transaction((tx) =>
+        pickNextTask(tx, {
+          project: shuffled,
+          userId: person.id,
+          now: new Date(),
+          secret,
+          lock: 'none',
+        }),
+      );
+      firstOf.set(person.id, next!);
+    }
+    const one = people.find((p) => firstOf.get(p.id) === tasks[0].id)!;
+    const two = people.find((p) => firstOf.get(p.id) === tasks[1].id)!;
+    expect(one && two).toBeTruthy();
+
+    const deadlocks = async () => {
+      const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
+        SELECT deadlocks AS n FROM pg_stat_database WHERE datname = current_database()`;
+      return Number(row.n);
+    };
+    const before = await deadlocks();
+
+    // both tasks are being claimed, and both fill up before the locks are let go
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        for (const [i, task] of tasks.entries()) {
+          await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${task.id} FOR UPDATE`;
+          await tx.assignment.create({
+            data: {
+              projectId: project.id,
+              taskId: task.id,
+              userId: fillers[i].id,
+              expiresAt: new Date(Date.now() + 30 * 60_000),
+            },
+          });
+        }
+        locked();
+        await released;
+      },
+      { timeout: 20_000 },
+    );
+    await isLocked;
+    const pending = Promise.all([claimNextTask(shuffled, one.id), claimNextTask(shuffled, two.id)]);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    release();
+    await holder;
+    expect(await pending).toEqual([
+      { ok: false, reason: 'empty' },
+      { ok: false, reason: 'empty' },
+    ]);
+    // PostgreSQL never had to break a deadlock between them
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(await deadlocks()).toBe(before);
+  });
+
   it('passes over a task another claim has locked instead of waiting for it', async () => {
     const org = await createOrg();
     const project = await createTestProject(org.id);

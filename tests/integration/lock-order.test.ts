@@ -283,6 +283,21 @@ describe('the task row before the assignment row', () => {
     expect(result).toBe('done');
     expect(calls).toBe(2);
     expect(isLockConflict(new Error('unique constraint failed'))).toBe(false);
+    // a lock wait that ran out and a transaction Prisma gave up on are retried too
+    for (const [code, meta] of [
+      ['P2010', { code: '55P03' }],
+      ['P2028', undefined],
+    ] as const) {
+      expect(
+        isLockConflict(
+          new Prisma.PrismaClientKnownRequestError('x', {
+            code,
+            clientVersion: Prisma.prismaVersion.client,
+            meta,
+          }),
+        ),
+      ).toBe(true);
+    }
     await expect(
       retryOnLockConflict(async () => {
         throw new Error('something else');
