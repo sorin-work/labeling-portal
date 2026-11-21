@@ -95,6 +95,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     draftNote: droppedNote(schema, draft.dropped),
     draftSeconds: assignment.draftSeconds,
     feedback: assignment.reviews[0]?.feedback ?? '',
+    // the annotator took it back themselves, right after handing it in
+    takenBack: assignment.takenBackAt !== null && assignment.reviewStatus === 'SENT_BACK',
     ...disputes,
     // The answer can only change, and the draft be saved, on a revision that
     // is not disputed. While a dispute is open the page is read-only and the
@@ -252,6 +254,12 @@ function RevisePage({ loaderData, actionData }: Route.ComponentProps) {
         ← My work
       </Link>
       <h1 className="text-xl font-semibold">Revise: {projectName}</h1>
+      {loaderData.takenBack && (
+        <p className="rounded-md bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
+          You took this task back. Change your answer and hand it in again; it goes where it would
+          have gone the first time.
+        </p>
+      )}
       {feedback && (
         <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
           <div className="font-medium">Reviewer feedback</div>

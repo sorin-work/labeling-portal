@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, timeStep, totp } from '~/domain/totp';
-import { getCurrentUser } from '~/lib/auth.server';
+import { getCurrentUser, requireApiUser } from '~/lib/auth.server';
+import { createApiToken } from '~/models/api-tokens.server';
 import { sealSecret } from '~/lib/secret-box.server';
 import { pendingTwoStepSecret } from '~/models/two-step.server';
 import { action as accountAction, loader as accountLoader } from '~/routes/account';
@@ -94,9 +95,27 @@ describe('two-step sign-in', () => {
     );
     expect(page.twoStep.setup.qr).toContain('<svg');
 
+    // the password is asked for, as for a password change
+    const noPassword = await run(
+      accountAction,
+      makeRequest('/account', {
+        cookie,
+        form: { intent: 'two-step-confirm', code: totp(secret!, new Date()), password: 'nope' },
+      }),
+    );
+    expect(payload<{ twoStepError: string }>(noPassword).twoStepError).toBe(
+      'Your password is not right.',
+    );
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: ann.id } })).totpEnabledAt,
+    ).toBeNull();
+
     const wrong = await run(
       accountAction,
-      makeRequest('/account', { cookie, form: { intent: 'two-step-confirm', code: '000000' } }),
+      makeRequest('/account', {
+        cookie,
+        form: { intent: 'two-step-confirm', code: '000000', password: 'password123' },
+      }),
     );
     expect(statusOf(wrong)).toBe(400);
 
@@ -104,7 +123,11 @@ describe('two-step sign-in', () => {
       accountAction,
       makeRequest('/account', {
         cookie,
-        form: { intent: 'two-step-confirm', code: totp(secret!, new Date()) },
+        form: {
+          intent: 'two-step-confirm',
+          code: totp(secret!, new Date()),
+          password: 'password123',
+        },
       }),
     );
     expect(payload<{ recoveryCodes: string[] }>(done).recoveryCodes).toHaveLength(10);
@@ -235,7 +258,7 @@ describe('two-step sign-in', () => {
       accountAction,
       makeRequest('/account', {
         cookie: adminCookie,
-        form: { intent: 'two-step-off', code: '000000' },
+        form: { intent: 'two-step-off', code: '000000', password: 'password123' },
       }),
     );
     expect(payload<{ twoStepError: string }>(off).twoStepError).toContain('keep it on');
@@ -265,5 +288,68 @@ describe('two-step sign-in', () => {
     expect(await prisma.activity.findMany({ where: { action: 'person.two_step_reset' } })).toEqual([
       expect.objectContaining({ actorId: admin.id, detail: { userId: ann.id, userName: 'Ann' } }),
     ]);
+  });
+
+  it('caps wrong codes for the account across every address', async () => {
+    process.env.TRUST_PROXY = 'true';
+    const org = await createOrg();
+    const ann = await createMember(org.id, 'ANNOTATOR', { email: 'many@example.test' });
+    const { secret } = await withTwoStep(ann.id);
+    // four wrong codes from each of five addresses: under the per-address limit
+    for (let a = 0; a < 5; a += 1) {
+      const from = { 'X-Forwarded-For': `203.0.113.${a + 1}` };
+      const { cookie } = await password('many@example.test', from);
+      for (let i = 0; i < 4; i += 1) {
+        expect(statusOf(await secondStep(cookie, '000000', from))).toBe(401);
+      }
+    }
+    // the twenty-first try on the account is refused, from a new address and with the right code
+    const fresh = { 'X-Forwarded-For': '198.51.100.77' };
+    const { cookie } = await password('many@example.test', fresh);
+    expect(statusOf(await secondStep(cookie, totp(secret, new Date()), fresh))).toBe(429);
+    expect(await prisma.activity.count({ where: { action: 'auth.two_step_locked' } })).toBe(1);
+  });
+
+  it('keeps tokens from going around the rule', async () => {
+    const org = await createOrg();
+    const admin = await createMember(org.id, 'ADMIN');
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    // a token made before the rule
+    const old = await createApiToken(org.id, pm.id, {
+      name: 'Nightly',
+      readOnly: true,
+      expiresInDays: null,
+    });
+    await withTwoStep(admin.id);
+    await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie: await cookieFor(admin, org.id),
+        form: { intent: 'two-step-rule', required: 'on' },
+      }),
+    );
+    const refused = await requireApiUser(
+      makeRequest('/api/v1/projects', { headers: { Authorization: `Bearer ${old.token}` } }),
+    ).catch((error: unknown) => error);
+    expect(statusOf(refused)).toBe(403);
+    expect(JSON.stringify(await (refused as Response).json())).toContain('two-step');
+
+    // and no new one while held on the account page
+    const made = await run(
+      accountAction,
+      makeRequest('/account', {
+        cookie: await cookieFor(pm, org.id),
+        form: { intent: 'token-create', name: 'Around' },
+      }),
+    );
+    expect(statusOf(made)).toBe(403);
+    expect(await prisma.apiToken.count({ where: { userId: pm.id } })).toBe(1);
+
+    // once the manager has a second step, the old token works again
+    await withTwoStep(pm.id);
+    const ok = await requireApiUser(
+      makeRequest('/api/v1/projects', { headers: { Authorization: `Bearer ${old.token}` } }),
+    );
+    expect(ok.user.id).toBe(pm.id);
   });
 });

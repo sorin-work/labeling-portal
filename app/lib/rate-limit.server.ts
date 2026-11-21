@@ -86,3 +86,11 @@ export const loginLimiter = new RateLimiter('login', 10, 15 * 60_000);
  * not lock the owner out (see `clientAddress`).
  */
 export const twoStepLimiter = new RateLimiter('two-step', 5, 15 * 60_000);
+
+/**
+ * Twenty wrong second-step codes per account per hour, wherever they come
+ * from: a cap for someone who has the password and many addresses (or a
+ * header to fake one). It can hold the owner off too, which is acceptable at
+ * this step, since only someone who knows the password reaches it.
+ */
+export const twoStepAccountLimiter = new RateLimiter('two-step-account', 20, 60 * 60_000);

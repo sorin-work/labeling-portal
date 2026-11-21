@@ -134,10 +134,25 @@ export async function requireApiUser(request: Request, now = new Date()): Promis
   }
   const membership = await prisma.membership.findUnique({
     where: { orgId_userId: { orgId: token.orgId, userId: token.userId } },
-    include: { user: { select: { id: true, email: true, name: true } } },
+    include: {
+      user: { select: { id: true, email: true, name: true, totpEnabledAt: true } },
+      org: { select: { twoStepRequired: true } },
+    },
   });
   if (!membership)
     throw apiError(401, 'The token belongs to someone who has left the organisation.');
+  // the organisation's two-step rule covers tokens too: one made before the
+  // rule, or before a reset, stops working until its person has a second step
+  if (
+    membership.org.twoStepRequired &&
+    (membership.role === 'ADMIN' || membership.role === 'PROJECT_MANAGER') &&
+    membership.user.totpEnabledAt === null
+  ) {
+    throw apiError(
+      403,
+      'The organisation requires two-step sign-in for this role. Its owner has to set it up on the account page before the token works again.',
+    );
+  }
   const limit = await apiLimiter.hit(token.id, now.getTime());
   if (!limit.allowed) {
     throw apiError(429, 'Too many requests with this token.', {
@@ -154,7 +169,8 @@ export async function requireApiUser(request: Request, now = new Date()): Promis
     },
     data: { lastUsedAt: now },
   });
-  const { user, ...rest } = membership;
+  const { user: account, org: _org, ...rest } = membership;
+  const user = { id: account.id, email: account.email, name: account.name };
   return {
     user,
     membership: { id: rest.id, orgId: rest.orgId, role: rest.role },

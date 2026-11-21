@@ -97,10 +97,18 @@ const KEY_MISSING =
   'Two-step sign-in needs TOTP_KEY on the server. Ask whoever runs it to set one.';
 
 export async function action({ request }: Route.ActionArgs) {
-  const { user, membership } = await requireUser(request);
+  const signedIn = await requireUser(request);
+  const { user, membership } = signedIn;
   const form = await request.formData();
   const intent = String(form.get('intent') ?? 'password');
   if (intent === 'token-create') {
+    // a token must not be the way around the organisation's two-step rule
+    if (signedIn.mustSetUpTwoStep) {
+      return data<ActionData>(
+        { tokenError: 'Set up two-step sign-in first: your organisation asks it of your role.' },
+        { status: 403 },
+      );
+    }
     const name = String(form.get('name') ?? '').trim();
     if (!name || name.length > MAX_TOKEN_NAME) {
       return data<ActionData>(
@@ -140,6 +148,11 @@ export async function action({ request }: Route.ActionArgs) {
         const started = await startTwoStepSetup(user.id);
         if (!started.ok) return data<ActionData>({ twoStepError: started.error }, { status: 400 });
         return data<ActionData>({}, { headers: { 'Cache-Control': 'no-store' } });
+      }
+      // turning it on or off asks for the password, as changing the password does
+      const account = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      if (!(await verifyPassword(String(form.get('password') ?? ''), account.passwordHash))) {
+        return data<ActionData>({ twoStepError: 'Your password is not right.' }, { status: 400 });
       }
       if (intent === 'two-step-confirm') {
         const done = await confirmTwoStepSetup(
@@ -334,6 +347,15 @@ export default function Account({ loaderData, actionData }: Route.ComponentProps
             {!twoStep.required && (
               <Form method="post" className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="intent" value="two-step-off" />
+                <Field label="Your password" htmlFor="off-password">
+                  <Input
+                    id="off-password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </Field>
                 <Field label="A code from the app, or a recovery code" htmlFor="off-code">
                   <Input id="off-code" name="code" autoComplete="one-time-code" required />
                 </Field>
@@ -361,6 +383,15 @@ export default function Account({ loaderData, actionData }: Route.ComponentProps
             </p>
             <Form method="post" className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="intent" value="two-step-confirm" />
+              <Field label="Your password" htmlFor="setup-password">
+                <Input
+                  id="setup-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
+              </Field>
               <Field label="Code from the app" htmlFor="setup-code">
                 <Input
                   id="setup-code"

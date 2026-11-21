@@ -23,9 +23,11 @@ services:
       # The name is what a refused restore lists as still connected.
       DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-portal
       SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
-      # Encrypts the two-step secrets. Keep it with your backups: without it
-      # nobody with two-step on can sign in until an admin resets them.
-      TOTP_KEY: ${TOTP_KEY:-local-docker-totp-key-change-me-0123456789}
+      # Encrypts the two-step secrets; there is no default here, and two-step
+      # sign-in refuses to start without it. Keep it with your backups:
+      # without it nobody with two-step on can sign in until an admin resets
+      # them.
+      TOTP_KEY: ${TOTP_KEY:-}
       # Creates the demo organisation, users and projects on first start.
       SEED_DEMO: ${SEED_DEMO:-true}
       # Lists the demo accounts on the sign-in page.
@@ -38,7 +40,9 @@ services:
       db:
         condition: service_healthy
     ports:
-      - '${WEB_PORT:-4421}:3000'
+      # Only this machine can reach the app. Put a proxy in front to serve it
+      # to others (and set TRUST_PROXY=true there).
+      - '127.0.0.1:${WEB_PORT:-4421}:3000'
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/healthz || exit 1']
       interval: 10s

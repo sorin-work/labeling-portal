@@ -81,6 +81,27 @@ tests/integration/  loaders and actions against a real PostgreSQL
    "Reviewer reservations" below). Sent-back work can be revised and
    resubmitted by the annotator, and always returns to review. Instead of
    revising, the annotator can dispute the decision (see "Disputes" below).
+   For two minutes after a submission (`TAKE_BACK_MINUTES` in
+   `domain/take-back.ts`) the work page offers "Take back the last task".
+   `takeBackSubmission` turns it into sent-back work the annotator revises
+   on `/my-work/:id`, marked `takenBackAt`, with the answer as the draft.
+   `takeBackRefusal` is the rule: the annotator's last submission in the
+   project, taken back once, never reviewed or spot checked, and either
+   waiting for review with no live hold or accepted without review on a task
+   that is still open and was not measured for agreement yet (no extra
+   slots, no stored agreement). A gold task is refused when the project shows gold
+   feedback, since the annotator has seen the expected answer; with feedback
+   off it is offered like any other task, or the missing offer would tell
+   gold apart, and scored again when handed in. The take-back locks the task
+   row and then the submission's row, which a spot check takes too, so a
+   spot check at the same moment either waits or is seen; then it writes
+   the submission with every changeable part of the rule in its `where`.
+   The resubmission returns to the review status kept in `takenBackFrom`:
+   work that was waiting for review waits again with the same sample draw,
+   work that needed no review is accepted again at once (and can complete
+   its task) and keeps the payable date of its first submission, so no pay
+   period that included it changes. The credited time and the rate
+   stay; revising adds time within the revision cap.
 5. When `overlap` submissions (plus any extra slots) are accepted the task is
    complete and the accepted answers are merged into a consensus with an
    agreement score. With an agreement threshold on the project, a task under
@@ -186,7 +207,8 @@ assignment enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release,
 an expiry, a deletion), the trigger updates its task's row inside the
 assignment write. So submit, skip, release, the expiry of a late submission,
 a resubmission, a review decision and the overturn of a dispute all lock the
-task row first. A revision reads the organisation of the assignment without a
+task row first. A take-back locks it too, to read the task's status under
+the lock. A revision reads the organisation of the assignment without a
 lock (it never changes), then takes the clock, the task row and the
 assignment, in that order. Gold scoring reads the expected answer under the
 same `FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock is never
@@ -814,7 +836,8 @@ against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
   hashed: AES-256-GCM in `lib/secret-box.server.ts` under a key made from
   `TOTP_KEY`, its own variable so that rotating `SESSION_SECRET` does not
   break every second step. Production asks for it only when someone sets up
-  or uses the feature. A changed key makes the secrets unreadable; the
+  or uses the feature, and refuses a sample value (anything with
+  `change-me`); the compose file has no default for it. A changed key makes the secrets unreadable; the
   second page says so and an admin resets the people concerned.
 - **Signing in.** After the right password the cookie holds only
   `pending` (who, the organisation, the session version and the time, for
@@ -835,15 +858,28 @@ against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
   comes from the proxy: with `TRUST_PROXY=true`, the last `X-Forwarded-For`
   entry (`lib/client-address.server.ts`). Without a proxy nothing a client
   sends is believed and the limit is per account only, which a guesser can
-  use to hold the owner off for fifteen minutes.
+  use to hold the owner off for fifteen minutes. On top of that, twenty
+  wrong codes per account per hour from anywhere are refused
+  (`twoStepAccountLimiter`), so many addresses, or a faked header, do not
+  allow guessing either. That cap can hold the owner off too, which is
+  acceptable here: only someone who knows the password reaches this step.
+  The compose file publishes the app on 127.0.0.1 only, so nothing but a
+  proxy on the same machine can send it `X-Forwarded-For`.
 - **The organisation rule** (`Organization.twoStepRequired`, on People)
   asks it of admins and project managers. `getCurrentUser` reads the rule and
   whether the person has it in the query it already makes; `requireUser`
   sends those who have not set it up to `/account` until they do. An admin
   can only turn the rule on with their own second step on. API tokens are
-  not affected: they are made after a sign-in and revoked on their own.
-- **Reset** on People clears a person's secret and recovery codes and ends
-  their sessions (`person.two_step_reset`). One's own can be turned off on
+  covered too: a member the rule asks it of cannot make a token until they
+  have a second step, and `requireApiUser` answers 403 for the tokens of
+  such a member, also ones made before the rule or a reset, until they set
+  it up.
+- **The password** is asked for when turning it on and when turning it off,
+  as for a password change.
+- **Reset** on People clears a person's secret and recovery codes, for every
+  organisation they are in, and ends all their sessions
+  (`person.two_step_reset`). Someone who lost their phone should change
+  their password before asking for a reset, in case it is known too. One's own can be turned off on
   the account page with a code, unless the rule asks it of the role.
 - **Not here**: passkeys (WebAuthn), and making new recovery codes without
   a reset.

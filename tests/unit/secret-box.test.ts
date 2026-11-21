@@ -21,7 +21,8 @@ describe('secret box', () => {
     process.env.TOTP_KEY = 'a-key-of-sixteen-or-more';
     const sealed = sealSecret('GEZDGNBVGY3TQOJQ');
     const [v, iv, tag, body] = sealed.split('.');
-    const flipped = body.slice(0, -1) + (body.endsWith('A') ? 'B' : 'A');
+    // the first character: the last one of base64 can carry only padding bits
+    const flipped = (body.startsWith('A') ? 'B' : 'A') + body.slice(1);
     expect(openSecret([v, iv, tag, flipped].join('.'))).toBeNull();
     process.env.TOTP_KEY = 'another-key-of-sixteen-chars';
     expect(openSecret(sealed)).toBeNull();
