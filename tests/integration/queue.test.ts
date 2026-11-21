@@ -12,9 +12,11 @@ import {
   releaseAssignment,
   releaseClaim,
   releaseExpiredClaims,
+  resubmitAssignment,
   saveDraft,
   skipAssignment,
   submitAssignment,
+  takeBackSubmission,
 } from '~/models/queue.server';
 import { action as workAction, loader as workLoader } from '~/routes/work';
 import { action as draftAction } from '~/routes/work-draft';
@@ -35,6 +37,7 @@ import {
   resetDb,
   run,
   statusOf,
+  submitWork,
 } from './helpers';
 
 async function setup(overlap = 1) {
@@ -991,5 +994,254 @@ describe('the daily task limit', () => {
       { projectId: project.id },
     );
     expect(locationOf(result)).toBe(`/projects/${project.id}?queue=limit`);
+  });
+});
+
+describe('taking back the last submission', () => {
+  beforeEach(resetDb);
+
+  async function handedIn(options: { overlap?: number; reviewRequired?: boolean } = {}) {
+    const org = await createOrg();
+    const project = await createTestProject(org.id, {
+      overlap: options.overlap ?? 1,
+      reviewRequired: options.reviewRequired ?? true,
+    });
+    const tasks = await createTasks(project.id, [{ text: 'one' }, { text: 'two' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, ann);
+    const submission = await submitWork(project, ann.id, { labels: ['positive'] });
+    const soon = new Date(submission.submittedAt!.getTime() + 60_000);
+    return { org, project, tasks, ann, submission, soon, cookie: await cookieFor(ann, org.id) };
+  }
+
+  const row = (id: string) => prisma.assignment.findUniqueOrThrow({ where: { id } });
+
+  it('turns work waiting for review into work to revise, keeping its time, rate and draw', async () => {
+    const { ann, submission, soon } = await handedIn();
+    const credited = await prisma.creditedInterval.findMany({ where: { userId: ann.id } });
+    expect(await takeBackSubmission(submission.id, ann.id, soon)).toEqual({ ok: true });
+    const taken = await row(submission.id);
+    expect(taken).toMatchObject({
+      status: 'SUBMITTED',
+      reviewStatus: 'SENT_BACK',
+      takenBackFrom: 'PENDING',
+      takenBackAt: soon,
+      reviewedAt: soon,
+      draft: { labels: ['positive'] },
+      rateCents: submission.rateCents,
+      activeSeconds: submission.activeSeconds,
+      reviewSample: submission.reviewSample,
+    });
+    expect(await prisma.creditedInterval.findMany({ where: { userId: ann.id } })).toEqual(credited);
+
+    const later = new Date(soon.getTime() + 60_000);
+    const again = await resubmitAssignment(
+      submission.id,
+      ann.id,
+      { answer: { labels: ['negative'] }, activeSeconds: 30 },
+      later,
+    );
+    expect(again).toEqual({ ok: true });
+    const back = await row(submission.id);
+    expect(back).toMatchObject({
+      reviewStatus: 'PENDING',
+      answer: { labels: ['negative'] },
+      reviewSample: submission.reviewSample,
+      rateCents: submission.rateCents,
+      takenBackFrom: null,
+    });
+    // revising added time, within the revision cap
+    expect(back.activeSeconds).toBe(submission.activeSeconds + 30);
+    // and it is not offered a second time
+    expect(await takeBackSubmission(submission.id, ann.id, later)).toEqual({
+      ok: false,
+      error: 'taken_back',
+    });
+  });
+
+  it('takes back work that needed no review while its task is open, and accepts it again', async () => {
+    const { ann, submission, soon, tasks } = await handedIn({ overlap: 2, reviewRequired: false });
+    expect(submission.payableAt).not.toBeNull();
+    expect(await takeBackSubmission(submission.id, ann.id, soon)).toEqual({ ok: true });
+    expect(await row(submission.id)).toMatchObject({
+      reviewStatus: 'SENT_BACK',
+      takenBackFrom: 'NOT_REQUIRED',
+      payableAt: null,
+    });
+    const later = new Date(soon.getTime() + 60_000);
+    await resubmitAssignment(
+      submission.id,
+      ann.id,
+      { answer: { labels: ['negative'] }, activeSeconds: 10 },
+      later,
+    );
+    // payable from the first submission still, so no pay period changes
+    expect(await row(submission.id)).toMatchObject({
+      reviewStatus: 'NOT_REQUIRED',
+      payableAt: submission.payableAt,
+    });
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: tasks[0].id } })).status).toBe(
+      'OPEN',
+    );
+  });
+
+  it('refuses once something downstream has read it, or the time is up', async () => {
+    // the task is complete: a consensus was built from it
+    const done = await handedIn({ reviewRequired: false });
+    expect(await takeBackSubmission(done.submission.id, done.ann.id, done.soon)).toEqual({
+      ok: false,
+      error: 'complete',
+    });
+
+    await resetDb();
+    const late = await handedIn();
+    const afterWindow = new Date(late.submission.submittedAt!.getTime() + 2 * 60_000);
+    expect(await takeBackSubmission(late.submission.id, late.ann.id, afterWindow)).toEqual({
+      ok: false,
+      error: 'too_late',
+    });
+
+    // a reviewer holds it, then decides it
+    const reviewer = await createMember(late.org.id, 'REVIEWER');
+    await prisma.assignment.update({
+      where: { id: late.submission.id },
+      data: { reviewHeldById: reviewer.id, reviewHeldAt: late.soon },
+    });
+    expect(await takeBackSubmission(late.submission.id, late.ann.id, late.soon)).toEqual({
+      ok: false,
+      error: 'held',
+    });
+    await prisma.assignment.update({
+      where: { id: late.submission.id },
+      data: { reviewHeldById: null, reviewHeldAt: null },
+    });
+    const { recordReview } = await import('~/models/reviews.server');
+    await recordReview(late.submission.id, reviewer.id, {
+      decision: 'APPROVE',
+      qaScore: 5,
+      feedback: '',
+    });
+    expect(await takeBackSubmission(late.submission.id, late.ann.id, late.soon)).toEqual({
+      ok: false,
+      error: 'reviewed',
+    });
+  });
+
+  it('refuses work accepted without review once its task was measured for agreement', async () => {
+    const { ann, submission, soon, tasks } = await handedIn({ overlap: 2, reviewRequired: false });
+    await prisma.task.update({ where: { id: tasks[0].id }, data: { extraSlots: 1 } });
+    expect(await takeBackSubmission(submission.id, ann.id, soon)).toEqual({
+      ok: false,
+      error: 'complete',
+    });
+  });
+
+  it('never takes back work a spot check reaches at the same moment', async () => {
+    const { recordSpotCheck } = await import('~/models/reviews.server');
+    for (let round = 0; round < 4; round++) {
+      await resetDb();
+      const { org, ann, submission, soon } = await handedIn({ overlap: 2, reviewRequired: false });
+      const reviewer = await createMember(org.id, 'REVIEWER');
+      const [taken, checked] = await Promise.all([
+        takeBackSubmission(submission.id, ann.id, soon),
+        recordSpotCheck(submission.id, reviewer.id, {
+          verdict: 'APPROVE',
+          qaScore: 4,
+          feedback: '',
+        }),
+      ]);
+      // exactly one of them gets through
+      expect([taken.ok, checked.ok].filter(Boolean)).toHaveLength(1);
+      const after = await row(submission.id);
+      const reviews = await prisma.review.count({ where: { assignmentId: submission.id } });
+      if (taken.ok) expect(reviews).toBe(0);
+      else expect(after.reviewStatus).toBe('NOT_REQUIRED');
+    }
+  });
+
+  it('only takes back the last submission, and only the annotator’s own', async () => {
+    const { org, project, ann, submission, soon } = await handedIn();
+    const second = await submitWork(project, ann.id, { labels: ['negative'] });
+    expect(await takeBackSubmission(submission.id, ann.id, soon)).toEqual({
+      ok: false,
+      error: 'not_last',
+    });
+    const other = await createMember(org.id, 'ANNOTATOR');
+    expect(await takeBackSubmission(second.id, other.id, soon)).toEqual({
+      ok: false,
+      error: 'not_found',
+    });
+  });
+
+  it('refuses gold with feedback on, and offers and rescores it with feedback off', async () => {
+    for (const goldFeedback of [true, false]) {
+      await resetDb();
+      const org = await createOrg();
+      const base = await createTestProject(org.id, { overlap: 1 });
+      const project = await prisma.project.update({
+        where: { id: base.id },
+        data: { goldFeedback },
+      });
+      await createTasks(project.id, [{ text: 'gold' }]);
+      await prisma.task.updateMany({
+        where: { projectId: project.id },
+        data: { isGold: true, goldAnswer: { labels: ['positive'] } },
+      });
+      const ann = await createMember(org.id, 'ANNOTATOR');
+      await addToProject(project.id, ann);
+      const submission = await submitWork(project, ann.id, { labels: ['negative'] });
+      expect(submission.goldScore).toBe(0);
+      const soon = new Date(submission.submittedAt!.getTime() + 60_000);
+      const taken = await takeBackSubmission(submission.id, ann.id, soon);
+      if (goldFeedback) {
+        expect(taken).toEqual({ ok: false, error: 'gold_seen' });
+        continue;
+      }
+      expect(taken).toEqual({ ok: true });
+      await resubmitAssignment(
+        submission.id,
+        ann.id,
+        { answer: { labels: ['positive'] }, activeSeconds: 5 },
+        new Date(soon.getTime() + 30_000),
+      );
+      expect(await row(submission.id)).toMatchObject({
+        reviewStatus: 'NOT_REQUIRED',
+        goldScore: 1,
+      });
+    }
+  });
+
+  it('is offered on the work page and opens the revise page', async () => {
+    const { project, ann, cookie } = await handedIn({ overlap: 1 });
+    await createTasks(project.id, [{ text: 'three' }]);
+    // hand in through the page, so the submission is fresh
+    const claim = await claimNextTask(project, ann.id);
+    if (!claim.ok) throw new Error('no claim');
+    const submitted = await run(
+      workAction,
+      makeRequest(`/work/${claim.assignment.id}`, {
+        cookie,
+        form: { answer: JSON.stringify({ labels: ['positive'] }), activeSeconds: '5' },
+      }),
+      { assignmentId: claim.assignment.id },
+    );
+    // "Submit and next" opens the next task, which offers to take this one back
+    const nextUrl = locationOf(submitted) ?? '';
+    expect(nextUrl).toMatch(/^\/work\//);
+    const nextId = nextUrl.split('/').pop() ?? '';
+    const page = await run(workLoader, makeRequest(nextUrl, { cookie }), { assignmentId: nextId });
+    expect(payload<{ takeBack: { id: string } | null }>(page).takeBack?.id).toBe(
+      claim.assignment.id,
+    );
+    const result = await run(
+      workAction,
+      makeRequest(`/work/${claim.assignment.id}`, {
+        cookie,
+        form: { intent: 'take-back', submissionId: claim.assignment.id },
+      }),
+      { assignmentId: claim.assignment.id },
+    );
+    expect(locationOf(result)).toBe(`/my-work/${claim.assignment.id}`);
+    expect((await row(claim.assignment.id)).reviewStatus).toBe('SENT_BACK');
   });
 });

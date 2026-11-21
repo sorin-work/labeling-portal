@@ -73,6 +73,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       submittedAt: a.submittedAt,
       activeSeconds: a.activeSeconds,
       reviewStatus: a.reviewStatus,
+      takenBack: a.takenBackAt !== null && a.reviewStatus === 'SENT_BACK',
       // only the score, and only where the project shows gold feedback
       goldScore: goldFeedback(a, projectSchema(a.project))?.score ?? null,
       // feedback and score of an overturned decision give way to the dispute's outcome
@@ -145,7 +146,11 @@ export default function MyWork({ loaderData }: Route.ComponentProps) {
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1 text-xs text-slate-500">
-                  {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
+                  {item.takenBack ? (
+                    <Badge tone="sky">Taken back</Badge>
+                  ) : (
+                    badge && <Badge tone={badge.tone}>{badge.label}</Badge>
+                  )}
                   {dispute && <Badge tone={dispute.tone}>{dispute.label}</Badge>}
                   {item.qaScore !== null && <span>Quality {item.qaScore}/5</span>}
                   {item.goldScore !== null && (

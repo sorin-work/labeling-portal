@@ -59,7 +59,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 19  | Releasing a claim and a daily task limit     | Shipped | queue         | M    | -          |
 | 20  | Signing out everywhere                       | Shipped | security      | S    | -          |
 | 21  | Spot checks and letting go of a review hold  | Shipped | review        | M    | -          |
-| 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
+| 22  | Taking back the last submission              | Shipped | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
 | 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
@@ -73,43 +73,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 
 ## Next
 
-### 22. Taking back the last submission
-
-Improves item 3, which left "submit on pick" out because a slip cannot be
-taken back once the next task has loaded. After "Submit and next" the answer
-is stored, the time credited (`recordCredit`), a gold task scored, and work
-that needs no review may already have completed its task
-(`refreshTaskStatus` in `submitAssignment`). The only way to change it is to
-wait for a reviewer to send it back.
-
-- The work page shows "Take back the last task" for a short while after a
-  submission, say two minutes. Taking it back turns the submission into the
-  same state as sent-back work that the annotator revises on
-  `/my-work/:assignmentId` (`resubmitAssignment` and the revise draft exist),
-  with a marker that the annotator asked for it, not a reviewer.
-- Allowed only while nothing downstream has read it: review `PENDING` and
-  not held by a reviewer, or `NOT_REQUIRED` on a task that is not complete
-  yet. The write states all of that in its `where`, like every other write
-  that decides a submission.
-- Tricky: gold. With gold feedback on, the annotator has seen the expected
-  answer, so a gold task must not be taken back. With feedback off the
-  absence of the link would tell gold apart, so there it has to be offered
-  like on any other task and the gold score recomputed on resubmit. The rule
-  is easier to get right in `domain/` as a pure function of the submission's
-  state, with unit tests for every case.
-- Tricky: time and pay. The credited interval of the submission stays, and
-  revising adds time with the cap item 5 set for revisions. The rate frozen
-  at submission stays as well.
-- Tricky: review sampling (item 4) was drawn at submission. A taken-back
-  submission keeps its draw, or taking back becomes a way to redraw.
-- Then "submit on pick" for single-label classification can be a project
-  setting, in the same PR or the next one. The label key submits, and the
-  take-back is the way out of a slip.
-- Undecided: a key. Every free letter is a label key on some project, and
-  taking one away changes the keys of existing projects, as `r` did in item 13. I lean towards no key at first.
-- Tests: `tests/integration/queue.test.ts` for each allowed and refused
-  state, gold with and without feedback, the sampling outcome kept; unit
-  tests for the rule.
+Everything that was here has shipped.
 
 ## Later
 
@@ -790,6 +754,30 @@ no fix, so it never touches a consensus, adjudicated or not; a reviewer who
 finds a wrong answer says so in the verdict and feedback. Still open: a spot
 check is not offered from the review queue itself, and there is no way to
 pull a batch of someone's work in for spot checks at once.
+
+### 22. Taking back the last submission
+
+For two minutes after a submission the work page offers "Take back the last
+task". `takeBackSubmission` in `models/queue.server.ts` makes it sent-back
+work the annotator revises on `/my-work/:id`, with `takenBackAt` as the
+marker and the answer as the draft, and `takenBackFrom` keeps the review
+status it had, which the resubmission returns to, so the review draw is
+kept. The rule is `takeBackRefusal` in `domain/take-back.ts`, a pure
+function with unit tests for every case: the annotator's last submission in
+the project, within the two minutes, never reviewed or spot checked, and
+either `PENDING` without a live hold or `NOT_REQUIRED` on a task that is
+still open and not yet measured for agreement. The write repeats it in its
+`where`, after locks on the task row and then the submission's row, so a
+spot check at the same moment is seen. Work that needed no review keeps the
+payable date of its first submission when it is handed in again. Gold is refused with gold feedback on and offered with it off, and
+scored again on resubmit. The credited time and the rate stay, and revising
+adds time within the revision cap. Decided: a submission can be taken back
+once, so the window cannot be stretched, and the annotator's acceptance
+numbers do not count it as sent back. No key, as the item leaned. Left out:
+"submit on pick" for single-label classification, which the item allowed
+for a later PR. Still open: the offer is on the work page only, so after the
+last task of the queue, which lands on the project page, there is none; on
+the earnings page taken-back work shows under "sent back".
 
 ### 23. Backup status the app can see
 

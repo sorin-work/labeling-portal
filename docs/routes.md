@@ -17,7 +17,7 @@ lists who can open each page.
 | `/projects/:id`                     | Overview, instructions, start labeling   | project members, managers                    |
 | `/projects/:id/qualification`       | Qualification test                       | annotators on the project                    |
 | `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                           |
-| `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                 |
+| `/work/:assignmentId`               | Label, skip, release; take the last back | the annotator who claimed it                 |
 | `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                          |
 | `/projects/:id/review` (POST)       | Reserve the next one; release a hold     | reviewers; releasing: admin, project manager |
 | `/review/:assignmentId`             | Reserve, decide, let go, or spot check   | reviewers, managers (not on their own work)  |

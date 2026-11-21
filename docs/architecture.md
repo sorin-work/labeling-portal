@@ -81,6 +81,27 @@ tests/integration/  loaders and actions against a real PostgreSQL
    "Reviewer reservations" below). Sent-back work can be revised and
    resubmitted by the annotator, and always returns to review. Instead of
    revising, the annotator can dispute the decision (see "Disputes" below).
+   For two minutes after a submission (`TAKE_BACK_MINUTES` in
+   `domain/take-back.ts`) the work page offers "Take back the last task".
+   `takeBackSubmission` turns it into sent-back work the annotator revises
+   on `/my-work/:id`, marked `takenBackAt`, with the answer as the draft.
+   `takeBackRefusal` is the rule: the annotator's last submission in the
+   project, taken back once, never reviewed or spot checked, and either
+   waiting for review with no live hold or accepted without review on a task
+   that is still open and was not measured for agreement yet (no extra
+   slots, no stored agreement). A gold task is refused when the project shows gold
+   feedback, since the annotator has seen the expected answer; with feedback
+   off it is offered like any other task, or the missing offer would tell
+   gold apart, and scored again when handed in. The take-back locks the task
+   row and then the submission's row, which a spot check takes too, so a
+   spot check at the same moment either waits or is seen; then it writes
+   the submission with every changeable part of the rule in its `where`.
+   The resubmission returns to the review status kept in `takenBackFrom`:
+   work that was waiting for review waits again with the same sample draw,
+   work that needed no review is accepted again at once (and can complete
+   its task) and keeps the payable date of its first submission, so no pay
+   period that included it changes. The credited time and the rate
+   stay; revising adds time within the revision cap.
 5. When `overlap` submissions (plus any extra slots) are accepted the task is
    complete and the accepted answers are merged into a consensus with an
    agreement score. With an agreement threshold on the project, a task under
@@ -186,7 +207,8 @@ assignment enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release,
 an expiry, a deletion), the trigger updates its task's row inside the
 assignment write. So submit, skip, release, the expiry of a late submission,
 a resubmission, a review decision and the overturn of a dispute all lock the
-task row first. A revision reads the organisation of the assignment without a
+task row first. A take-back locks it too, to read the task's status under
+the lock. A revision reads the organisation of the assignment without a
 lock (it never changes), then takes the clock, the task row and the
 assignment, in that order. Gold scoring reads the expected answer under the
 same `FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock is never
