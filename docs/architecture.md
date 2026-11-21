@@ -818,16 +818,20 @@ anywhere), `two-step` (five wrong codes per account and client address per
 fifteen minutes), `two-step-account` (twenty wrong codes per account per
 hour) and `api` (120 requests a minute per token).
 
-- **Sign-in** counts wrong passwords only, per email and address
-  (`clientAddress`, so per email alone without `TRUST_PROXY`). A right
-  password from an address that is not locked always signs in, so someone
-  hammering an email from one place does not lock its owner out from
-  another. Past thirty wrong passwords for an email in fifteen minutes from
-  anywhere, every address gets three of its own instead of ten. The check
-  reads the counts first (`peek`) and adds to them only after a wrong
-  password, so two wrong passwords at the same moment can go one over. The
-  lockout is recorded once, by the wrong password that reaches the limit.
-  An email longer than 254 characters is refused before any lookup.
+- **Sign-in** reserves a try per email and client address before the
+  password is checked, in the one `hit` statement, so a burst of parallel
+  requests gets no more tries than one at a time, and a right password
+  gives its try back (`giveBack`). With a known address (`TRUST_PROXY=true`
+  behind a proxy that sets `X-Forwarded-For`), the eleventh try of an email
+  and address in fifteen minutes is refused, and the right password from
+  another address always signs in, so someone hammering an email from one
+  place does not lock its owner out. Past thirty wrong passwords for an email
+  from anywhere, every address gets three tries instead of ten. The lockout
+  is recorded once, by the first refused try. Without a known address every
+  client looks alike, so nobody is refused, which would lock the owner out
+  too: after three tries each attempt for the email waits longer, from 250 ms
+  doubling up to five seconds (`signInDelayMs`). An email longer than 254
+  characters is refused before any lookup.
 
 - **One row per key** in `RateLimitHit`. The key is the SHA-256 of the
   limiter's name and the full key, so a long or odd key cannot make the

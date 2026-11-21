@@ -817,4 +817,10 @@ review: keys are stored as SHA-256 with the limiter's name and a hashed
 subject, an email over 254 characters is refused before any lookup, pruning
 is not awaited, and the sign-in counts only wrong passwords per email and
 address, so nobody can lock an owner out from elsewhere; an email guessed
-at from many places gives every address three tries. Still open: nothing.
+at from many places gives every address three tries. Second review: the try
+is reserved before the password is checked and given back when it is
+right, so parallel bursts gain nothing; without `TRUST_PROXY` nobody is
+refused and wrong passwords are slowed (up to five seconds) instead; the
+compose file has no sample `SESSION_SECRET` and the container makes one on
+first start, and production refuses a published sample. Still open: with no
+known address, a parallel burst is slowed only per request, not limited.

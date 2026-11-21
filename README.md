@@ -158,7 +158,7 @@ npm run dev              # http://localhost:4421
 | Variable               | Default               | Purpose                                                               |
 | ---------------------- | --------------------- | --------------------------------------------------------------------- |
 | `DATABASE_URL`         | (required)            | PostgreSQL connection string                                          |
-| `SESSION_SECRET`       | dev-only value        | Signs the session cookie; required (16+ characters) in production     |
+| `SESSION_SECRET`       | dev-only value        | Signs the session cookie; 16+ characters in production (see below)    |
 | `COOKIE_SECURE`        | `true` in production  | Set `false` when serving over plain http                              |
 | `SEED_DEMO`            | `false`               | Docker only: create the demo organisation on start                    |
 | `SHOW_DEMO_LOGINS`     | `false`               | List the demo accounts on the sign-in page                            |
@@ -367,22 +367,27 @@ More detail: [architecture](docs/architecture.md),
   HTTPS (the compose file already does).
 - **"SESSION_SECRET must be set"** on start: production refuses the built-in
   development secret. Set `SESSION_SECRET` to 16 or more random characters.
-- **A warning about the sample SESSION_SECRET, or a 503 that names it**: the
-  compose file's secret is a published sample so that the quick start works.
-  It is accepted only for requests to `localhost`; under any other host name
-  every page answers 503 until you set `SESSION_SECRET` of your own.
+- **"SESSION_SECRET is a published sample value"** on start: production
+  refuses values from the repository (anything with `change-me` in it). In
+  the compose setup leave `SESSION_SECRET` unset: the container makes a
+  random one on its first start and keeps it in the `app-data` volume, so
+  sessions survive restarts. Removing that volume signs everyone out once.
 - **Integration tests fail with "database does not exist"**: create the test
   database (`createdb labeling_test`) or use `docker-compose.dev.yml`, which
   creates it on first start, and point `TEST_DATABASE_URL` at it.
-- **"Too many attempts" on sign-in**: ten wrong passwords lock that email
-  from that address for fifteen minutes (three while the email is being
-  guessed at from many places). The right password from another address
-  still works. To clear an email's count before the window ends (the counts
-  are kept as hashes, so this hashes the email the same way):
+- **"Too many attempts" on sign-in**: behind a proxy that sets
+  `X-Forwarded-For`, with `TRUST_PROXY=true`, ten wrong passwords lock that
+  email from that address for fifteen minutes (three while the email is
+  being guessed at from many places), and the right password from another
+  address still works. Without `TRUST_PROXY` the app cannot tell clients
+  apart, so nobody is locked out: after three wrong passwords each attempt
+  for that email waits longer, up to five seconds. To clear an email's count
+  before the window ends (the counts are kept as hashes; this trims and
+  lower-cases the email as the app does, then hashes it the same way):
 
   ```bash
   docker compose exec db psql -U labeling labeling -c \
-    "DELETE FROM \"RateLimitHit\" WHERE name IN ('login', 'login-email') AND subject = encode(sha256(convert_to(lower('ann@example.com'), 'UTF8')), 'hex')"
+    "DELETE FROM \"RateLimitHit\" WHERE name IN ('login', 'login-email') AND subject = encode(sha256(convert_to(lower(btrim(' Ann@Example.com ')), 'UTF8')), 'hex')"
   ```
 
 - **A task is stuck as claimed**: claims expire after the project's time limit

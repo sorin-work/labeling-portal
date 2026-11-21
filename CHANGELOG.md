@@ -257,8 +257,9 @@ the period of its approval.
 
 ### Operations
 
-- The sample `SESSION_SECRET` of the compose file logs a warning at start
-  and is refused for requests under any host name other than localhost
+- The compose file has no sample `SESSION_SECRET` any more: without one the
+  container makes a random secret on its first start and keeps it in a
+  volume. Production refuses a published sample value
 - Rate limits shared between processes: the sign-in, second-step and API
   limits count in an UNLOGGED PostgreSQL table, one statement per attempt,
   so a restart no longer clears a lockout and two app processes do not each
