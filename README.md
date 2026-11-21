@@ -77,6 +77,10 @@ or fix the work.
 - **Export** of finished labels as JSON Lines or CSV (both can be imported
   again), COCO, YOLO or Pascal VOC for boxes and CoNLL tags for entities,
   with pseudonyms in place of annotator addresses
+- **Notifications** inside the app (no mail): send-backs and corrections,
+  disputes opened and settled, a changed gold score where gold feedback is
+  on, a claim a manager released and changed instructions, with an unread
+  count in the header
 - **Audit trail**: every change managers, reviewers and admins make to
   projects, pay, schema, members, people, gold tasks, reviews and disputes,
   plus sign-ins, lockouts and downloads, on a project's activity tab and on

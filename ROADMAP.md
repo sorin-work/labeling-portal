@@ -61,7 +61,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 21  | Spot checks and letting go of a review hold  | Shipped | review        | M    | -          |
 | 22  | Taking back the last submission              | Shipped | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
-| 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
+| 24  | Notifications inside the app                 | Shipped | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Later   | ops           | M    | -          |
 | 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
@@ -76,38 +76,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 Everything that was here has shipped.
 
 ## Later
-
-### 24. Notifications inside the app
-
-Improves items 9 and 4. Nobody is told anything except through tab counts and
-the "My work" page: not about a send-back or a correction, a new dispute, its
-outcome, or a rescore that changed a gold score. The app sends no mail and
-has no mail service, and adding a hosted one is against how it is run.
-
-- Data: `Notification` (user, organisation, kind, project, link, created,
-  read), written in the same transaction as the event, the way `logActivity`
-  is. A count of unread ones in `routes/app-layout.tsx` (one indexed count per
-  page, `@@index([userId, readAt])`) and a `/notifications` page that marks
-  them as read.
-- Events: work sent back or fixed (`recordReview`), a dispute opened (to the
-  project's managers), a dispute settled (to the annotator and the reviewer
-  who decided), a gold rescore that changed your score, a claim released by
-  a manager (item 19), and changed instructions (`instructionsUpdatedAt`,
-  which the work page already uses for its banner).
-- Tricky: gold must not stand out. A rescore notice says the task was gold,
-  which is fine only where gold feedback already says so after submitting.
-  With feedback off, no notice.
-- Tricky: a dispute can be settled by any reviewer of the project except the
-  one who decided. Notifying all of them is noise; I lean towards the
-  managers only, and the Disputes tab count for reviewers.
-- Tricky: the table grows. Read notifications older than 90 days can go; who
-  removes them depends on item 26, or on a cleanup when the page is opened.
-- Undecided: mail through an SMTP server the owner runs (`SMTP_URL`, off by
-  default). Self-hostable and optional, so it fits the rules, but it brings
-  bounce handling and unsubscribing. I would leave it to a later item.
-- Tests: integration tests that each event writes its notification in the
-  same transaction (a refused review writes none), gold without feedback
-  writes none, the count, and that nobody reads another person's.
 
 ### 25. Marking a pay period as paid
 
@@ -859,3 +827,20 @@ rows on their own (one fewer in the copy). After review: rows are read in
 the order they were written (by id), not by the container's clock; a failed
 row keeps pg_dump's error line in ASCII; the script keeps the newest 500 rows.
 Still open: nothing reaches anyone who does not open the dashboard.
+
+### 24. Notifications inside the app
+
+`Notification` (person, organisation, kind, project, link, detail, created,
+read) with `@@index([userId, readAt])`, written by `notify` in the
+transaction of each event: a send-back or a fix (`recordReview`), a dispute
+opened (to admins and managers, as the item leaned), a dispute settled (to
+the annotator and the reviewer who decided), a gold rescore that changed a
+score (only with gold feedback on), a claim a manager released and changed
+instructions (to the project's members). Nobody is told about their own
+action, and a notification holds no answer, feedback or reason. The header
+counts the unread ones of the signed-in organisation; `/notifications`
+shows the latest 50 and opening it reads them. Read ones older than 90 days
+are removed when the page is opened, so nothing waits for item 26. Left
+out, as the item suggested: mail through an SMTP server. Still open: no
+notice reaches someone who never opens the app, and a qualification test or
+a review queue that fills up tells nobody.

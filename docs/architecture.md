@@ -778,6 +778,36 @@ expired.
 - **Not here**: a list of sessions with device and time. That needs a table of
   sessions and a write on every sign-in, which a version number does not.
 
+## Notifications
+
+The app sends no mail. People are told about their work inside it: a
+`Notification` row (person, organisation, kind, project, link, detail,
+created, read) is written in the same transaction as the event, through
+`notify` in `app/models/notifications.server.ts`, so a refused or rolled
+back change tells nobody, and nobody is told about their own action. The
+header shows the unread count for the signed-in organisation, one count on
+`(userId, readAt)` per page, and `/notifications` lists the latest 50.
+Opening it marks those as read; read ones older than 90 days are removed at
+the same moment, so no job is needed (item 26 could take that over).
+
+| Event                                           | Who is told                                |
+| ----------------------------------------------- | ------------------------------------------ |
+| Work sent back or fixed (`recordReview`)        | the annotator                              |
+| A dispute opened                                | the organisation's admins and managers     |
+| A dispute settled                               | the annotator and the reviewer who decided |
+| A gold rescore changed a score (`applyRescore`) | that annotator, only with gold feedback on |
+| A claim released by a manager (`releaseClaim`)  | the annotator                              |
+| Changed instructions (settings save)            | the project's members                      |
+
+A notification holds what its sentence needs (a task number, an outcome,
+two scores, who acted), never an answer, feedback or a reason. A rescore
+says the task was gold, which gold feedback already tells the annotator
+after they hand it in; without feedback no notice is written, or it would
+mark which tasks were gold. A dispute goes to the managers and not to every
+reviewer who could settle it; reviewers see the count on the Disputes tab.
+Mail through an SMTP server the owner runs was left out: it brings bounces
+and unsubscribing, and can be a later item.
+
 ## Audit trail
 
 `Activity` is the audit trail. An entry has the organisation, the project if

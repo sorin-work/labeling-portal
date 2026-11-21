@@ -150,6 +150,12 @@
 
 ### Review and quality
 
+- Notifications inside the app, with an unread count in the header and a
+  `/notifications` page: work sent back or corrected, a dispute opened (to
+  admins and managers) and settled (to the annotator and the reviewer), a
+  gold score changed by a rescore (only where gold feedback is on), a claim
+  released by a manager and changed instructions. Each is written with the
+  event it is about. Read ones go after 90 days. No mail is sent
 - Spot checks. On the annotator page and the task page, reviewers and
   managers can spot check accepted work that no reviewer has seen: a QA
   score, a verdict (fine, or would have sent it back) and feedback the

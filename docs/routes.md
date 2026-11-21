@@ -37,6 +37,7 @@ lists who can open each page.
 | `/people`                           | Members, roles, passwords, sessions      | admin                                        |
 | `/audit`                            | The organisation's audit trail           | admin                                        |
 | `/account`                          | Your password, sessions, API tokens      | signed in                                    |
+| `/notifications`                    | Your notifications; opening reads them   | signed in                                    |
 
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are
