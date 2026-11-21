@@ -624,6 +624,19 @@ export async function markSuggestionTaken(assignmentId: string, userId: string):
   return marked.count > 0;
 }
 
+/**
+ * Takes the mark back: the annotator undid "Start from the suggestion" past
+ * the point where they took it, so their answer is no longer started from it.
+ * Only on their own active claim.
+ */
+export async function clearSuggestionTaken(assignmentId: string, userId: string): Promise<boolean> {
+  const cleared = await prisma.assignment.updateMany({
+    where: { id: assignmentId, userId, status: 'ACTIVE' },
+    data: { fromSuggestion: false },
+  });
+  return cleared.count > 0;
+}
+
 function suggestionUse(
   suggestion: Prisma.JsonValue,
   answer: Prisma.InputJsonValue,
