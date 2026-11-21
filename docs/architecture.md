@@ -707,6 +707,48 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 - Sign-in attempts are rate limited per email (ten failures per fifteen
   minutes, in memory).
 
+## Sessions
+
+The session is a signed cookie (`app/lib/session.server.ts`) that lives for
+14 days. The server keeps no list of them. What it keeps is one number per
+account, `User.sessionVersion`, and every cookie carries the number it was
+made with (`v`). `getCurrentUser` reads the number in the query that already
+reads the membership, so this costs no extra query, and a cookie with another
+number is no session: pages redirect to the sign-in page as for a cookie that
+expired.
+
+- **The number goes up** when an admin sets someone's password, when a person
+  changes their own, with "Sign out everywhere" on the account page and with
+  "End sessions" for a person on People. Every cookie made before stops
+  counting at the next request, in every browser.
+- **The tab that changed its own password** gets a new cookie with the new
+  number in the same response, so it stays signed in. "Sign out everywhere"
+  signs this browser out too.
+- **Cookies from before** the column existed have no `v`. It is read as 0,
+  the default of the column, so the upgrade signed nobody out.
+- **Open work pages.** The next draft save of a page whose session ended gets
+  the redirect to the sign-in page, which the page reads as "Draft not saved",
+  as after a sign-out in another tab.
+- **API tokens are not sessions.** A password change or ending sessions leaves
+  them working, because a script that stops without a word is its own problem.
+  The account page names the person's tokens that still work next to the
+  button and in the message after a password change, with Revoke below. On
+  People the admin sees them after "End sessions" or a new password, with a
+  Revoke button each (`revokeApiTokenOf`, recorded with whose token it was).
+- **Audit.** "Sign out everywhere" and "End sessions" are both
+  `person.sessions_ended`; `detail.own` tells them apart. A password change
+  keeps its own entry and adds none.
+- **One number per account, not per organisation.** Someone who is in more
+  than one organisation is signed out of all of them when an admin of one
+  ends their sessions or sets their password. That fails safe after a
+  takeover, and the People page says so before "End sessions".
+- **Removing a person** ends their sessions too (the number goes up) and
+  revokes their API tokens for that organisation, so adding them again does
+  not bring an old cookie or token back. A role change is read on every
+  request and needs nothing.
+- **Not here**: a list of sessions with device and time. That needs a table of
+  sessions and a write on every sign-in, which a version number does not.
+
 ## Audit trail
 
 `Activity` is the audit trail. An entry has the organisation, the project if
@@ -720,7 +762,8 @@ turns an entry into the sentence both pages show, and covers every action.
   project and qualification resets; gold tasks made, edited, retired, brought
   back and rescored; review decisions (whose work, which task, the decision
   and the QA score); settled disputes; people added to the organisation, role
-  changes, passwords an admin set, people removed, own password changes;
+  changes, passwords an admin set, people removed, own password changes,
+  sessions ended (signing out everywhere, or an admin ending them);
   sign-ins and lockouts; and the downloads of labels, the quality table and
   the pay report. Tasks settled in adjudication or sent there by hand are
   recorded too (item 11).

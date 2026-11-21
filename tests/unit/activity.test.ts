@@ -97,6 +97,18 @@ describe('describeActivity', () => {
     }
   });
 
+  it('tells signing out everywhere apart from an admin ending the sessions', () => {
+    expect(describeActivity('person.sessions_ended', { userName: 'Dana', own: true })).toBe(
+      'signed out everywhere',
+    );
+    expect(describeActivity('person.sessions_ended', { userName: 'Dana', own: false })).toBe(
+      'ended every session of Dana',
+    );
+    expect(
+      describeActivity('token.revoked', { name: 'Nightly', prefix: 'lp_ab', userName: 'Dana' }),
+    ).toBe('revoked the API token “Nightly” (lp_ab…) of Dana');
+  });
+
   it('names the person from the entry, so it reads the same once they are gone', () => {
     expect(describeActivity('person.password', { userId: 'u1', userName: 'Dana' })).toBe(
       'set a new password for Dana',

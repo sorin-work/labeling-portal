@@ -34,9 +34,9 @@ lists who can open each page.
 | `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work              |
 | `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators) |
 | `/payouts`                          | Pay report for a date range              | admin, project manager                      |
-| `/people`                           | Organisation members, roles, passwords   | admin                                       |
+| `/people`                           | Members, roles, passwords, sessions      | admin                                       |
 | `/audit`                            | The organisation's audit trail           | admin                                       |
-| `/account`                          | Change your password, API tokens         | signed in                                   |
+| `/account`                          | Your password, sessions, API tokens      | signed in                                   |
 
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are

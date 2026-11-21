@@ -74,6 +74,24 @@ export function listApiTokens(orgId: string, userId: string) {
   });
 }
 
+/**
+ * The tokens of a person that still work: not revoked and not expired. A
+ * password change or "sign out everywhere" leaves these alone, so the pages
+ * that end sessions name them with a way to revoke them.
+ */
+export function listActiveApiTokens(orgId: string, userId: string, now = new Date()) {
+  return prisma.apiToken.findMany({
+    where: {
+      orgId,
+      userId,
+      revokedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, name: true, prefix: true, readOnly: true, lastUsedAt: true },
+  });
+}
+
 /** Revokes one of the person's own tokens. A token that is already revoked stays as it was. */
 export async function revokeApiToken(
   orgId: string,
@@ -81,17 +99,45 @@ export async function revokeApiToken(
   tokenId: string,
   now = new Date(),
 ) {
+  return revoke(orgId, userId, userId, tokenId, now);
+}
+
+/**
+ * Revokes a token of someone else in the organisation, for an admin who is
+ * ending that person's sessions after their account was taken over. The
+ * audit entry names whose token it was.
+ */
+export async function revokeApiTokenOf(
+  orgId: string,
+  actorId: string,
+  userId: string,
+  tokenId: string,
+  now = new Date(),
+) {
+  return revoke(orgId, actorId, userId, tokenId, now);
+}
+
+async function revoke(orgId: string, actorId: string, userId: string, tokenId: string, now: Date) {
   return prisma.$transaction(async (tx) => {
     const [row] = await tx.apiToken.updateManyAndReturn({
       where: { id: tokenId, orgId, userId, revokedAt: null },
       data: { revokedAt: now },
     });
     if (!row) return { ok: false as const };
+    const owner =
+      actorId === userId
+        ? null
+        : await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
     await logActivity(tx, {
       orgId,
-      actorId: userId,
+      actorId,
       action: 'token.revoked',
-      detail: { tokenId: row.id, name: row.name, prefix: row.prefix },
+      detail: {
+        tokenId: row.id,
+        name: row.name,
+        prefix: row.prefix,
+        ...(owner ? { userId, userName: owner.name } : {}),
+      },
       createdAt: now,
     });
     return { ok: true as const };
