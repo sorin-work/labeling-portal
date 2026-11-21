@@ -45,3 +45,10 @@ export class RateLimiter {
 
 /** Ten failed sign-ins per email per fifteen minutes. */
 export const loginLimiter = new RateLimiter(10, 15 * 60_000);
+
+/**
+ * Five wrong second-step codes per account and client address per fifteen
+ * minutes. With the address in the key, someone guessing from elsewhere does
+ * not lock the owner out (see `clientAddress`).
+ */
+export const twoStepLimiter = new RateLimiter(5, 15 * 60_000);

@@ -8,6 +8,7 @@ import { formatDate } from '~/lib/format';
 import { fieldErrors } from '~/lib/http';
 import { ROLE_LABELS, ROLES } from '~/lib/permissions';
 import { listActiveApiTokens, revokeApiTokenOf } from '~/models/api-tokens.server';
+import { resetTwoStep, setTwoStepRule } from '~/models/two-step.server';
 import {
   addPerson,
   changeRole,
@@ -26,10 +27,22 @@ export function meta() {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const { user, membership } = await requireRole(request, ['ADMIN']);
-  const people = await listPeople(membership.orgId);
+  const [people, org] = await Promise.all([
+    listPeople(membership.orgId),
+    prisma.organization.findUniqueOrThrow({
+      where: { id: membership.orgId },
+      select: { twoStepRequired: true },
+    }),
+  ]);
   return {
     me: user.id,
-    people: people.map((m) => ({ ...m.user, role: m.role, joinedAt: m.createdAt })),
+    twoStepRequired: org.twoStepRequired,
+    people: people.map(({ user: { totpEnabledAt, ...person }, ...m }) => ({
+      ...person,
+      twoStep: totpEnabledAt !== null,
+      role: m.role,
+      joinedAt: m.createdAt,
+    })),
   };
 }
 
@@ -133,6 +146,24 @@ export async function action({ request }: Route.ActionArgs) {
       tokens: await stillWorking(membership.orgId, userId),
     });
   }
+  if (intent === 'two-step-reset') {
+    const result = await resetTwoStep(membership.orgId, user.id, userId);
+    if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
+    return data<ActionData>({
+      message:
+        'Their two-step sign-in was reset and their sessions ended. They sign in with the password and set it up again.',
+    });
+  }
+  if (intent === 'two-step-rule') {
+    const required = form.get('required') === 'on';
+    const result = await setTwoStepRule(membership.orgId, user.id, required);
+    if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
+    return data<ActionData>({
+      message: required
+        ? 'Admins and project managers now need two-step sign-in. Those without it are asked to set it up.'
+        : 'Two-step sign-in is no longer required.',
+    });
+  }
   if (intent === 'remove') {
     const result = await removePerson(membership.orgId, user.id, userId);
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
@@ -142,7 +173,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function People({ loaderData, actionData }: Route.ComponentProps) {
-  const { people, me } = loaderData;
+  const { people, me, twoStepRequired } = loaderData;
   const result = actionData as ActionData | undefined;
   const navigation = useNavigation();
 
@@ -186,6 +217,7 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                   </div>
                   <div className="text-xs text-slate-500">
                     {person.email} · joined {formatDate(person.joinedAt)}
+                    {person.twoStep ? ' · two-step on' : ''}
                   </div>
                 </div>
                 {person.id === me ? (
@@ -243,6 +275,24 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                         End sessions
                       </Button>
                     </Form>
+                    {person.twoStep && (
+                      <Form
+                        method="post"
+                        onSubmit={(event) => {
+                          if (
+                            !confirm(
+                              `Reset the two-step sign-in of ${person.name}? Their sessions end, and they sign in with the password alone until they set it up again.`,
+                            )
+                          )
+                            event.preventDefault();
+                        }}
+                      >
+                        <input type="hidden" name="userId" value={person.id} />
+                        <Button name="intent" value="two-step-reset" variant="ghost">
+                          Reset two-step
+                        </Button>
+                      </Form>
+                    )}
                     <details className="w-full text-sm">
                       <summary className="cursor-pointer text-xs text-slate-500">
                         Set a new password
@@ -268,49 +318,68 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
             ))}
           </ul>
         </div>
-        <Card className="h-fit">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Add a person
-          </h2>
-          <Form method="post" className="space-y-3">
-            <Field label="Name" htmlFor="name" error={result?.errors?.name}>
-              <Input id="name" name="name" required />
-            </Field>
-            <Field label="Email" htmlFor="email" error={result?.errors?.email}>
-              <Input id="email" name="email" type="email" required />
-            </Field>
-            <Field label="Role" htmlFor="role">
-              <select
-                id="role"
-                name="role"
-                defaultValue="ANNOTATOR"
-                className="block w-full rounded-md border-0 px-3 py-2 text-sm ring-1 ring-slate-300"
+        <div className="h-fit space-y-6">
+          <Card>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Two-step sign-in
+            </h2>
+            <Form method="post" className="space-y-3 text-sm">
+              <label className="flex items-start gap-2">
+                <input type="checkbox" name="required" defaultChecked={twoStepRequired} />
+                <span>
+                  Require it for admins and project managers. Those without it can only open their
+                  account page until they set it up. API tokens are not affected.
+                </span>
+              </label>
+              <Button name="intent" value="two-step-rule" variant="secondary">
+                Save
+              </Button>
+            </Form>
+          </Card>
+          <Card>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Add a person
+            </h2>
+            <Form method="post" className="space-y-3">
+              <Field label="Name" htmlFor="name" error={result?.errors?.name}>
+                <Input id="name" name="name" required />
+              </Field>
+              <Field label="Email" htmlFor="email" error={result?.errors?.email}>
+                <Input id="email" name="email" type="email" required />
+              </Field>
+              <Field label="Role" htmlFor="role">
+                <select
+                  id="role"
+                  name="role"
+                  defaultValue="ANNOTATOR"
+                  className="block w-full rounded-md border-0 px-3 py-2 text-sm ring-1 ring-slate-300"
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field
+                label="Temporary password"
+                htmlFor="password"
+                error={result?.errors?.password}
+                hint="Share it privately; they can change it after signing in."
               >
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {ROLE_LABELS[r]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              label="Temporary password"
-              htmlFor="password"
-              error={result?.errors?.password}
-              hint="Share it privately; they can change it after signing in."
-            >
-              <Input id="password" name="password" type="text" autoComplete="off" required />
-            </Field>
-            <Button
-              name="intent"
-              value="add"
-              className="w-full"
-              disabled={navigation.state !== 'idle'}
-            >
-              Add person
-            </Button>
-          </Form>
-        </Card>
+                <Input id="password" name="password" type="text" autoComplete="off" required />
+              </Field>
+              <Button
+                name="intent"
+                value="add"
+                className="w-full"
+                disabled={navigation.state !== 'idle'}
+              >
+                Add person
+              </Button>
+            </Form>
+          </Card>
+        </div>
       </div>
     </div>
   );

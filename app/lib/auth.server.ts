@@ -10,7 +10,12 @@ import { hashToken, TOKEN_PREFIX } from './tokens.server';
 export type CurrentUser = {
   user: Pick<User, 'id' | 'email' | 'name'>;
   membership: Pick<Membership, 'id' | 'orgId' | 'role'>;
+  /** the organisation asks the second step of this role and it is not on yet */
+  mustSetUpTwoStep?: boolean;
 };
+
+/** The pages someone the two-step rule applies to can still open before setting it up. */
+const SETUP_PATHS = ['/account', '/logout'];
 
 /** Checks an email/password pair and returns the user with their first membership. */
 export async function authenticate(email: string, password: string) {
@@ -39,14 +44,27 @@ export async function getCurrentUser(request: Request): Promise<CurrentUser | nu
   if (!userId || !orgId) return null;
   const membership = await prisma.membership.findUnique({
     where: { orgId_userId: { orgId, userId } },
-    include: { user: { select: { id: true, email: true, name: true, sessionVersion: true } } },
+    include: {
+      user: {
+        select: { id: true, email: true, name: true, sessionVersion: true, totpEnabledAt: true },
+      },
+      org: { select: { twoStepRequired: true } },
+    },
   });
   if (!membership) return null;
   // every session made before the last "sign out everywhere" or password change
   if (membership.user.sessionVersion !== sessionVersionOf(session.get('v'))) return null;
-  const { user: account, ...rest } = membership;
+  const { user: account, org, ...rest } = membership;
   const user = { id: account.id, email: account.email, name: account.name };
-  return { user, membership: { id: rest.id, orgId: rest.orgId, role: rest.role } };
+  const mustSetUpTwoStep =
+    org.twoStepRequired &&
+    (rest.role === 'ADMIN' || rest.role === 'PROJECT_MANAGER') &&
+    account.totpEnabledAt === null;
+  return {
+    user,
+    membership: { id: rest.id, orgId: rest.orgId, role: rest.role },
+    ...(mustSetUpTwoStep ? { mustSetUpTwoStep } : {}),
+  };
 }
 
 export async function requireUser(request: Request): Promise<CurrentUser> {
@@ -57,6 +75,9 @@ export async function requireUser(request: Request): Promise<CurrentUser> {
     const url = new URL(request.url);
     const next = url.pathname + url.search;
     throw redirect(next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`);
+  }
+  if (current.mustSetUpTwoStep && !SETUP_PATHS.includes(new URL(request.url).pathname)) {
+    throw redirect('/account?twoStep=required');
   }
   return current;
 }

@@ -35,3 +35,35 @@ export function internalImageHosts(): string[] {
     )
     .filter(Boolean);
 }
+
+const DEV_TOTP_KEY = 'dev-only-totp-key-change-me-0123456789';
+
+/**
+ * The key the two-step secrets are encrypted with, from `TOTP_KEY` (16 or
+ * more characters). It is its own variable so that rotating the session
+ * secret does not make every second step unreadable. Production asks for it
+ * only when someone sets up or uses a second step, so an install that does
+ * not use the feature needs nothing new.
+ */
+export function totpKey(): string {
+  const key = process.env.TOTP_KEY;
+  if (key && key.length >= 16) return key;
+  if (process.env.NODE_ENV === 'production') {
+    throw new TotpKeyMissing();
+  }
+  return DEV_TOTP_KEY;
+}
+
+export class TotpKeyMissing extends Error {
+  constructor() {
+    super('TOTP_KEY must be set to at least 16 characters to use two-step sign-in');
+  }
+}
+
+/**
+ * Whether the app sits behind a proxy that says who the client is
+ * (`TRUST_PROXY=true`). Only then is `X-Forwarded-For` believed.
+ */
+export function trustProxy(): boolean {
+  return process.env.TRUST_PROXY === 'true';
+}

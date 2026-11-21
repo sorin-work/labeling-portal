@@ -20,7 +20,9 @@ export function listPeople(orgId: string) {
   return prisma.membership.findMany({
     where: { orgId },
     orderBy: [{ role: 'asc' }, { user: { name: 'asc' } }],
-    include: { user: { select: { id: true, name: true, email: true, createdAt: true } } },
+    include: {
+      user: { select: { id: true, name: true, email: true, createdAt: true, totpEnabledAt: true } },
+    },
   });
 }
 
