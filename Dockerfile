@@ -31,7 +31,9 @@ COPY --chown=node:node docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN mkdir -p /app/data && chown node:node /app/data
 # the worker service runs the background jobs from the same build
 COPY --chown=node:node docker/worker.mjs ./docker/worker.mjs
+# the web server, which hands the client's socket address to the app
+COPY --chown=node:node docker/server.mjs ./docker/server.mjs
 USER node
 EXPOSE 3000
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["node_modules/.bin/react-router-serve", "./build/server/index.js"]
+CMD ["node", "docker/server.mjs"]
