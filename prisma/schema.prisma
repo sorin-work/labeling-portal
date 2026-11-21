@@ -397,6 +397,10 @@ model Assignment {
   reviewHeldAt   DateTime?
   /// 0..1 match against the gold answer, for gold tasks only
   goldScore      Float?
+  /// the annotator took the submission back to change it, right after handing it in
+  takenBackAt    DateTime?
+  /// the review status it had then (PENDING or NOT_REQUIRED), which a resubmission returns to
+  takenBackFrom  ReviewStatus?
   reviews        Review[]
   disputes       Dispute[]
   project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
