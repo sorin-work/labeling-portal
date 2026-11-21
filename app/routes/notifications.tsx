@@ -1,10 +1,13 @@
-import { Link } from 'react-router';
+import { useEffect, useRef } from 'react';
+import { Form, Link, redirect, useFetcher } from 'react-router';
 
-import { Badge, EmptyState, PageHeader } from '~/components/ui';
-import { NOTIFICATION_RETENTION_DAYS, NOTIFICATIONS_SHOWN } from '~/domain/notifications';
+import { Badge, Button, EmptyState, PageHeader } from '~/components/ui';
+import { NOTIFICATION_RETENTION_DAYS } from '~/domain/notifications';
 import { requireUser } from '~/lib/auth.server';
 import { formatDateTime } from '~/lib/format';
-import { openNotifications } from '~/models/notifications.server';
+import { requireSameOrigin } from '~/lib/http';
+import { readPage } from '~/lib/pagination';
+import { listNotifications, markRead } from '~/models/notifications.server';
 
 import type { Route } from './+types/notifications';
 
@@ -13,22 +16,56 @@ export function meta() {
 }
 
 /**
- * The signed-in person's notifications in their organisation. Whose they
- * are comes from the session only. Opening the page reads them, so the count
- * in the header goes back to zero.
+ * The signed-in person's notifications in their organisation, unread first.
+ * Whose they are comes from the session only. Loading the page changes
+ * nothing: a link from another site or a prefetch cannot mark anything read.
  */
 export async function loader({ request }: Route.LoaderArgs) {
   const { user, membership } = await requireUser(request);
-  return { notifications: await openNotifications(user.id, membership.orgId) };
+  const page = readPage(new URL(request.url));
+  const list = await listNotifications(user.id, membership.orgId, page);
+  return { page, ...list, upTo: list.upTo?.toISOString() ?? null };
+}
+
+/**
+ * POST: marks the person's unread notifications as read, up to the newest one
+ * the page showed. The page sends it once it is on screen, and "Mark all as
+ * read" sends it without script. A post from another site is refused.
+ */
+export async function action({ request }: Route.ActionArgs) {
+  requireSameOrigin(request);
+  const { user, membership } = await requireUser(request);
+  const form = await request.formData();
+  const upTo = new Date(String(form.get('upTo') ?? ''));
+  if (!Number.isNaN(upTo.getTime())) await markRead(user.id, membership.orgId, upTo);
+  if (form.get('from') === 'page') return { ok: true };
+  return redirect('/notifications');
 }
 
 export default function Notifications({ loaderData }: Route.ComponentProps) {
-  const { notifications } = loaderData;
+  const { notifications, unread, upTo, hasOlder, page } = loaderData;
+  // what is on screen has been seen: say so to the server, once per load
+  const fetcher = useFetcher();
+  const sent = useRef<string | null>(null);
+  useEffect(() => {
+    if (unread === 0 || !upTo || sent.current === upTo) return;
+    sent.current = upTo;
+    void fetcher.submit({ upTo, from: 'page' }, { method: 'post' });
+  }, [unread, upTo, fetcher]);
+
   return (
-    <div>
+    <div className="space-y-4">
       <PageHeader
         title="Notifications"
-        subtitle={`The latest ${NOTIFICATIONS_SHOWN}. Read ones go after ${NOTIFICATION_RETENTION_DAYS} days.`}
+        subtitle={`Unread ones first. Read ones go after ${NOTIFICATION_RETENTION_DAYS} days.`}
+        actions={
+          unread > 0 && upTo ? (
+            <Form method="post">
+              <input type="hidden" name="upTo" value={upTo} />
+              <Button variant="secondary">Mark all as read</Button>
+            </Form>
+          ) : null
+        }
       />
       {notifications.length === 0 ? (
         <EmptyState title="Nothing yet">
@@ -46,6 +83,11 @@ export default function Notifications({ loaderData }: Route.ComponentProps) {
             </li>
           ))}
         </ul>
+      )}
+      {hasOlder && (
+        <Link to={`?page=${page + 1}`} className="text-sm text-indigo-700 hover:underline">
+          Show older
+        </Link>
       )}
     </div>
   );
