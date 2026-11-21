@@ -881,7 +881,8 @@ export async function releaseAssignment(
 }
 
 export type ReleaseClaimResult =
-  { ok: true; creditedSeconds: number } | { ok: false; error: 'not_found' | 'not_active' };
+  | { ok: true; creditedSeconds: number }
+  | { ok: false; error: 'not_found' | 'not_active' | 'expired' };
 
 /**
  * A manager takes a claim away from the annotator who holds it, so the task
@@ -891,6 +892,10 @@ export type ReleaseClaimResult =
  * (`draftSeconds`) is credited the way a submission credits it, through
  * their work clock and `creditTime`, and becomes payable at once. A per-task
  * project pays for accepted tasks only, so nothing is credited there.
+ *
+ * A claim past its time limit has run out, whether or not anyone marked it
+ * yet: it is marked expired here and nothing is credited, exactly as when
+ * the expiry ran first, so the order of the two never changes the pay.
  *
  * The lock order is a submission's: the annotator's work clock, the task
  * row, then the assignment row. The audit entry is written in the same
@@ -917,17 +922,22 @@ export async function releaseClaim(
         select: { claimedAt: true, expiresAt: true, draftSeconds: true },
       });
       if (!claim) return { ok: false, error: 'not_active' } as const;
+      if (claim.expiresAt <= now) {
+        await tx.assignment.updateMany({
+          where: { id: assignmentId, status: 'ACTIVE' },
+          data: { status: 'EXPIRED', ...NO_DRAFT },
+        });
+        return { ok: false, error: 'expired' } as const;
+      }
       // the pay mode as it is now, held against a settings save, as a submission reads it
       const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
         SELECT "rateCents", "payMode" FROM "Project" WHERE id = ${project.id} FOR SHARE`;
-      // a claim past its limit that nobody marked expired yet is credited up to its limit
-      const end = claim.expiresAt < now ? claim.expiresAt : now;
       const credit =
         pay.payMode === 'HOURLY' && clock
           ? creditTime({
               reported: claim.draftSeconds,
               start: claim.claimedAt,
-              now: end,
+              now,
               credited: clock.credited,
               cap: firstSubmissionCap(project.timeLimitMinutes),
             })

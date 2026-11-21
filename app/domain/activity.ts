@@ -7,6 +7,7 @@
  * a gold edit names the task, not what was answered.
  */
 import { centsToDecimal } from './payouts';
+import { spokenDuration } from './release-claim';
 import { describeSchemaChange } from './schema-diff';
 
 /** Every action the trail records, with how the filter on `/audit` names it. */
@@ -248,7 +249,7 @@ export function describeActivity(action: string, detail: unknown): string {
     case 'assignment.released':
       return `released the claim of ${who} on task #${String(d.position)}${
         typeof d.seconds === 'number' && d.seconds > 0
-          ? `, crediting ${Math.round(d.seconds / 60)} minutes of their time`
+          ? `, crediting ${spokenDuration(d.seconds)} of their time`
           : ''
       }`;
     case 'member.added':
