@@ -45,9 +45,12 @@ or fix the work.
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections. "Start reviewing"
   reserves a submission for one reviewer, for 15 minutes and for as long as
-  they keep working on it, so two reviewers never work on the same one
+  they keep working on it, so two reviewers never work on the same one. The
+  reviewer can let go of it sooner, and a manager can release it
 - **Review sampling**: review a share of the work instead of all of it. New
-  annotators and annotators with low gold accuracy are always reviewed
+  annotators and annotators with low gold accuracy are always reviewed.
+  Reviewers can spot check work that was accepted unseen: a score, a verdict
+  and feedback, counted apart and changing nothing about the work
 - **Disputes**: an annotator can contest a send-back or a correction within a
   time limit set on the project. Someone other than the reviewer upholds or
   overturns the decision, and an overturned decision is undone everywhere it

@@ -5,17 +5,18 @@ well people label and how much they agree. This page explains each number.
 
 ## Per annotator
 
-| Column       | Meaning                                                                       |
-| ------------ | ----------------------------------------------------------------------------- |
-| Submitted    | Tasks submitted, gold tasks included                                          |
-| Skipped      | Tasks skipped, with the reasons summarised under the table                    |
-| Reviewed     | Share of their submissions a reviewer has decided on, gold tasks not counted  |
-| Approval     | Approve decisions divided by all review decisions on their work               |
-| Sent back    | How often a reviewer returned their work with feedback                        |
-| QA score     | Average 1-5 quality score reviewers gave                                      |
-| Gold         | Average score on gold tasks (see below); flagged ⚑ below 80% after 3 attempts |
-| Avg time     | Average active time per submission                                            |
-| Tasks / hour | Submissions divided by total active time                                      |
+| Column       | Meaning                                                                        |
+| ------------ | ------------------------------------------------------------------------------ |
+| Submitted    | Tasks submitted, gold tasks included                                           |
+| Skipped      | Tasks skipped, with the reasons summarised under the table                     |
+| Reviewed     | Share of their submissions a reviewer has decided on, gold tasks not counted   |
+| Approval     | Approve decisions divided by all review decisions on their work                |
+| Sent back    | How often a reviewer returned their work with feedback                         |
+| QA score     | Average 1-5 quality score reviewers gave                                       |
+| Gold         | Average score on gold tasks (see below); flagged ⚑ below 80% after 3 attempts  |
+| Avg time     | Average active time per submission                                             |
+| Tasks / hour | Submissions divided by total active time                                       |
+| Spot checks  | Accepted work a reviewer picked and checked, and how many they would send back |
 
 Approval, sent back and QA score only describe the reviewed part of someone's
 work. With review sampling (below) or a backlog in the review queue that can
@@ -24,6 +25,11 @@ be a small part, which is what the Reviewed column is for.
 A decision that a dispute overturned counts for nobody: it is left out of
 Reviewed, Approval, Sent back and QA score, and out of the reviewer's own
 numbers on their dashboard, which show it as "Overturned" instead.
+
+Spot checks are picked by a reviewer, not drawn, so they lean towards work
+somebody doubted. They have their own column and stay out of Reviewed,
+Approval, Sent back and QA score, out of the reviewer's dashboard numbers and
+out of the label export's QA score.
 
 Click a name for that person's recent work in the project. The table can be
 sorted by any column and downloaded as CSV.
@@ -45,6 +51,20 @@ Work that is not picked counts as accepted straight away, completes its task
 like approved work and is paid the same. Sent-back work always comes back to
 a reviewer. Gold tasks are scored instead of reviewed, with or without
 sampling.
+
+### Spot checks
+
+Work that was accepted without a review (the draw left it out, or the
+project does not review) can still be looked at. On the annotator page and
+the task page, reviewers and managers get "Spot check" next to such work. It
+opens the review page in spot-check mode: a QA score, a verdict (fine, or
+would have sent it back, which needs feedback) and feedback the annotator
+sees on "My work". The work has been paid and may have completed its task,
+so a spot check changes nothing: not the status, not the pay, not the task
+or its consensus. It is stored as a review with `spotCheck` set and a
+`review.spot_checked` audit entry. Each piece of work can be spot checked
+once, gold tasks are not spot checked (they are scored), and a spot check
+cannot be disputed, because it moved nothing.
 
 ## Gold scores
 

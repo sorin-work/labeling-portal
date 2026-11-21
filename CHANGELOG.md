@@ -143,6 +143,16 @@
 
 ### Review and quality
 
+- Spot checks. On the annotator page and the task page, reviewers and
+  managers can spot check accepted work that no reviewer has seen: a QA
+  score, a verdict (fine, or would have sent it back) and feedback the
+  annotator sees on "My work". Nothing about the work changes, not its
+  status, pay, task or consensus, and it cannot be disputed. The quality
+  page and its CSV show spot checks in a column of their own, out of the
+  approval rate, the reviewed share and the QA score
+- A reviewer can let go of a submission they reserved, and managers can
+  release another reviewer's reservation from the review queue, with an
+  entry in the audit trail
 - Review sampling: a project can review a share of its submissions instead of
   all of them. The draw happens once at submission and is stored; each
   annotator's first ten submissions and all work of annotators flagged for low

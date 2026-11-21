@@ -7,36 +7,36 @@ no token and the API takes no cookie. The draft autosave of the labeling
 pages, described at the end, is the other route that answers JSON. The table
 lists who can open each page.
 
-| Path                                | What                                     | Who                                         |
-| ----------------------------------- | ---------------------------------------- | ------------------------------------------- |
-| `/login`, `/logout`                 | Sign in and out                          | everyone                                    |
-| `/`                                 | Dashboard: your projects, stats, claims  | signed in                                   |
-| `/projects`                         | Project list                             | signed in (members only see their projects) |
-| `/projects/new`                     | Create a project                         | admin, project manager                      |
-| `/projects/:id`                     | Overview, instructions, start labeling   | project members, managers                   |
-| `/projects/:id/qualification`       | Qualification test                       | annotators on the project                   |
-| `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                          |
-| `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                |
-| `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                         |
-| `/projects/:id/review` (POST)       | Reserve the next submission and open it  | reviewers, managers                         |
-| `/review/:assignmentId`             | Reserve, then approve, send back or fix  | reviewers, managers (not on their own work) |
-| `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                         |
-| `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)    |
-| `/projects/:id/adjudication`        | Tasks whose answers agreed too little    | reviewers, managers                         |
-| `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                         |
-| `/projects/:id/batches[/new\|/:id]` | Import, browse, gold, priority and pause | admin, project manager                      |
-| `/projects/:id/tasks/:taskId`       | Submissions, consensus, adjudication     | reviewers, managers                         |
-| `/projects/:id/members`             | Add people, reset qualification          | admin, project manager                      |
-| `/projects/:id/export`              | Download labels                          | admin, project manager                      |
-| `/projects/:id/activity`            | What managers changed                    | admin, project manager                      |
-| `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                      |
-| `/my-work`                          | Your submissions, feedback, corrections  | annotators                                  |
-| `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work              |
-| `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators) |
-| `/payouts`                          | Pay report for a date range              | admin, project manager                      |
-| `/people`                           | Members, roles, passwords, sessions      | admin                                       |
-| `/audit`                            | The organisation's audit trail           | admin                                       |
-| `/account`                          | Your password, sessions, API tokens      | signed in                                   |
+| Path                                | What                                     | Who                                          |
+| ----------------------------------- | ---------------------------------------- | -------------------------------------------- |
+| `/login`, `/logout`                 | Sign in and out                          | everyone                                     |
+| `/`                                 | Dashboard: your projects, stats, claims  | signed in                                    |
+| `/projects`                         | Project list                             | signed in (members only see their projects)  |
+| `/projects/new`                     | Create a project                         | admin, project manager                       |
+| `/projects/:id`                     | Overview, instructions, start labeling   | project members, managers                    |
+| `/projects/:id/qualification`       | Qualification test                       | annotators on the project                    |
+| `/projects/:id/work` (POST)         | Claim the next task                      | annotators, admins                           |
+| `/work/:assignmentId`               | Label a claimed task, skip or release it | the annotator who claimed it                 |
+| `/projects/:id/review`              | Review queue, who holds each submission  | reviewers, managers                          |
+| `/projects/:id/review` (POST)       | Reserve the next one; release a hold     | reviewers; releasing: admin, project manager |
+| `/review/:assignmentId`             | Reserve, decide, let go, or spot check   | reviewers, managers (not on their own work)  |
+| `/projects/:id/disputes`            | Disputes on review decisions             | reviewers, managers                          |
+| `/projects/:id/disputes/:disputeId` | Uphold or overturn a disputed decision   | reviewers, managers (not who decided it)     |
+| `/projects/:id/adjudication`        | Tasks whose answers agreed too little    | reviewers, managers                          |
+| `/projects/:id/quality`             | Annotator stats, kappa, gold accuracy    | reviewers, managers                          |
+| `/projects/:id/batches[/new\|/:id]` | Import, browse, gold, priority and pause | admin, project manager                       |
+| `/projects/:id/tasks/:taskId`       | Submissions, consensus, adjudication     | reviewers, managers                          |
+| `/projects/:id/members`             | Add people, reset qualification          | admin, project manager                       |
+| `/projects/:id/export`              | Download labels                          | admin, project manager                       |
+| `/projects/:id/activity`            | What managers changed                    | admin, project manager                       |
+| `/projects/:id/settings`            | Edit, launch, pause, archive, duplicate  | admin, project manager                       |
+| `/my-work`                          | Your submissions, feedback, corrections  | annotators                                   |
+| `/my-work/:assignmentId`            | Revise or dispute work, see a gold check | the annotator who did the work               |
+| `/earnings`                         | Your own pay for a date range            | signed in (the menu shows it to annotators)  |
+| `/payouts`                          | Pay report for a date range              | admin, project manager                       |
+| `/people`                           | Members, roles, passwords, sessions      | admin                                        |
+| `/audit`                            | The organisation's audit trail           | admin                                        |
+| `/account`                          | Your password, sessions, API tokens      | signed in                                    |
 
 Saving the settings form answers 400 with `errors.schema` when the schema
 edit would break stored work, and saves nothing from that post. The rules are

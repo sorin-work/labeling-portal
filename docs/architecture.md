@@ -191,9 +191,9 @@ lock (it never changes), then takes the clock, the task row and the
 assignment, in that order. Gold scoring reads the expected answer under the
 same `FOR NO KEY UPDATE` lock, not `FOR SHARE`, so a shared lock is never
 upgraded in a circle. Writes that never change an assignment's state and never
-lock a task or a clock (draft saves, extensions, renewing a review hold, the
-single-statement reservation of the next review) take only the assignment
-row. As a backstop, `retryOnLockConflict` runs the claim, a submission, a
+lock a task or a clock (draft saves, extensions, renewing, letting go of or
+releasing a review hold, the single-statement reservation of the next
+review, a spot check) take only the assignment row. As a backstop, `retryOnLockConflict` runs the claim, a submission, a
 skip, a release (the annotator's or a manager's), expiry, a revision, a gold
 promotion and a review hold once more if PostgreSQL still aborts one with a
 deadlock (40P01) or a serialization failure (40001). The cost: writers of the
@@ -275,6 +275,13 @@ background job that clears it.
   it at once, and so does a posted decision that does not validate. So a
   long fix keeps its submission, and a tab that was left open lets it go. A
   renewal only touches a hold that is still the reviewer's own.
+- The reviewer who holds a submission can "Let go of it" on the review page
+  (`intent=let-go`, `letGoOfReviewHold`), one conditional write on the hold
+  being theirs. On the review queue a manager can "Release" another
+  reviewer's live hold (`intent=release-hold`, `releaseReviewHold`). The
+  form carries the holder the page showed, and the write only goes through
+  while that reviewer still holds it, so a hold that changed hands since is
+  left alone. The release is in the audit trail (`review.hold_released`).
 
 ## Disputes
 
