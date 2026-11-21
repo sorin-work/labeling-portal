@@ -10,7 +10,12 @@ import { hashToken, TOKEN_PREFIX } from './tokens.server';
 export type CurrentUser = {
   user: Pick<User, 'id' | 'email' | 'name'>;
   membership: Pick<Membership, 'id' | 'orgId' | 'role'>;
+  /** the organisation asks the second step of this role and it is not on yet */
+  mustSetUpTwoStep?: boolean;
 };
+
+/** The pages someone the two-step rule applies to can still open before setting it up. */
+const SETUP_PATHS = ['/account', '/logout'];
 
 /** Checks an email/password pair and returns the user with their first membership. */
 export async function authenticate(email: string, password: string) {
@@ -39,14 +44,27 @@ export async function getCurrentUser(request: Request): Promise<CurrentUser | nu
   if (!userId || !orgId) return null;
   const membership = await prisma.membership.findUnique({
     where: { orgId_userId: { orgId, userId } },
-    include: { user: { select: { id: true, email: true, name: true, sessionVersion: true } } },
+    include: {
+      user: {
+        select: { id: true, email: true, name: true, sessionVersion: true, totpEnabledAt: true },
+      },
+      org: { select: { twoStepRequired: true } },
+    },
   });
   if (!membership) return null;
   // every session made before the last "sign out everywhere" or password change
   if (membership.user.sessionVersion !== sessionVersionOf(session.get('v'))) return null;
-  const { user: account, ...rest } = membership;
+  const { user: account, org, ...rest } = membership;
   const user = { id: account.id, email: account.email, name: account.name };
-  return { user, membership: { id: rest.id, orgId: rest.orgId, role: rest.role } };
+  const mustSetUpTwoStep =
+    org.twoStepRequired &&
+    (rest.role === 'ADMIN' || rest.role === 'PROJECT_MANAGER') &&
+    account.totpEnabledAt === null;
+  return {
+    user,
+    membership: { id: rest.id, orgId: rest.orgId, role: rest.role },
+    ...(mustSetUpTwoStep ? { mustSetUpTwoStep } : {}),
+  };
 }
 
 export async function requireUser(request: Request): Promise<CurrentUser> {
@@ -57,6 +75,9 @@ export async function requireUser(request: Request): Promise<CurrentUser> {
     const url = new URL(request.url);
     const next = url.pathname + url.search;
     throw redirect(next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`);
+  }
+  if (current.mustSetUpTwoStep && !SETUP_PATHS.includes(new URL(request.url).pathname)) {
+    throw redirect('/account?twoStep=required');
   }
   return current;
 }
@@ -113,10 +134,25 @@ export async function requireApiUser(request: Request, now = new Date()): Promis
   }
   const membership = await prisma.membership.findUnique({
     where: { orgId_userId: { orgId: token.orgId, userId: token.userId } },
-    include: { user: { select: { id: true, email: true, name: true } } },
+    include: {
+      user: { select: { id: true, email: true, name: true, totpEnabledAt: true } },
+      org: { select: { twoStepRequired: true } },
+    },
   });
   if (!membership)
     throw apiError(401, 'The token belongs to someone who has left the organisation.');
+  // the organisation's two-step rule covers tokens too: one made before the
+  // rule, or before a reset, stops working until its person has a second step
+  if (
+    membership.org.twoStepRequired &&
+    (membership.role === 'ADMIN' || membership.role === 'PROJECT_MANAGER') &&
+    membership.user.totpEnabledAt === null
+  ) {
+    throw apiError(
+      403,
+      'The organisation requires two-step sign-in for this role. Its owner has to set it up on the account page before the token works again.',
+    );
+  }
   const limit = apiLimiter.hit(token.id, now.getTime());
   if (!limit.allowed) {
     throw apiError(429, 'Too many requests with this token.', {
@@ -133,7 +169,8 @@ export async function requireApiUser(request: Request, now = new Date()): Promis
     },
     data: { lastUsedAt: now },
   });
-  const { user, ...rest } = membership;
+  const { user: account, org: _org, ...rest } = membership;
+  const user = { id: account.id, email: account.email, name: account.name };
   return {
     user,
     membership: { id: rest.id, orgId: rest.orgId, role: rest.role },

@@ -5,7 +5,7 @@ import { authenticate, getCurrentUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { loginLimiter } from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
-import { createUserSession } from '~/lib/session.server';
+import { createUserSession, startPendingSignIn } from '~/lib/session.server';
 import { logActivity } from '~/models/activity.server';
 
 import type { Route } from './+types/login';
@@ -53,16 +53,20 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
   loginLimiter.reset(key);
+  const signingIn = {
+    userId: result.user.id,
+    orgId: result.membership.orgId,
+    v: result.user.sessionVersion,
+  };
+  // the password was right; with a second step on, the cookie only says who
+  // is signing in, and the sign-in is recorded once the code is right
+  if (result.user.totpEnabledAt) return startPendingSignIn(request, signingIn, next);
   await logActivity(prisma, {
     orgId: result.membership.orgId,
     actorId: result.user.id,
     action: 'auth.signed_in',
   });
-  return createUserSession(
-    request,
-    { userId: result.user.id, orgId: result.membership.orgId, v: result.user.sessionVersion },
-    next,
-  );
+  return createUserSession(request, signingIn, next);
 }
 
 /**

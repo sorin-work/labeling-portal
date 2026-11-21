@@ -263,6 +263,14 @@ the period of its approval.
 
 ### Operations
 
+- Two-step sign-in: an authenticator app's six-digit code after the
+  password, set up on the account page with a QR code drawn on the server,
+  and ten one-time recovery codes. The secret is encrypted with `TOTP_KEY`,
+  a code works once, and wrong codes are limited per account and client
+  address (`TRUST_PROXY=true` behind a proxy). Admins can require it for
+  admins and project managers and reset someone's second step on People;
+  turning it on and a reset end other sessions. All of it is in the audit
+  trail
 - Background jobs that survive a restart: the suggestion rule runs as a job
   in the `Job` table, added in the same transaction as the batch. A loop in
   the app takes due jobs with `FOR UPDATE SKIP LOCKED` and a lease, puts a

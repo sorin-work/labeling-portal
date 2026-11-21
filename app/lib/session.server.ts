@@ -8,7 +8,20 @@ import { cookieSecure, sessionSecret } from './env.server';
  * before versions existed has no `v` and is read as 0, so the upgrade signed
  * nobody out.
  */
-type SessionData = { userId: string; orgId: string; v: number };
+type SessionData = {
+  userId: string;
+  orgId: string;
+  v: number;
+  /**
+   * After a right password, for someone with two-step sign-in on: who is
+   * signing in, until the second step is right. `getCurrentUser` reads only
+   * `userId`, so a pending sign-in is no session.
+   */
+  pending: { userId: string; orgId: string; v: number; at: number };
+};
+
+/** How long the second step waits after the password. */
+export const PENDING_MS = 10 * 60_000;
 type SessionFlash = { flash: string };
 
 export const sessionStorage = createCookieSessionStorage<SessionData, SessionFlash>({
@@ -29,16 +42,48 @@ export function getSession(request: Request) {
 
 export async function createUserSession(
   request: Request,
-  data: SessionData,
+  data: { userId: string; orgId: string; v: number },
   redirectTo: string,
 ): Promise<Response> {
   const session = await getSession(request);
   session.set('userId', data.userId);
   session.set('orgId', data.orgId);
   session.set('v', data.v);
+  session.unset('pending');
   return redirect(redirectTo, {
     headers: { 'Set-Cookie': await sessionStorage.commitSession(session) },
   });
+}
+
+/**
+ * After the password, for someone with a second step: a cookie that holds
+ * only the pending sign-in, and the way to the second page. Anyone signed in
+ * before in this browser is signed out by it.
+ */
+export async function startPendingSignIn(
+  request: Request,
+  data: { userId: string; orgId: string; v: number },
+  next: string,
+  now = Date.now(),
+): Promise<Response> {
+  const session = await getSession(request);
+  session.unset('userId');
+  session.unset('orgId');
+  session.unset('v');
+  session.set('pending', { ...data, at: now });
+  const target =
+    next === '/' ? '/login/two-step' : `/login/two-step?next=${encodeURIComponent(next)}`;
+  return redirect(target, {
+    headers: { 'Set-Cookie': await sessionStorage.commitSession(session) },
+  });
+}
+
+/** The pending sign-in of this browser, if it is there and not too old. */
+export async function pendingSignIn(request: Request, now = Date.now()) {
+  const session = await getSession(request);
+  const pending = session.get('pending');
+  if (!pending || typeof pending.userId !== 'string' || now - pending.at > PENDING_MS) return null;
+  return pending;
 }
 
 /**

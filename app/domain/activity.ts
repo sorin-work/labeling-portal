@@ -44,10 +44,14 @@ export const ACTIVITY_ACTIONS = {
   'person.removed': 'Person removed',
   'person.sessions_ended': 'Sessions ended',
   'account.password': 'Own password changed',
+  'account.two_step': 'Two-step sign-in turned on or off',
+  'person.two_step_reset': 'Two-step sign-in reset by an admin',
+  'org.two_step_rule': 'Two-step rule changed',
   'token.created': 'API token made',
   'token.revoked': 'API token revoked',
   'auth.signed_in': 'Signed in',
   'auth.locked': 'Sign-in locked',
+  'auth.two_step_locked': 'Second step locked',
   'export.labels': 'Labels downloaded',
   'export.quality': 'Quality table downloaded',
   'export.payouts': 'Pay report downloaded',
@@ -300,12 +304,26 @@ export function describeActivity(action: string, detail: unknown): string {
       return d.own === true ? 'signed out everywhere' : `ended every session of ${who}`;
     case 'account.password':
       return 'changed their own password';
+    case 'account.two_step':
+      return d.on === false ? 'turned off two-step sign-in' : 'turned on two-step sign-in';
+    case 'person.two_step_reset':
+      return `reset the two-step sign-in of ${who}`;
+    case 'org.two_step_rule':
+      return d.required === false
+        ? 'stopped requiring two-step sign-in for admins and project managers'
+        : 'required two-step sign-in for admins and project managers';
     case 'token.created':
       return `made the ${d.readOnly === false ? 'read and write' : 'read-only'} API token “${String(d.name)}” (${String(d.prefix)}…)`;
     case 'token.revoked':
       return `revoked the API token “${String(d.name)}” (${String(d.prefix)}…)${typeof d.userName === 'string' ? ` of ${who}` : ''}`;
     case 'auth.signed_in':
-      return 'signed in';
+      return d.twoStep === 'recovery'
+        ? 'signed in with a recovery code'
+        : d.twoStep === 'code'
+          ? 'signed in with a two-step code'
+          : 'signed in';
+    case 'auth.two_step_locked':
+      return 'was locked out of the second sign-in step after too many wrong codes';
     case 'auth.locked':
       return 'was locked out of signing in after too many failed attempts';
     case 'export.labels':

@@ -10,6 +10,7 @@ lists who can open each page.
 | Path                                | What                                     | Who                                          |
 | ----------------------------------- | ---------------------------------------- | -------------------------------------------- |
 | `/login`, `/logout`                 | Sign in and out                          | everyone                                     |
+| `/login/two-step`                   | The code after the password              | a sign-in that has passed the password       |
 | `/`                                 | Dashboard: your projects, stats, claims  | signed in                                    |
 | `/projects`                         | Project list                             | signed in (members only see their projects)  |
 | `/projects/new`                     | Create a project                         | admin, project manager                       |

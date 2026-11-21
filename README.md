@@ -93,6 +93,11 @@ or fix the work.
 - **JSON API** under `/api/v1/` with tokens made on the account page:
   projects, batch upload with an `Idempotency-Key`, label export and task
   lookup. See [docs/api.md](docs/api.md)
+- **Two-step sign-in** with an authenticator app (six-digit codes) and ten
+  one-time recovery codes, set up on the account page. An admin can require
+  it for admins and project managers (their API tokens too), and reset
+  someone's second step on People; whoever lost their phone should change
+  their password before asking for that
 - **Sign out everywhere** on the account page, and **End sessions** for a
   person on People. A new password, set by an admin or by the person, signs
   out every other browser too. API tokens keep working and are listed with a
@@ -131,7 +136,9 @@ test. Every demo account uses the password `labeling-demo`:
 | `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work, and Earnings shows a project at two rates |
 | `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                                               |
 
-Change the port with `WEB_PORT=8080 docker compose up`. Data lives in the
+Change the port with `WEB_PORT=8080 docker compose up`. The app is published
+on 127.0.0.1 only; to serve it to others, put a proxy in front and set
+`TRUST_PROXY=true`. Data lives in the
 `db-data` volume; `docker compose down -v` starts fresh. For daily dumps of
 that volume see [Backup and restore](#backup-and-restore).
 
@@ -161,6 +168,8 @@ npm run dev              # http://localhost:4421
 | `INTERNAL_IMAGE_HOSTS` | (empty)               | Internal hosts that box project images may come from, comma separated |
 | `TEST_DATABASE_URL`    | local `labeling_test` | Database for integration tests (it is truncated between tests)        |
 | `WEB_PORT`             | `4421`                | Host port for the compose setup                                       |
+| `TOTP_KEY`             | dev-only value        | Encrypts the two-step secrets; required (16+) in production to use it |
+| `TRUST_PROXY`          | `false`               | `true` behind a proxy: `X-Forwarded-For` names the client             |
 | `JOBS_IN_WEB`          | `true`                | `false` leaves the background jobs to the `worker` service            |
 
 ## Background jobs

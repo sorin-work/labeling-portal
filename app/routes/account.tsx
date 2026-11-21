@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { data, Form } from 'react-router';
 
 import { Alert, Button, Card, Field, Input, PageHeader } from '~/components/ui';
@@ -17,7 +18,17 @@ import {
   revokeApiToken,
   TOKEN_LIFETIMES,
 } from '~/models/api-tokens.server';
+import { groupSecret, otpauthUri } from '~/domain/totp';
+import { TotpKeyMissing } from '~/lib/env.server';
 import { endSessions } from '~/models/people.server';
+import {
+  confirmTwoStepSetup,
+  pendingTwoStepSecret,
+  startTwoStepSetup,
+  turnOffTwoStep,
+  twoStepRequiredFor,
+  twoStepStatus,
+} from '~/models/two-step.server';
 
 import type { Route } from './+types/account';
 
@@ -25,19 +36,47 @@ export function meta() {
   return [{ title: 'Account · Labeling Portal' }];
 }
 
+/** The secret being set up, as text and as a QR code drawn here, so nothing is sent anywhere. */
+async function setupView(email: string, secret: string) {
+  const uri = otpauthUri(secret, email);
+  const qr = await QRCode.toString(uri, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+  return { secret: groupSecret(secret), qr };
+}
+
 export async function loader({ request }: Route.LoaderArgs) {
-  const { user, membership } = await requireUser(request);
+  const current = await requireUser(request);
+  const { user, membership } = current;
   // only the person's own tokens, and nothing in them that could be used
-  const [tokens, active] = await Promise.all([
+  const [tokens, active, twoStep, org] = await Promise.all([
     listApiTokens(membership.orgId, user.id),
     listActiveApiTokens(membership.orgId, user.id),
+    twoStepStatus(user.id),
+    prisma.organization.findUniqueOrThrow({
+      where: { id: membership.orgId },
+      select: { twoStepRequired: true },
+    }),
   ]);
+  let setup: { secret: string; qr: string } | null = null;
+  try {
+    const pending = twoStep.enabledAt ? null : await pendingTwoStepSecret(user.id);
+    if (pending) setup = await setupView(user.email, pending);
+  } catch (error) {
+    if (!(error instanceof TotpKeyMissing)) throw error;
+  }
+  const url = new URL(request.url);
   return {
     user,
     role: membership.role,
     tokens,
     activeTokens: active.map((t) => t.name),
     lifetimes: TOKEN_LIFETIMES,
+    twoStep: {
+      ...twoStep,
+      required: twoStepRequiredFor(membership.role, org.twoStepRequired),
+      mustSetUp: current.mustSetUpTwoStep === true,
+      setup,
+      recoveryUsed: url.searchParams.get('recovery') === 'used',
+    },
   };
 }
 
@@ -48,13 +87,28 @@ type ActionData = {
   /** the token that was just made, shown this once */
   token?: { value: string; name: string };
   tokenError?: string;
+  twoStepError?: string;
+  twoStepMessage?: string;
+  /** the recovery codes that were just made, shown this once */
+  recoveryCodes?: string[];
 };
 
+const KEY_MISSING =
+  'Two-step sign-in needs TOTP_KEY on the server. Ask whoever runs it to set one.';
+
 export async function action({ request }: Route.ActionArgs) {
-  const { user, membership } = await requireUser(request);
+  const signedIn = await requireUser(request);
+  const { user, membership } = signedIn;
   const form = await request.formData();
   const intent = String(form.get('intent') ?? 'password');
   if (intent === 'token-create') {
+    // a token must not be the way around the organisation's two-step rule
+    if (signedIn.mustSetUpTwoStep) {
+      return data<ActionData>(
+        { tokenError: 'Set up two-step sign-in first: your organisation asks it of your role.' },
+        { status: 403 },
+      );
+    }
     const name = String(form.get('name') ?? '').trim();
     if (!name || name.length > MAX_TOKEN_NAME) {
       return data<ActionData>(
@@ -87,6 +141,55 @@ export async function action({ request }: Route.ActionArgs) {
         { status: 404 },
       );
     return data<ActionData>({ message: 'Token revoked.' });
+  }
+  if (intent === 'two-step-start' || intent === 'two-step-confirm' || intent === 'two-step-off') {
+    try {
+      if (intent === 'two-step-start') {
+        const started = await startTwoStepSetup(user.id);
+        if (!started.ok) return data<ActionData>({ twoStepError: started.error }, { status: 400 });
+        return data<ActionData>({}, { headers: { 'Cache-Control': 'no-store' } });
+      }
+      // turning it on or off asks for the password, as changing the password does
+      const account = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      if (!(await verifyPassword(String(form.get('password') ?? ''), account.passwordHash))) {
+        return data<ActionData>({ twoStepError: 'Your password is not right.' }, { status: 400 });
+      }
+      if (intent === 'two-step-confirm') {
+        const done = await confirmTwoStepSetup(
+          membership.orgId,
+          user.id,
+          String(form.get('code') ?? ''),
+        );
+        if (!done.ok) return data<ActionData>({ twoStepError: done.error }, { status: 400 });
+        // every other session ended; this tab stays signed in
+        return data<ActionData>(
+          {
+            twoStepMessage:
+              'Two-step sign-in is on. You are signed out in every other browser. Keep these recovery codes somewhere safe: each works once, and they are not shown again.',
+            recoveryCodes: done.recoveryCodes,
+          },
+          {
+            headers: {
+              'Set-Cookie': await renewSessionCookie(request, done.sessionVersion),
+              'Cache-Control': 'no-store',
+            },
+          },
+        );
+      }
+      const off = await turnOffTwoStep(
+        membership.orgId,
+        user.id,
+        membership.role,
+        String(form.get('code') ?? ''),
+      );
+      if (!off.ok) return data<ActionData>({ twoStepError: off.error }, { status: 400 });
+      return data<ActionData>({ twoStepMessage: 'Two-step sign-in is off.' });
+    } catch (error) {
+      if (error instanceof TotpKeyMissing) {
+        return data<ActionData>({ twoStepError: KEY_MISSING }, { status: 503 });
+      }
+      throw error;
+    }
   }
   if (intent === 'sessions') {
     // every browser, this one included; tokens keep working
@@ -149,7 +252,7 @@ function tokensStillWork(count: number) {
 }
 
 export default function Account({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, role, tokens, activeTokens, lifetimes } = loaderData;
+  const { user, role, tokens, activeTokens, lifetimes, twoStep } = loaderData;
   const result = actionData as ActionData | undefined;
   return (
     <div className="max-w-xl space-y-6">
@@ -196,6 +299,123 @@ export default function Account({ loaderData, actionData }: Route.ComponentProps
           <input type="hidden" name="intent" value="password" />
           <Button type="submit">Change password</Button>
         </Form>
+      </Card>
+      <Card>
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Two-step sign-in
+        </h2>
+        {twoStep.mustSetUp && (
+          <div className="mb-3">
+            <Alert>
+              Your organisation asks admins and project managers to use two-step sign-in. Set it up
+              here to get to the rest of the app.
+            </Alert>
+          </div>
+        )}
+        {twoStep.recoveryUsed && (
+          <div className="mb-3">
+            <Alert tone="info">
+              You signed in with a recovery code. {twoStep.recoveryCodesLeft} left.
+              {twoStep.recoveryCodesLeft <= 3 &&
+                ' When they run out, an admin can reset your second step.'}
+            </Alert>
+          </div>
+        )}
+        {result?.twoStepMessage && (
+          <div className="mb-3">
+            <Alert tone="success">{result.twoStepMessage}</Alert>
+          </div>
+        )}
+        {result?.recoveryCodes && (
+          <ul className="mb-3 grid grid-cols-2 gap-1 rounded bg-slate-50 p-3 font-mono text-sm">
+            {result.recoveryCodes.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        )}
+        {result?.twoStepError && (
+          <div className="mb-3">
+            <Alert>{result.twoStepError}</Alert>
+          </div>
+        )}
+        {twoStep.enabledAt ? (
+          <>
+            <p className="mb-3 text-sm text-slate-600">
+              On since {formatDateTime(twoStep.enabledAt)}. {twoStep.recoveryCodesLeft} recovery
+              code{twoStep.recoveryCodesLeft === 1 ? '' : 's'} left.
+            </p>
+            {!twoStep.required && (
+              <Form method="post" className="flex flex-wrap items-end gap-2">
+                <input type="hidden" name="intent" value="two-step-off" />
+                <Field label="Your password" htmlFor="off-password">
+                  <Input
+                    id="off-password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </Field>
+                <Field label="A code from the app, or a recovery code" htmlFor="off-code">
+                  <Input id="off-code" name="code" autoComplete="one-time-code" required />
+                </Field>
+                <Button type="submit" variant="secondary">
+                  Turn off
+                </Button>
+              </Form>
+            )}
+          </>
+        ) : twoStep.setup ? (
+          <div className="space-y-3 text-sm">
+            <p className="text-slate-600">
+              Scan this with an authenticator app, or type the key in by hand. Then type the code it
+              shows.
+            </p>
+            {/* drawn on the server by the qrcode package from the otpauth address */}
+            <div
+              className="h-44 w-44"
+              role="img"
+              aria-label="QR code with the two-step key"
+              dangerouslySetInnerHTML={{ __html: twoStep.setup.qr }}
+            />
+            <p>
+              Key: <code className="font-mono">{twoStep.setup.secret}</code>
+            </p>
+            <Form method="post" className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="intent" value="two-step-confirm" />
+              <Field label="Your password" htmlFor="setup-password">
+                <Input
+                  id="setup-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
+              </Field>
+              <Field label="Code from the app" htmlFor="setup-code">
+                <Input
+                  id="setup-code"
+                  name="code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                />
+              </Field>
+              <Button type="submit">Turn on</Button>
+            </Form>
+          </div>
+        ) : (
+          <Form method="post" className="space-y-3 text-sm">
+            <p className="text-slate-600">
+              After your password, sign-in asks for a six-digit code from an app on your phone.
+              Turning it on signs you out in every other browser.
+            </p>
+            <input type="hidden" name="intent" value="two-step-start" />
+            <Button type="submit" variant="secondary">
+              Set up
+            </Button>
+          </Form>
+        )}
       </Card>
       <Card>
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
