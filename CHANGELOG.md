@@ -18,6 +18,10 @@
 
 ### Importing and labeling
 
+- Undo and redo for entity spans, as for boxes: Ctrl+Z, Ctrl+Shift+Z and two
+  buttons. Marking, removing and changing a span's type are steps, taking
+  the suggestion is one too, and each undo says what came back or went. It
+  replaces putting back only the last removed span
 - "Take back the last task" on the work page for two minutes after a
   submission. The work becomes work to revise on "My work", as if it had
   been sent back but marked as taken back. Only while nothing has read it:

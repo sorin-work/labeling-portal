@@ -64,7 +64,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 24  | Notifications inside the app                 | Shipped | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Shipped | ops           | M    | -          |
-| 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
+| 27  | Undo and redo for entity spans               | Shipped | labeling      | S    | -          |
 | 28  | Two-step sign-in                             | Later   | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
 | 30  | Webhooks                                     | Later   | api           | L    | 26         |
@@ -108,28 +108,6 @@ period twice, or forgetting a person, is only noticed by hand.
 - Tests: `tests/integration/payouts.test.ts`: close, refuse overlap and an
   open period, earnings show paid, no assignment in two runs, revision time
   after the close goes to the next run.
-
-### 27. Undo and redo for entity spans
-
-Improves items 3 and 13, whose notes say that a removed span can be put back
-once and that spans do not use the history yet. Boxes have full undo and redo
-through `domain/history.ts`. In `components/labeling/ner.tsx` only the last
-removed span comes back (the `removed` state), and a wrong type or a span
-added by mistake cannot be undone.
-
-- The spans list goes through `domain/history.ts` like the boxes: `Ctrl+Z`,
-  `Ctrl+Shift+Z` and buttons, as rows of the key map in `domain/hotkeys.ts`,
-  in place of `undoRemove`. The selection travels with each step, as it does
-  for boxes.
-- Tricky: the word cursor from item 8 and the live region. Each undo says
-  what came back or went, as the box interface does.
-- Tricky: "Start from the suggestion" (item 18) is a step too, so undo goes
-  back to an empty answer, not past it.
-- Tricky: the history lives in memory per assignment. A reload starts from
-  the draft with no history, the same as boxes; say so in the docs instead of
-  storing history in the draft.
-- Tests: unit tests in `tests/unit/history.test.ts` with span lists; a DOM
-  test for the keys and the announcements, with axe.
 
 ### 28. Two-step sign-in
 
@@ -836,3 +814,18 @@ attempt, so a run whose lease ran out cannot undo a newer one; the migration
 turns batches left `PENDING` into jobs; the batch page no longer starts a run
 when it is opened. Still open: finished jobs are never removed and nothing
 lists them.
+
+### 27. Undo and redo for entity spans
+
+The spans of `components/labeling/ner.tsx` go through `domain/history.ts`
+like the boxes, with the picked span in each step, in place of putting back
+the last removed span. `Ctrl+Z`, `Ctrl+Shift+Z` and two buttons, as `undo`
+and `redo` rows of the key map in place of `undoRemove`. Marking, removing
+and changing a type are steps. Any answer set from outside the interface is
+one step of its own, which covers "Start from the suggestion" as the item
+asked (undo goes back to the empty answer and stops) and also a tab's unsaved
+work put back on load. Each undo and redo says what came back, went or
+changed type (`describeSpanStep`). The history is in memory per assignment;
+a reload starts from the draft with none, as the docs say. Still open: the
+word cursor stays where it was after an undo instead of moving to the span
+that changed.

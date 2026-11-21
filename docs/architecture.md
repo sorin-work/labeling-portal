@@ -523,8 +523,16 @@ meanings on one page.
   no key, approving takes two keys. Removing a box takes Delete or Backspace
   on a box that was selected first, and undo brings it back. Removing a span
   takes Delete (Backspace is left to text boxes), a span is let go when the
-  cursor moves into a text box, and the last removal can be put back with the
-  "Undo" next to it or Ctrl+Z.
+  cursor moves into a text box, and undo brings it back.
+- **Undo and redo for spans** use the same `domain/history.ts` as boxes, the
+  same keys (Ctrl+Z, Ctrl+Shift+Z) and two buttons. Marking, removing and
+  changing the type of a span are a step each, and the picked span travels
+  with every step. An answer set from outside, "Start from the suggestion"
+  or a tab's unsaved work put back, is a step of its own, so undo returns to
+  the answer before it and stops there. The live region says what came back,
+  went or changed type (`describeSpanStep` in `domain/spans.ts`). The history
+  lives in memory for one assignment: a reload starts from the draft with
+  none, as for boxes.
 - **Rows that are only listed.** A row marked `passive` shows up in the list
   of shortcuts but is not handed out by the key map: Tab is the browser's,
   and Space and Escape in the box interface only mean something while the
