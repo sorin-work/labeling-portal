@@ -850,6 +850,36 @@ describe('a manager releasing a claim', () => {
     expect(report.lines[0]).toMatchObject({ tasks: 0, seconds: 720, amountCents: 360 });
   });
 
+  it('pays nothing for a claim that ran out, whether the release or the expiry comes first', async () => {
+    for (const order of ['release first', 'expiry first'] as const) {
+      await resetDb();
+      const { org, project, ann, claim, pm, release } = await claimed();
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { payMode: 'HOURLY', rateCents: 1800 },
+      });
+      // the claim ran out ten minutes ago, and nobody has asked for work since
+      await prisma.assignment.update({
+        where: { id: claim.id },
+        data: { expiresAt: new Date(Date.now() - 10 * 60_000) },
+      });
+      if (order === 'expiry first') await releaseExpiredClaims(project.id);
+      const result = await release(await cookieFor(pm, org.id));
+      // the release marks it expired itself, or finds it expired already
+      expect(statusOf(result)).toBe(order === 'release first' ? 302 : 409);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(row).toMatchObject({ status: 'EXPIRED', activeSeconds: 0, payableAt: null });
+      expect(await prisma.creditedInterval.count({ where: { userId: ann.id } })).toBe(0);
+      expect(await prisma.activity.count({ where: { action: 'assignment.released' } })).toBe(0);
+      if (order === 'release first') {
+        expect(await releaseClaim(project, claim.id, pm.id)).toEqual({
+          ok: false,
+          error: 'not_active',
+        });
+      }
+    }
+  });
+
   it('only releases claims of the project it is asked in', async () => {
     const { org, claim, pm } = await claimed();
     const elsewhere = await createTestProject(org.id, { name: 'Other' });
