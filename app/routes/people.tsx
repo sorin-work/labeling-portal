@@ -151,7 +151,7 @@ export async function action({ request }: Route.ActionArgs) {
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
     return data<ActionData>({
       message:
-        'Their two-step sign-in was reset and their sessions ended. They sign in with the password and set it up again.',
+        'Their two-step sign-in was reset, for every organisation they are in, and all their sessions ended. They sign in with the password and set it up again.',
     });
   }
   if (intent === 'two-step-rule') {
@@ -281,7 +281,7 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                         onSubmit={(event) => {
                           if (
                             !confirm(
-                              `Reset the two-step sign-in of ${person.name}? Their sessions end, and they sign in with the password alone until they set it up again.`,
+                              `Reset the two-step sign-in of ${person.name}? This clears it for every organisation they are in and ends all their sessions. They sign in with the password alone until they set it up again, so they should change their password first if it may be known.`,
                             )
                           )
                             event.preventDefault();
@@ -328,7 +328,7 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                 <input type="checkbox" name="required" defaultChecked={twoStepRequired} />
                 <span>
                   Require it for admins and project managers. Those without it can only open their
-                  account page until they set it up. API tokens are not affected.
+                  account page until they set it up, and their API tokens stop working until then.
                 </span>
               </label>
               <Button name="intent" value="two-step-rule" variant="secondary">

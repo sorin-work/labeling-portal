@@ -4,7 +4,7 @@ import { Alert, Button, Field, Input } from '~/components/ui';
 import { getCurrentUser } from '~/lib/auth.server';
 import { clientAddress } from '~/lib/client-address.server';
 import { prisma } from '~/lib/db.server';
-import { twoStepLimiter } from '~/lib/rate-limit.server';
+import { twoStepAccountLimiter, twoStepLimiter } from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
 import { createUserSession, pendingSignIn } from '~/lib/session.server';
 import { logActivity } from '~/models/activity.server';
@@ -44,9 +44,11 @@ export async function action({ request }: Route.ActionArgs) {
   if (!user || user.sessionVersion !== pending.v) throw redirect('/login');
 
   const key = `${pending.userId}|${clientAddress(request) ?? 'any'}`;
-  const limit = twoStepLimiter.hit(key);
+  const here = twoStepLimiter.hit(key);
+  const everywhere = twoStepAccountLimiter.hit(pending.userId);
+  const limit = !here.allowed ? here : everywhere;
   if (!limit.allowed) {
-    if (limit.justLocked) {
+    if (here.justLocked || everywhere.justLocked) {
       await logActivity(prisma, {
         orgId: pending.orgId,
         actorId: pending.userId,
@@ -72,6 +74,7 @@ export async function action({ request }: Route.ActionArgs) {
     return data<ActionData>({ error }, { status: 401 });
   }
   twoStepLimiter.reset(key);
+  twoStepAccountLimiter.reset(pending.userId);
   await logActivity(prisma, {
     orgId: pending.orgId,
     actorId: pending.userId,
