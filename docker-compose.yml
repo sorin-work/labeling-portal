@@ -22,7 +22,10 @@ services:
     environment:
       # The name is what a refused restore lists as still connected.
       DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-portal
-      SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
+      # Empty by default: the container then makes a random one on its first
+      # start and keeps it in the app-data volume. A published sample value
+      # is refused in production.
+      SESSION_SECRET: ${SESSION_SECRET:-}
       # Encrypts the two-step secrets; there is no default here, and two-step
       # sign-in refuses to start without it. Keep it with your backups:
       # without it nobody with two-step on can sign in until an admin resets
@@ -33,9 +36,15 @@ services:
       # Lists the demo accounts on the sign-in page.
       SHOW_DEMO_LOGINS: ${SHOW_DEMO_LOGINS:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Sign-in limits per client address need a proxy in front that sets
+      # X-Forwarded-For, and this set to true. Without it the app cannot tell
+      # clients apart, and wrong passwords are only slowed down.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       # The app runs the background jobs itself unless this is false; then
       # start the worker service (profile "worker") to run them.
       JOBS_IN_WEB: ${JOBS_IN_WEB:-true}
+    volumes:
+      - app-data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -59,7 +68,10 @@ services:
     command: ['node', 'docker/worker.mjs']
     environment:
       DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-worker
-      SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+    # the same generated session secret as the app
+    volumes:
+      - app-data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -90,3 +102,5 @@ services:
 
 volumes:
   db-data:
+  # the session secret made on first start, when SESSION_SECRET is unset
+  app-data:

@@ -1,6 +1,6 @@
 import { createCookieSessionStorage, redirect } from 'react-router';
 
-import { cookieSecure, refuseSampleSecretOffLocalhost, sessionSecret } from './env.server';
+import { cookieSecure, sessionSecret } from './env.server';
 
 /**
  * `v` is the user's `sessionVersion` when the cookie was made. When that
@@ -37,8 +37,6 @@ export const sessionStorage = createCookieSessionStorage<SessionData, SessionFla
 });
 
 export function getSession(request: Request) {
-  // every page that reads or makes a session comes through here
-  refuseSampleSecretOffLocalhost(request);
   return sessionStorage.getSession(request.headers.get('Cookie'));
 }
 
