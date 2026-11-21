@@ -36,9 +36,10 @@ services:
       # Lists the demo accounts on the sign-in page.
       SHOW_DEMO_LOGINS: ${SHOW_DEMO_LOGINS:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      # Sign-in limits per client address need a proxy in front that sets
-      # X-Forwarded-For, and this set to true. Without it the app cannot tell
-      # clients apart, and wrong passwords are only slowed down.
+      # The sign-in limits count per client address: the connection's own
+      # address, or with this set to true the last X-Forwarded-For entry. Set
+      # it behind a proxy, or every client has the proxy's address and one
+      # attacker can lock the owner out for fifteen minutes.
       TRUST_PROXY: ${TRUST_PROXY:-false}
       # The app runs the background jobs itself unless this is false; then
       # start the worker service (profile "worker") to run them.

@@ -819,8 +819,10 @@ is not awaited, and the sign-in counts only wrong passwords per email and
 address, so nobody can lock an owner out from elsewhere; an email guessed
 at from many places gives every address three tries. Second review: the try
 is reserved before the password is checked and given back when it is
-right, so parallel bursts gain nothing; without `TRUST_PROXY` nobody is
-refused and wrong passwords are slowed (up to five seconds) instead; the
-compose file has no sample `SESSION_SECRET` and the container makes one on
-first start, and production refuses a published sample. Still open: with no
-known address, a parallel burst is slowed only per request, not limited.
+right, so parallel bursts gain nothing; the client address is the socket's
+peer, handed in by a small production server (`docker/server.mjs`) in place
+of `react-router-serve`, or `X-Forwarded-For` with `TRUST_PROXY=true`, so the
+limit applies everywhere; the compose file has no sample `SESSION_SECRET`
+and the container makes one on first start, and production refuses a
+published sample. Still open: behind a proxy without `TRUST_PROXY`, all
+clients share the proxy's address.

@@ -166,7 +166,7 @@ npm run dev              # http://localhost:4421
 | `TEST_DATABASE_URL`    | local `labeling_test` | Database for integration tests (it is truncated between tests)        |
 | `WEB_PORT`             | `4421`                | Host port for the compose setup                                       |
 | `TOTP_KEY`             | dev-only value        | Encrypts the two-step secrets; required (16+) in production to use it |
-| `TRUST_PROXY`          | `false`               | `true` behind a proxy: `X-Forwarded-For` names the client             |
+| `TRUST_PROXY`          | `false`               | `true` behind a proxy: `X-Forwarded-For` names the client, not socket |
 | `JOBS_IN_WEB`          | `true`                | `false` leaves the background jobs to the `worker` service            |
 
 ## Background jobs
@@ -375,13 +375,13 @@ More detail: [architecture](docs/architecture.md),
 - **Integration tests fail with "database does not exist"**: create the test
   database (`createdb labeling_test`) or use `docker-compose.dev.yml`, which
   creates it on first start, and point `TEST_DATABASE_URL` at it.
-- **"Too many attempts" on sign-in**: behind a proxy that sets
-  `X-Forwarded-For`, with `TRUST_PROXY=true`, ten wrong passwords lock that
-  email from that address for fifteen minutes (three while the email is
+- **"Too many attempts" on sign-in**: ten wrong passwords lock that email
+  from that client address for fifteen minutes (three while the email is
   being guessed at from many places), and the right password from another
-  address still works. Without `TRUST_PROXY` the app cannot tell clients
-  apart, so nobody is locked out: after three wrong passwords each attempt
-  for that email waits longer, up to five seconds. To clear an email's count
+  address still works. The address is the connection's own. Behind a proxy
+  set `TRUST_PROXY=true` so that `X-Forwarded-For` is read: otherwise every
+  client has the proxy's address, and one attacker can lock the owner out
+  for fifteen minutes. To clear an email's count
   before the window ends (the counts are kept as hashes; this trims and
   lower-cases the email as the app does, then hashes it the same way):
 

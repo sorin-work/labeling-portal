@@ -821,17 +821,22 @@ hour) and `api` (120 requests a minute per token).
 - **Sign-in** reserves a try per email and client address before the
   password is checked, in the one `hit` statement, so a burst of parallel
   requests gets no more tries than one at a time, and a right password
-  gives its try back (`giveBack`). With a known address (`TRUST_PROXY=true`
-  behind a proxy that sets `X-Forwarded-For`), the eleventh try of an email
-  and address in fifteen minutes is refused, and the right password from
-  another address always signs in, so someone hammering an email from one
-  place does not lock its owner out. Past thirty wrong passwords for an email
-  from anywhere, every address gets three tries instead of ten. The lockout
-  is recorded once, by the first refused try. Without a known address every
-  client looks alike, so nobody is refused, which would lock the owner out
-  too: after three tries each attempt for the email waits longer, from 250 ms
-  doubling up to five seconds (`signInDelayMs`). An email longer than 254
+  gives its try back (`giveBack`). The eleventh try of an email and address
+  in fifteen minutes is refused, and the right password from another address
+  always signs in, so someone hammering an email from one place does not
+  lock its owner out. Past thirty wrong passwords for an email from
+  anywhere, every address gets three tries instead of ten. The lockout is
+  recorded once, by the first refused try. An email longer than 254
   characters is refused before any lookup.
+- **The client address** (`lib/client-address.server.ts`) is the socket's
+  peer, which `docker/server.mjs` (the production server, in place of
+  `react-router-serve`, with the same static files and log) puts in the load
+  context as `clientAddress`. With `TRUST_PROXY=true` it is the last
+  `X-Forwarded-For` entry instead; without it no header is believed. Behind a
+  proxy without `TRUST_PROXY` every client has the proxy's address, so one
+  attacker can lock the owner out for fifteen minutes. Where there is no
+  peer (the development server, tests) the address is `unknown` and the
+  limits apply to everyone together; nothing is ever unlimited.
 
 - **One row per key** in `RateLimitHit`. The key is the SHA-256 of the
   limiter's name and the full key, so a long or odd key cannot make the
@@ -886,12 +891,9 @@ against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
 - **Wrong codes** are limited to five per fifteen minutes per account and
   client address (`twoStepLimiter`), so someone who has the password and
   guesses from elsewhere does not lock the owner out of their own browser.
-  The first refused attempt is recorded (`auth.two_step_locked`). React
-  Router gives the app a Fetch request and not the socket, so the address
-  comes from the proxy: with `TRUST_PROXY=true`, the last `X-Forwarded-For`
-  entry (`lib/client-address.server.ts`). Without a proxy nothing a client
-  sends is believed and the limit is per account only, which a guesser can
-  use to hold the owner off for fifteen minutes. On top of that, twenty
+  The first refused attempt is recorded (`auth.two_step_locked`). The
+  address is the one the sign-in limits use (see "Rate limits"). On top of
+  that, twenty
   wrong codes per account per hour from anywhere are refused
   (`twoStepAccountLimiter`), so many addresses, or a faked header, do not
   allow guessing either. That cap can hold the owner off too, which is
