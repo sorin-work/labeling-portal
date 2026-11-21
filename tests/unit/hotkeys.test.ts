@@ -385,6 +385,8 @@ describe('keyName', () => {
     expect(keyName(press('Enter', 'Enter'))).toBe('Enter');
     expect(keyName(press('z', 'KeyZ', { ctrlKey: true }))).toBe('Mod+z');
     expect(keyName(press('z', 'KeyZ', { metaKey: true }))).toBe('Mod+z');
+    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBe('Mod+y');
+    expect(keyName(press('Y', 'KeyY', { ctrlKey: true, shiftKey: true }))).toBeNull();
     expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBeNull();
   });
 
@@ -503,6 +505,7 @@ describe('entity spans', () => {
   it('have undo and redo, keys a text box keeps for itself', () => {
     expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undo');
     expect(interfaceAction(ner, 'Mod+Shift+z', editing(at(null)))?.action).toBe('redo');
+    expect(interfaceAction(ner, 'Mod+y', editing(at(null)))?.action).toBe('redo');
     expect(interfaceAction(ner, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
   });
 
