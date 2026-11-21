@@ -1,11 +1,22 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type { NerAnswer, Span } from '~/domain/answers';
+import {
+  amend,
+  canRedo,
+  canUndo,
+  commit,
+  redo,
+  startHistory,
+  undo,
+  type History,
+} from '~/domain/history';
 import { interfaceShortcut, isTextEntry, labelKeys } from '~/domain/hotkeys';
 import { ENTITY_COLORS, ENTITY_TINT } from '~/domain/palette';
 import {
   addSpan,
   cursorRange,
+  describeSpanStep,
   moveCursor,
   relabelSpan,
   removeSpan,
@@ -24,6 +35,13 @@ import { cx } from '../ui';
 import type { LabelingProps } from './index';
 import { focusTarget, useInterfaceHotkeys } from './use-hotkeys';
 import { useRemembered } from './use-remembered';
+
+type Picked = Pick<Span, 'start' | 'end'>;
+
+/** What undo and redo walk through: the spans, and which one was picked with them. */
+type Editing = { spans: Span[]; picked: Picked | null };
+
+const NO_SPANS: Span[] = [];
 
 function colorFor(schema: NerSchema, label: string): string {
   const index = schema.entities.findIndex((e) => e.name === label);
@@ -46,17 +64,31 @@ export function NerSpans({
   readOnly,
 }: LabelingProps<NerSchema, NerAnswer>) {
   const text = String(data[schema.textField] ?? '');
-  const spans = value?.spans ?? [];
+  const spans = value?.spans ?? NO_SPANS;
   const [active, setActive] = useRemembered(
     'labeling-portal:entity',
     schema.entities[0]?.name ?? '',
     schema.entities.map((e) => e.name),
   );
   const container = useRef<HTMLDivElement>(null);
+  // Every change to the spans is a step of `domain/history.ts`, as for
+  // boxes, and the picked span travels with each step. A change from outside
+  // (the suggestion taken, a tab's unsaved work put back) is a step of its
+  // own, so undo goes back to the answer before it and not past it. The
+  // history lives in memory for this assignment: a reload starts from the
+  // draft with none.
+  const [history, setHistory] = useState<History<Editing>>(() =>
+    startHistory({ spans, picked: null }),
+  );
+  if (history.present.spans !== spans) {
+    setHistory(commit(history, { spans, picked: null }));
+  }
   // A click picks a span. Its type can then be changed and it can be removed,
   // as with a selected box.
-  const [picked, setPicked] = useState<Pick<Span, 'start' | 'end'> | null>(null);
-  const same = (a: Pick<Span, 'start' | 'end'>, b: Pick<Span, 'start' | 'end'> | null) =>
+  const picked = history.present.spans === spans ? history.present.picked : null;
+  const setPicked = (next: Picked | null) =>
+    setHistory((h) => (h.present.picked === next ? h : amend(h, { ...h.present, picked: next })));
+  const same = (a: Picked, b: Picked | null) =>
     b !== null && a.start === b.start && a.end === b.end;
   const selected = spans.find((span) => same(span, picked)) ?? null;
   const keys = labelKeys(schema.entities.length);
@@ -73,27 +105,29 @@ export function NerSpans({
   const textHasFocus = () =>
     container.current !== null && document.activeElement === container.current;
 
-  // The span that was removed last can be put back once, until anything else
-  // changes. (The box interface gets a full undo; this covers the slip.)
-  const [removed, setRemoved] = useState<{ span: Span; from: Span[] } | null>(null);
-  const undoable = removed !== null && removed.from === spans ? removed.span : null;
+  /** The one gate for changes: a new step, an undo or a redo all end here. */
+  const apply = (to: History<Editing>): boolean => {
+    if (readOnly || to === history) return false;
+    setHistory(to);
+    onChange({ spans: to.present.spans });
+    return true;
+  };
+  const edit = (next: Span[], nextPicked: Picked | null) =>
+    apply(commit(history, { spans: next, picked: nextPicked }));
+  /** Undo and redo; the live region says what came back or went. */
+  const stepTo = (to: History<Editing>, what: 'Undone' | 'Redone') => {
+    const before = history.present.spans;
+    if (!apply(to)) return false;
+    setSaid(describeSpanStep(text, before, to.present.spans, what));
+    return true;
+  };
+  const undoKey = interfaceShortcut(schema, ['undo']);
 
-  const remove = (target: Pick<Span, 'start' | 'end'>) => {
+  const remove = (target: Picked) => {
     const span = spans.find((s) => same(s, target));
     if (!span) return;
-    const next = removeSpan(spans, span);
-    setRemoved({ span, from: next });
-    onChange({ spans: next });
-    if (same(span, picked)) setPicked(null);
-    setSaid(`Removed ${span.label} “${spanText(text, span)}”.`);
-  };
-  const putBack = () => {
-    if (!undoable) return false;
-    setRemoved(null);
-    onChange({ spans: addSpan(spans, undoable) });
-    setPicked(undoable);
-    setSaid(`Put back ${undoable.label} “${spanText(text, undoable)}”.`);
-    return true;
+    edit(removeSpan(spans, span), same(span, picked) ? null : picked);
+    setSaid(`Removed ${span.label} “${spanText(text, span)}”. ${undoKey} puts it back.`);
   };
 
   // A picked span is let go when the cursor goes into a text box, so that a
@@ -117,8 +151,7 @@ export function NerSpans({
 
   const mark = () => {
     if (!textHasFocus() || !selection) return false;
-    onChange({ spans: addSpan(spans, { ...selection, label: active }) });
-    setPicked(null);
+    edit(addSpan(spans, { ...selection, label: active }), null);
     setCursor((c) => (c ? { anchor: c.focus, focus: c.focus } : c));
     setSaid(`Marked ${active} “${spanText(text, selection)}”.`);
     return true;
@@ -128,7 +161,8 @@ export function NerSpans({
     if (hit.action === 'cursor') return step(hit.index === 0 ? -1 : 1, false);
     if (hit.action === 'extend') return step(hit.index === 0 ? -1 : 1, true);
     if (hit.action === 'mark') return mark();
-    if (hit.action === 'undoRemove') return putBack();
+    if (hit.action === 'undo') return stepTo(undo(history), 'Undone');
+    if (hit.action === 'redo') return stepTo(redo(history), 'Redone');
     if (hit.action === 'remove') {
       if (!selected) return false;
       remove(selected);
@@ -136,8 +170,10 @@ export function NerSpans({
     }
     if (hit.action === 'label') {
       const { name } = schema.entities[hit.index];
-      if (selected) onChange({ spans: relabelSpan(spans, selected, name) });
-      else setActive(name);
+      if (selected && selected.label !== name) {
+        edit(relabelSpan(spans, selected, name), selected);
+        setSaid(`“${spanText(text, selected)}” is now ${name}.`);
+      } else if (!selected) setActive(name);
       return true;
     }
     return false;
@@ -160,8 +196,7 @@ export function NerSpans({
     if (a === null || b === null) return;
     const [start, end] = trimSelection(text, a, b);
     if (start >= end) return;
-    onChange({ spans: addSpan(spans, { start, end, label: active }) });
-    setPicked(null);
+    edit(addSpan(spans, { start, end, label: active }), null);
     setSaid(`Marked ${active} “${text.slice(start, end)}”.`);
   };
 
@@ -256,18 +291,27 @@ export function NerSpans({
           {keyHint}
         </p>
       )}
-      {!readOnly && undoable && (
-        <p className="flex items-center gap-2 text-sm text-slate-600">
-          Removed {undoable.label} “{spanText(text, undoable)}”.
+      {!readOnly && (
+        <div className="flex items-center gap-2 text-sm">
           <button
             type="button"
-            className="font-medium text-indigo-700 hover:underline"
-            title={`Shortcut: ${interfaceShortcut(schema, ['undoRemove'])}`}
-            onClick={putBack}
+            className="rounded-md px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-50 disabled:opacity-50"
+            disabled={!canUndo(history)}
+            title={`Shortcut: ${undoKey}`}
+            onClick={() => stepTo(undo(history), 'Undone')}
           >
             Undo
           </button>
-        </p>
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 ring-1 ring-slate-300 hover:bg-slate-50 disabled:opacity-50"
+            disabled={!canRedo(history)}
+            title={`Shortcut: ${interfaceShortcut(schema, ['redo'])}`}
+            onClick={() => stepTo(redo(history), 'Redone')}
+          >
+            Redo
+          </button>
+        </div>
       )}
       {spans.length === 0 ? (
         <p className="text-sm text-slate-500">
