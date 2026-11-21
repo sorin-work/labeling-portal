@@ -27,6 +27,8 @@ COPY --from=build --chown=node:node /app/prisma ./prisma
 # the seed script reuses the domain logic (consensus, gold scoring)
 COPY --from=build --chown=node:node /app/app/domain ./app/domain
 COPY --chown=node:node docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+# the worker service runs the background jobs from the same build
+COPY --chown=node:node docker/worker.mjs ./docker/worker.mjs
 USER node
 EXPOSE 3000
 ENTRYPOINT ["entrypoint.sh"]

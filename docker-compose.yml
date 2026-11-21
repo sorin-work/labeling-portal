@@ -28,6 +28,9 @@ services:
       # Lists the demo accounts on the sign-in page.
       SHOW_DEMO_LOGINS: ${SHOW_DEMO_LOGINS:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # The app runs the background jobs itself unless this is false; then
+      # start the worker service (profile "worker") to run them.
+      JOBS_IN_WEB: ${JOBS_IN_WEB:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -39,6 +42,20 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  # Optional: the background jobs in a process of their own, with the same
+  # image. Start it with JOBS_IN_WEB=false docker compose --profile worker up -d
+  worker:
+    build: .
+    profiles: [worker]
+    restart: unless-stopped
+    command: ['node', 'docker/worker.mjs']
+    environment:
+      DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-worker
+      SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
+    depends_on:
+      db:
+        condition: service_healthy
 
   # Optional, start it with: docker compose --profile backup up -d
   # Dumps the database once a day into BACKUP_DIR and keeps the newest
