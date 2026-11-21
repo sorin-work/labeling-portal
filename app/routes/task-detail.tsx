@@ -12,6 +12,7 @@ import { formatGoldScore, parseGoldReason } from '~/domain/gold';
 import { finalAnswer, isAccepted } from '~/domain/outcome';
 import { assignmentRef } from '~/domain/reference';
 import { releaseConfirmation, spokenDuration } from '~/domain/release-claim';
+import { SPOT_CHECK_VERDICTS, spotCheckRefusal } from '~/domain/spot-check';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
@@ -163,6 +164,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
           : null,
       answer: a.answer ? finalAnswer<Answer>(a.answer, a.reviews) : null,
       corrected: a.reviews.some((r) => r.decision === 'FIX' && !r.overturnedAt),
+      // accepted work that no reviewer has seen can be pulled in for a look
+      spotCheckable:
+        can(role, 'review') &&
+        spotCheckRefusal({
+          status: a.status,
+          reviewStatus: a.reviewStatus,
+          isGold: task.isGold,
+          isQualification: task.isQualification,
+          reviews: a.reviews.length,
+          ownWork: a.userId === current.user.id,
+        }) === null,
       reviews: a.reviews.map((r) => ({
         id: r.id,
         reviewer: r.reviewer.name,
@@ -170,6 +182,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         qaScore: r.qaScore,
         feedback: r.feedback,
         overturned: r.overturnedAt !== null,
+        spotCheck: r.spotCheck,
       })),
     })),
   };
@@ -544,6 +557,11 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
                 {a.corrected && <Badge tone="sky">Showing reviewer correction</Badge>}
                 {a.heldBy && <Badge tone="indigo">With {a.heldBy}</Badge>}
+                {a.spotCheckable && (
+                  <Link to={`/review/${a.id}`} className="text-indigo-700 hover:underline">
+                    Spot check
+                  </Link>
+                )}
                 {a.goldScore !== null && (
                   <Badge tone={a.goldScore >= 0.8 ? 'emerald' : 'rose'}>
                     Gold {formatGoldScore(a.goldScore)}
@@ -568,7 +586,9 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                   {a.reviews.map((r) => (
                     <li key={r.id}>
                       <span className="font-medium">{r.reviewer}</span>:{' '}
-                      {r.decision.replace('_', ' ').toLowerCase()}
+                      {r.spotCheck
+                        ? `spot check, ${(SPOT_CHECK_VERDICTS[r.decision as keyof typeof SPOT_CHECK_VERDICTS] ?? r.decision).toLowerCase()}`
+                        : r.decision.replace('_', ' ').toLowerCase()}
                       {r.qaScore !== null && ` (score ${r.qaScore})`}
                       {r.feedback && ` - ${r.feedback}`}
                       {r.overturned && ' (overturned after a dispute)'}

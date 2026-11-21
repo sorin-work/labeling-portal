@@ -48,7 +48,8 @@ export function meta() {
 
 const SPOT_REFUSED: Record<SpotCheckRefusal | 'not_found', string> = {
   not_found: 'Submission not found.',
-  not_unseen: 'Only accepted work that no reviewer has seen can be spot checked, and this one has been.',
+  not_unseen:
+    'Only accepted work that no reviewer has seen can be spot checked, and this one has been.',
   gold: 'Gold tasks are scored against their expected answer, so they are not spot checked.',
   own_work: 'This is your own submission, so someone else has to check it.',
 };

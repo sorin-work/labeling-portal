@@ -380,9 +380,17 @@ export async function recordSpotCheck(
  * out, so another reviewer can take it at once. One conditional write on the
  * hold being theirs, so it cannot free a submission someone else took over.
  */
-export async function letGoOfReviewHold(assignmentId: string, reviewerId: string): Promise<boolean> {
+export async function letGoOfReviewHold(
+  assignmentId: string,
+  reviewerId: string,
+): Promise<boolean> {
   const freed = await prisma.assignment.updateMany({
-    where: { id: assignmentId, status: 'SUBMITTED', reviewStatus: 'PENDING', reviewHeldById: reviewerId },
+    where: {
+      id: assignmentId,
+      status: 'SUBMITTED',
+      reviewStatus: 'PENDING',
+      reviewHeldById: reviewerId,
+    },
     data: { reviewHeldById: null, reviewHeldAt: null },
   });
   return freed.count > 0;
