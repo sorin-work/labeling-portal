@@ -106,10 +106,12 @@ FOR EACH ROW EXECUTE FUNCTION "assignment_paid_is_final"();
 -- Nothing becomes payable inside a closed period. A payable date on a day
 -- that a run of the organisation covers (a resubmission keeping the date of
 -- its first submission, say) moves to now, which no run can cover, so the
--- work is paid with the next run. Only past days can be closed, so only a
--- payable date before today needs the look; it takes the organisation's pay
--- run lock shared, which closing takes exclusively, so a close and such a
--- write are never both half done (docs/architecture.md, "Pay runs").
+-- work is paid with the next run. Every write that sets a payable date takes
+-- the organisation's pay run lock shared, which closing takes exclusively, so
+-- a close and such a write are never both half done: either the write sees
+-- the run, or the close sees the written date. That includes a write whose
+-- transaction began before midnight, and a period is only closed some
+-- minutes after it ends (docs/architecture.md, "Pay runs").
 CREATE FUNCTION "assignment_payable_not_in_closed_run"() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   org TEXT;
@@ -120,9 +122,6 @@ BEGIN
   IF TG_OP = 'UPDATE' AND NEW."payableAt" IS NOT DISTINCT FROM OLD."payableAt" THEN
     RETURN NEW;
   END IF;
-  IF NEW."payableAt" >= date_trunc('day', now() AT TIME ZONE 'UTC') THEN
-    RETURN NEW;
-  END IF;
   SELECT p."orgId" INTO org FROM "Project" p WHERE p.id = NEW."projectId";
   PERFORM pg_advisory_xact_lock_shared(hashtext('pay-run:' || org));
   IF EXISTS (
@@ -130,7 +129,8 @@ BEGIN
     WHERE r."orgId" = org
       AND r."periodStart" <= NEW."payableAt" AND NEW."payableAt" < r."periodEnd"
   ) THEN
-    NEW."payableAt" := now() AT TIME ZONE 'UTC';
+    -- the time of this write, not of its transaction's start
+    NEW."payableAt" := clock_timestamp() AT TIME ZONE 'UTC';
   END IF;
   RETURN NEW;
 END;
