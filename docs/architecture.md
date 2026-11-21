@@ -585,6 +585,10 @@ code is `app/lib/jobs.server.ts`; the kinds and their handlers are
 - **Taking.** `takeJobs` is one statement: it picks due jobs whose lease is
   free with `FOR UPDATE SKIP LOCKED`, sets a lease of `LEASE_MS` (a minute)
   and counts the attempt. Two loops never take one job while its lease holds.
+  Every take counts, also one whose process was killed: a job whose lease ran
+  out on its last attempt is failed with "The last attempt never finished"
+  and its `giveUp` is called, instead of being taken again. Its dates go
+  through `utc()`, like every other raw query.
 - **Running.** The handler runs after that statement has committed, so the
   loop holds no lock while a handler works. Job rows are the only rows the
   loop locks, and never together with anything else, so the claim path's
@@ -596,8 +600,14 @@ code is `app/lib/jobs.server.ts`; the kinds and their handlers are
   handler's `giveUp` (for `prelabel`: the batch becomes `FAILED`). Both
   writes name the attempt they belong to, so a run whose lease ran out
   cannot undo what a newer run of the same job wrote.
-- **Twice.** A lease that runs out while a handler still works lets another
-  loop take the job. Handlers must be safe to run twice. The prelabel
+- **Twice.** While a handler works, its lease is renewed every
+  `HEARTBEAT_MS` (20 seconds) through the attempt fence, so only a run that
+  hangs or whose process stopped loses its job. A lease that runs out while
+  a handler still works lets another loop take the job. Handlers must be
+  safe to run twice, and get `holds(tx)`, which locks the job row and says
+  whether this attempt still holds it: the prelabel run writes the batch's
+  state only then (job row first, then the batch), so a stalled run cannot
+  write over a newer result. The prelabel
   handler leaves a batch alone that is no longer `PENDING`, and a run only
   touches tasks without a suggestion that nobody was handed.
 - **The loop.** `startJobLoop` looks for due jobs every `POLL_MS` (five
@@ -607,7 +617,8 @@ code is `app/lib/jobs.server.ts`; the kinds and their handlers are
   `JOBS_IN_WEB=false`. The `worker` compose service runs the same build with
   `docker/worker.mjs`, which calls `runJobWorker` from the entry. On SIGTERM
   the loop takes no more jobs; the one it runs finishes, or the process is
-  killed and its lease runs out.
+  killed and its lease runs out. A reload in development starts a new loop
+  with the current handlers and stops the old one.
 - **Tests** call `runDueJobs(now)` instead of waiting for timers.
 - **Upgrade.** The migration turns every batch that was still `PENDING` into
   a job, so nothing waits for its batch page to be opened.
