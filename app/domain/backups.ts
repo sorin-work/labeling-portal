@@ -21,9 +21,10 @@ export type BackupAttention =
   | { kind: 'backup-late'; hours: number | null; lastGoodAt: Date | null };
 
 /**
- * `latest` is the newest run, `lastGood` the newest one that worked. The
- * interval is the one the newest run was made with, since that is how often
- * the service dumps now.
+ * `latest` is the newest run, `lastGood` the newest one that worked, both
+ * by the order they were written in. The interval is the one the newest run
+ * was made with, since that is how often the service dumps now. A good dump
+ * dated after `now` (the container's clock ran ahead) counts as made now.
  */
 export function backupAttention(
   latest: BackupRunRow | null,
@@ -38,7 +39,7 @@ export function backupAttention(
     items.push({ kind: 'backup-late', hours: null, lastGoodAt: null });
     return items;
   }
-  const age = now.getTime() - lastGood.finishedAt.getTime();
+  const age = Math.max(0, now.getTime() - lastGood.finishedAt.getTime());
   if (age > latest.intervalSeconds * 1000 * LATE_AFTER_INTERVALS) {
     items.push({
       kind: 'backup-late',

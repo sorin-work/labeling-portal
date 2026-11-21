@@ -114,6 +114,25 @@ describe('needs attention', () => {
       expect((await backupStatus(now))?.items).toEqual([]);
     });
 
+    it('goes by the order rows were written in, so a row from a fast clock hides nothing', async () => {
+      // the container's clock ran a week ahead for one dump
+      await backupRun(now, -7 * 24, true);
+      await backupRun(now, 2, false, 'pg_dump: error: one');
+      await backupRun(now, 1, false, 'pg_dump: error: two');
+      expect((await backupStatus(now))?.items).toEqual([
+        {
+          kind: 'backup-failed',
+          at: new Date(now.getTime() - HOUR),
+          message: 'pg_dump: error: two',
+        },
+      ]);
+      // once the real clock has passed its date it ages like any other
+      expect((await backupStatus(new Date(now.getTime() + 9 * 24 * HOUR)))?.items).toEqual([
+        expect.objectContaining({ kind: 'backup-failed' }),
+        expect.objectContaining({ kind: 'backup-late', hours: 48 }),
+      ]);
+    });
+
     it('says when no dump has worked at all', async () => {
       await backupRun(now, 1, false);
       expect((await backupStatus(now))?.items).toEqual([

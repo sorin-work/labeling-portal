@@ -33,4 +33,8 @@ describe('backupAttention', () => {
       { kind: 'backup-failed', at: row(1, false).finishedAt, message: 'pg_dump: error' },
     ]);
   });
+
+  it('reads a good dump dated after now as made now', () => {
+    expect(backupAttention(row(-48, true), row(-48, true), now)).toEqual([]);
+  });
 });

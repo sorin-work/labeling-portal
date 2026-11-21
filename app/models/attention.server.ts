@@ -35,12 +35,10 @@ export async function backupStatus(
     intervalSeconds: true,
   } as const;
   const [latest, lastGood] = await Promise.all([
-    prisma.backupRun.findFirst({ orderBy: [{ finishedAt: 'desc' }, { id: 'desc' }], select }),
-    prisma.backupRun.findFirst({
-      where: { ok: true },
-      orderBy: [{ finishedAt: 'desc' }, { id: 'desc' }],
-      select,
-    }),
+    // newest by when it was written, not by the backup container's clock:
+    // one row from a clock that ran ahead would hide every later one
+    prisma.backupRun.findFirst({ orderBy: { id: 'desc' }, select }),
+    prisma.backupRun.findFirst({ where: { ok: true }, orderBy: { id: 'desc' }, select }),
   ]);
   if (!latest) return null;
   return {
