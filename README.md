@@ -148,6 +148,24 @@ npm run dev              # http://localhost:4421
 | `INTERNAL_IMAGE_HOSTS` | (empty)               | Internal hosts that box project images may come from, comma separated |
 | `TEST_DATABASE_URL`    | local `labeling_test` | Database for integration tests (it is truncated between tests)        |
 | `WEB_PORT`             | `4421`                | Host port for the compose setup                                       |
+| `JOBS_IN_WEB`          | `true`                | `false` leaves the background jobs to the `worker` service            |
+
+## Background jobs
+
+Work that runs after a request, today the suggestion rule over an imported
+batch, is a row in the `Job` table, so a restart does not lose it and
+several processes can share it. The app runs the job loop itself. To run it
+in a process of its own, set `JOBS_IN_WEB=false` and start the `worker`
+service, which runs the same image:
+
+```bash
+JOBS_IN_WEB=false docker compose --profile worker up -d
+```
+
+Both can run at once too: a job is only ever taken by one of them at a time.
+A job that fails is tried again later, with a longer wait each time, and
+after its last attempt it stays in the table with the error. On a stop the
+loop takes no more jobs and lets the one it runs finish.
 
 ## Backup and restore
 
@@ -215,7 +233,8 @@ docker compose run --rm backup once
 ```
 
 To restore, stop everything that uses the database, which is the app and the
-backup service, name the dump, and start them again:
+backup service (and the worker, if you run it), name the dump, and start them
+again:
 
 ```bash
 docker compose --profile backup stop app backup

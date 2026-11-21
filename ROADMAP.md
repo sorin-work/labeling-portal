@@ -63,7 +63,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
 | 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
-| 26  | Background jobs that survive a restart       | Later   | ops           | M    | -          |
+| 26  | Background jobs that survive a restart       | Shipped | ops           | M    | -          |
 | 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
 | 28  | Two-step sign-in                             | Later   | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
@@ -212,36 +212,6 @@ period twice, or forgetting a person, is only noticed by hand.
 - Tests: `tests/integration/payouts.test.ts`: close, refuse overlap and an
   open period, earnings show paid, no assignment in two runs, revision time
   after the close goes to the next run.
-
-### 26. Background jobs that survive a restart
-
-Improves item 18, whose notes say that the rule runs in the web process, so a
-run cut short by a restart only goes on when its batch page is opened.
-`startPrelabel` keeps a `Map` of running promises in
-`models/prelabel.server.ts`; two app processes would each think nothing is
-running. Items 24, 30 and 32 need work that runs later too.
-
-- Data: `Job` (kind, payload, run at, attempts, locked until, last error,
-  done at). A loop in `lib/jobs.server.ts` takes due jobs with
-  `FOR UPDATE SKIP LOCKED`, sets a lease, runs the handler that a registry
-  names for the kind, and marks it done or puts it back with a growing delay.
-- The web process runs the loop, unless `JOBS_IN_WEB=false`; then a `worker`
-  service in `docker-compose.yml` runs the same image with another command.
-  No new service of any other kind.
-- The rule moves to it: `startPrelabel` adds a job, `isPrelabelRunning` reads
-  the job, and "Continue" and "Run again from scratch" stay as they are.
-- Tricky: a lease that runs out while a handler still works means two runs of
-  one job. Handlers must be safe to run twice; the rule already continues
-  where it stopped and never touches tasks someone was handed.
-- Tricky: tests. No timers: a `runDueJobs(now)` that the tests call, in place
-  of `prelabelsSettled`.
-- Tricky: shutdown. On SIGTERM the loop stops taking jobs and lets its leases
-  run out.
-- Undecided: polling every few seconds or waking up through
-  `LISTEN`/`NOTIFY`. I lean towards polling; it is one indexed query.
-- Tests: `tests/integration/jobs.test.ts`: two loops never run one job, a
-  failed job comes back later and stops after its attempts, a lease that ran
-  out is taken again; the prelabel tests go through the job.
 
 ### 27. Undo and redo for entity spans
 
@@ -884,3 +854,24 @@ rows on their own (one fewer in the copy). After review: rows are read in
 the order they were written (by id), not by the container's clock; a failed
 row keeps pg_dump's error line in ASCII; the script keeps the newest 500 rows.
 Still open: nothing reaches anyone who does not open the dashboard.
+
+### 26. Background jobs that survive a restart
+
+`Job` rows (kind, payload, run at, attempts out of a maximum, lease, last
+error, done or failed) and a loop in `lib/jobs.server.ts` that takes due jobs
+with `FOR UPDATE SKIP LOCKED` in one statement, runs the handler that
+`JOB_HANDLERS` names outside any transaction of its own, and marks the job
+done or puts it back after 30 seconds, doubling up to an hour, until its
+attempts run out. The web process runs the loop from `entry.server.tsx`
+unless `JOBS_IN_WEB=false`; a `worker` compose service (profile `worker`)
+runs the same build through `docker/worker.mjs`. The suggestion rule moved
+onto it: `startPrelabel` adds a keyed job in the transaction that marks the
+batch `PENDING`, `isPrelabelRunning` reads the job, and "Continue" and "Run
+again from scratch" add one with their change. Decided: polling every five
+seconds, plus a wake-up in the process that added the job; one open job per
+key under an advisory lock instead of a partial unique index, which Prisma's
+schema cannot hold. Beyond the design: finishing and putting back name the
+attempt, so a run whose lease ran out cannot undo a newer one; the migration
+turns batches left `PENDING` into jobs; the batch page no longer starts a run
+when it is opened. Still open: finished jobs are never removed and nothing
+lists them.
