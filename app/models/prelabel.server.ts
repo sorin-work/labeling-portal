@@ -5,7 +5,7 @@ import { scoreAgainstGold } from '~/domain/gold';
 import { parsePrelabel, suggest } from '~/domain/prelabel';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
-import { enqueueJob, type JobHandler } from '~/lib/jobs.server';
+import { enqueueJob, type JobHandler, type JobRun } from '~/lib/jobs.server';
 
 /**
  * Running a project's suggestion rule over a batch. It never runs inside the
@@ -71,14 +71,15 @@ function batchOf(payload: unknown): string {
  * (done by an earlier run, or deleted) is left alone.
  */
 export const prelabelJob: JobHandler = {
-  async run(payload) {
+  async run(payload, run) {
     const batchId = batchOf(payload);
     const batch = await prisma.batch.findUnique({
       where: { id: batchId },
       select: { prelabelState: true },
     });
     if (batch?.prelabelState !== 'PENDING') return;
-    await runPrelabel(batchId);
+    // a run that stalled past its lease does not write over the newer run's result
+    await runPrelabel(batchId, { holds: run.holds });
   },
   async giveUp(payload) {
     await prisma.batch.updateMany({
@@ -94,7 +95,7 @@ export const prelabelJob: JobHandler = {
  */
 export async function runPrelabel(
   batchId: string,
-  options: { timeLimitMs?: number; clock?: () => number } = {},
+  options: { timeLimitMs?: number; clock?: () => number; holds?: JobRun['holds'] } = {},
 ): Promise<PrelabelOutcome> {
   const clock = options.clock ?? Date.now;
   const deadline = clock() + (options.timeLimitMs ?? PRELABEL_TIME_LIMIT_MS);
@@ -102,10 +103,15 @@ export async function runPrelabel(
     where: { id: batchId },
     include: { project: { select: { schema: true, prelabel: true } } },
   });
+  // the batch's state is written only while this run's job attempt still
+  // holds the job (job row first, then the batch)
   const finish = async (outcome: PrelabelOutcome, note: string) => {
-    await prisma.batch.update({
-      where: { id: batchId },
-      data: { prelabelState: outcome.state, prelabelNote: note },
+    await prisma.$transaction(async (tx) => {
+      if (options.holds && !(await options.holds(tx))) return;
+      await tx.batch.update({
+        where: { id: batchId },
+        data: { prelabelState: outcome.state, prelabelNote: note },
+      });
     });
     return outcome;
   };

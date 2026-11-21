@@ -14,10 +14,23 @@ import { jobsInWeb, runJobWorker, startJobs } from '~/models/jobs.server';
 // service loads this build too and calls `runJobWorker` (docker/worker.mjs).
 export { runJobWorker };
 
+declare global {
+  var __jobSignals: (() => void) | undefined;
+}
+
 if (jobsInWeb() && process.env.JOBS_WORKER !== 'true') {
+  // a reload in development evaluates this again: startJobs stops the old
+  // loop, and the old signal listener goes too
+  if (globalThis.__jobSignals) {
+    process.off('SIGTERM', globalThis.__jobSignals);
+    process.off('SIGINT', globalThis.__jobSignals);
+  }
   const loop = startJobs();
   // react-router-serve closes the server on these; the loop stops taking jobs
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => void loop.stop());
+  const onSignal = () => void loop.stop();
+  globalThis.__jobSignals = onSignal;
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
 }
 
 export const streamTimeout = 5_000;
