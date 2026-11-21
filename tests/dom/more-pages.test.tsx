@@ -141,6 +141,7 @@ function task(kind: Kind): Data<typeof taskLoader> {
     activeSeconds: 80,
     goldScore: null,
     skipReason: null,
+    release: null,
     answer: answers[kind] as never,
     corrected: false,
     reviews: [],
@@ -234,6 +235,7 @@ const settings: Data<typeof settingsLoader> = {
     goldEvery: null,
     agreementThreshold: null,
     maxExtraAnnotators: 0,
+    dailyTaskLimit: null,
   },
   usage: {
     tasks: 10,
