@@ -867,7 +867,10 @@ export async function resubmitAssignment(
           reviewStatus: accepted ? 'NOT_REQUIRED' : 'PENDING',
           submittedAt: now,
           reviewedAt: null,
-          payableAt: accepted ? now : null,
+          // work that needed no review was payable from its first submission,
+          // which this field still holds; that date stays, so a pay period
+          // that included it is not changed
+          payableAt: accepted ? (current?.submittedAt ?? now) : null,
           takenBackFrom: null,
           ...gold,
           activeSeconds: { increment: credit.seconds },
@@ -1130,7 +1133,7 @@ export async function takeBackState(
   const row = await db.assignment.findFirst({
     where: { id: assignmentId, userId },
     include: {
-      task: { select: { status: true, isGold: true } },
+      task: { select: { status: true, isGold: true, extraSlots: true, agreement: true } },
       project: { select: { goldFeedback: true } },
       _count: { select: { reviews: true } },
     },
@@ -1157,6 +1160,7 @@ export async function takeBackState(
       row.reviewHeldAt !== null &&
       row.reviewHeldAt > holdCutoff(now),
     taskStatus: row.task.status,
+    agreementChecked: row.task.extraSlots > 0 || row.task.agreement !== null,
     isGold: row.task.isGold,
     goldFeedback: row.project.goldFeedback,
     takenBackAt: row.takenBackAt,
@@ -1174,8 +1178,9 @@ export async function takeBackState(
  * frozen rate stay; revising adds time within the revision cap. The answer
  * becomes the draft the revise page starts from.
  *
- * The rule is `takeBackRefusal`, checked under the task row's lock, and the
- * write repeats every part of it that another transaction could change in
+ * The rule is `takeBackRefusal`, checked under the locks of the task row and
+ * then the submission's row (which a spot check takes too), and the write
+ * repeats every part of it that another transaction could change in
  * its `where`: still the same review status, not taken back, no review, no
  * live hold. Lock order: the task row, then the assignment row. No time is
  * credited, so the work clock is not taken.
@@ -1188,6 +1193,10 @@ export async function takeBackSubmission(
   return retryOnLockConflict(() =>
     prisma.$transaction(async (tx) => {
       await lockTaskOfAssignment(tx, assignmentId);
+      // Then the submission's row, before anything is read: a spot check
+      // takes this row to write its review, so either it waits for this or
+      // this sees its review below.
+      await tx.$queryRaw`SELECT id FROM "Assignment" WHERE id = ${assignmentId} FOR UPDATE`;
       const state = await takeBackState(tx, assignmentId, userId, now);
       if (!state) return { ok: false, error: 'not_found' } as const;
       const refused = takeBackRefusal(state, now);
@@ -1219,7 +1228,11 @@ export async function takeBackSubmission(
           draftSeconds: 0,
         },
       });
-      if (taken.count === 0) return { ok: false, error: 'reviewed' } as const;
+      if (taken.count === 0) {
+        // tell a reviewer's hold from a decision that came first
+        const after = await takeBackState(tx, assignmentId, userId, now);
+        return { ok: false, error: after?.held ? 'held' : 'reviewed' } as const;
+      }
       return { ok: true } as const;
     }),
   );
