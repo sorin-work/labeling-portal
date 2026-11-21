@@ -31,7 +31,7 @@ type ActionData = { error: string };
  * someone guessing elsewhere does not lock the owner out of their own
  * browser (see `clientAddress`).
  */
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request, context }: Route.ActionArgs) {
   const form = await request.formData();
   const next = safeRedirect(form.get('next'));
   const pending = await pendingSignIn(request);
@@ -43,7 +43,7 @@ export async function action({ request }: Route.ActionArgs) {
   // a password change or "sign out everywhere" since the password was typed
   if (!user || user.sessionVersion !== pending.v) throw redirect('/login');
 
-  const key = `${pending.userId}|${clientAddress(request) ?? 'any'}`;
+  const key = `${pending.userId}|${clientAddress(request, context)}`;
   const here = await twoStepLimiter.hit(key);
   const everywhere = await twoStepAccountLimiter.hit(pending.userId);
   const limit = !here.allowed ? here : everywhere;

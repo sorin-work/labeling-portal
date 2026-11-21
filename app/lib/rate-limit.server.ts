@@ -136,13 +136,6 @@ export const loginLimiter = new RateLimiter('login', 10, 15 * 60_000);
 export const loginEmailLimiter = new RateLimiter('login-email', 30, 15 * 60_000);
 export const BUSY_EMAIL_TRIES = 3;
 
-/** The wait of a slowed sign-in. An object, so that tests can see the waits instead of sitting them out. */
-export const signInPause = {
-  wait(ms: number): Promise<void> {
-    return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
-  },
-};
-
 /**
  * Five wrong second-step codes per account and client address per fifteen
  * minutes. With the address in the key, someone guessing from elsewhere does
