@@ -61,6 +61,7 @@ export default function NewProject({ actionData }: Route.ComponentProps) {
         maxExtraAnnotators: Number.isInteger(Number(values.maxExtraAnnotators))
           ? Number(values.maxExtraAnnotators)
           : 1,
+        dailyTaskLimit: Number(values.dailyTaskLimit) || null,
         qualificationRequired: values.qualificationRequired === 'on',
         qualificationPassPercent: Number(values.qualificationPassPercent) || 80,
         payMode: values.payMode === 'HOURLY' ? ('HOURLY' as const) : ('PER_TASK' as const),

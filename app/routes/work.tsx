@@ -24,6 +24,7 @@ import {
   type ImageSize,
 } from '~/domain/answers';
 import { extensionPayNote } from '~/domain/active-time';
+import { startOfUtcDay } from '~/domain/daily-limit';
 import { droppedNote, fitDraft } from '~/domain/drafts';
 import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
@@ -129,7 +130,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         projectId: project.id,
         userId: user.id,
         status: 'SUBMITTED',
-        submittedAt: { gte: new Date(new Date().setUTCHours(0, 0, 0, 0)) },
+        // the same count the daily limit goes by (`dailyCount`)
+        submittedAt: { gte: startOfUtcDay(new Date()) },
       },
     }),
   };

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Form } from 'react-router';
 
 import { agreementExplained, MAX_EXTRA_ANNOTATORS } from '~/domain/adjudication';
+import { MAX_DAILY_TASK_LIMIT } from '~/domain/daily-limit';
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from '~/domain/disputes';
 import { renderMarkdown } from '~/domain/markdown';
 import { MAX_GOLD_EVERY, MIN_GOLD_EVERY, QUEUE_ORDERS } from '~/domain/queue-order';
@@ -39,6 +40,7 @@ export type ProjectFormDefaults = {
   /** in percent; null is off */
   agreementThreshold: number | null;
   maxExtraAnnotators: number;
+  dailyTaskLimit: number | null;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: 'PER_TASK' | 'HOURLY';
@@ -60,6 +62,7 @@ export const EMPTY_PROJECT: ProjectFormDefaults = {
   goldEvery: null,
   agreementThreshold: null,
   maxExtraAnnotators: 1,
+  dailyTaskLimit: null,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -316,6 +319,22 @@ export function ProjectForm({
             max={MAX_GOLD_EVERY}
             placeholder="off"
             defaultValue={defaults.goldEvery ?? ''}
+          />
+        </Field>
+        <Field
+          label="Daily limit per annotator"
+          htmlFor="dailyTaskLimit"
+          error={errors?.dailyTaskLimit}
+          hint="How many tasks one person may hand in here per day, counted from midnight UTC. A claim they still hold counts too; skips do not. Empty is no limit."
+        >
+          <Input
+            id="dailyTaskLimit"
+            name="dailyTaskLimit"
+            type="number"
+            min={1}
+            max={MAX_DAILY_TASK_LIMIT}
+            placeholder="no limit"
+            defaultValue={defaults.dailyTaskLimit ?? ''}
           />
         </Field>
       </fieldset>

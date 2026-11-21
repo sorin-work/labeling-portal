@@ -49,7 +49,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return {
     canAnnotate,
     activeAssignmentId: active?.id ?? null,
-    queueMessage: queueMessage(queue),
+    queueMessage: queueMessage(queue, { dailyTaskLimit: project.dailyTaskLimit, now: new Date() }),
     needsQualification: qualification ? !qualification.qualified : false,
     progress,
     project: {
@@ -59,6 +59,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       description: project.description,
       overlap: project.overlap,
       timeLimitMinutes: project.timeLimitMinutes,
+      dailyTaskLimit: project.dailyTaskLimit,
       review: describeReviewPolicy(project.reviewRequired, project.reviewSamplePercent),
     },
     instructionsHtml: renderMarkdown(project.instructions),
@@ -174,6 +175,14 @@ export default function ProjectOverview({ loaderData }: Route.ComponentProps) {
               <dt className="text-slate-500">Time limit</dt>
               <dd className="font-medium">{project.timeLimitMinutes} min</dd>
             </div>
+            {project.dailyTaskLimit !== null && (
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Daily limit</dt>
+                <dd className="font-medium">
+                  {project.dailyTaskLimit} task{project.dailyTaskLimit === 1 ? '' : 's'} a day (UTC)
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-slate-500">Review</dt>
               <dd className="font-medium">{project.review}</dd>
