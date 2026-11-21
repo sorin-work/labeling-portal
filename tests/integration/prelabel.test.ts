@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
-import { prelabelsSettled, runPrelabel } from '~/models/prelabel.server';
+import { runDueJobs } from '~/models/jobs.server';
+import { isPrelabelRunning, prelabelJob, runPrelabel } from '~/models/prelabel.server';
 import { claimNextTask } from '~/models/queue.server';
 import { action as batchAction } from '~/routes/batch-detail';
 import { action as importAction } from '~/routes/batch-new';
@@ -130,9 +131,17 @@ describe('the rule', () => {
       'text,_gold,_prediction\nGreat value,,\nIt came broken,negative,\nMeh,,\nGreat,,negative\n',
     );
     const batch = await prisma.batch.findFirstOrThrow();
-    // the request has been answered; the batch says the rule is still to run
+    // the request has been answered; the batch says the rule is still to run,
+    // and a job that any process can take holds the run
     expect(batch.prelabelState).toBe('PENDING');
-    await prelabelsSettled();
+    expect(await prisma.job.findFirstOrThrow()).toMatchObject({
+      kind: 'prelabel',
+      payload: { batchId: batch.id },
+      doneAt: null,
+    });
+    expect(await isPrelabelRunning(batch.id)).toBe(true);
+    await runDueJobs();
+    expect(await isPrelabelRunning(batch.id)).toBe(false);
 
     const after = await tasks();
     expect(after.map((t) => [t.suggestion, t.suggestionSource])).toEqual([
@@ -150,10 +159,54 @@ describe('the rule', () => {
     });
   });
 
+  it('a job that runs twice, or for a batch that is done, changes nothing', async () => {
+    const { importFile } = await world({ prelabel: rule });
+    await importFile('text\nGreat\nMeh\n');
+    await runDueJobs();
+    const batch = await prisma.batch.findFirstOrThrow();
+    const before = await tasks();
+    await prelabelJob.run(
+      { batchId: batch.id },
+      { job: { id: 'x', attempts: 2, maxAttempts: 3 }, holds: async () => true },
+    );
+    expect(await tasks()).toEqual(before);
+    expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
+      prelabelState: 'DONE',
+      prelabelNote: 'Suggested an answer for 1 of 2 tasks.',
+    });
+    // a batch that was deleted in the meantime
+    await prelabelJob.run(
+      { batchId: 'gone' },
+      { job: { id: 'y', attempts: 1, maxAttempts: 3 }, holds: async () => true },
+    );
+  });
+
+  it('a run that no longer holds its job writes no result on the batch', async () => {
+    const { importFile } = await world({ prelabel: rule });
+    await importFile('text\nGreat\n');
+    const batch = await prisma.batch.findFirstOrThrow();
+    await runPrelabel(batch.id, { holds: async () => false });
+    expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
+      prelabelState: 'PENDING',
+      prelabelNote: null,
+    });
+  });
+
+  it('marks the batch failed once the job gives up', async () => {
+    const { importFile } = await world({ prelabel: rule });
+    await importFile('text\nGreat\n');
+    const batch = await prisma.batch.findFirstOrThrow();
+    await prelabelJob.giveUp!({ batchId: batch.id }, 'it broke');
+    expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
+      prelabelState: 'FAILED',
+      prelabelNote: 'The suggestion rule failed.',
+    });
+  });
+
   it('never runs over a qualification test', async () => {
     const { importFile } = await world({ prelabel: rule });
     await importFile('text,_gold\nGreat,positive\n', { qualification: 'on' });
-    await prelabelsSettled();
+    await runDueJobs();
     expect(await prisma.batch.findFirstOrThrow()).toMatchObject({ prelabelState: null });
     expect((await tasks())[0]).toMatchObject({ suggestion: null, suggestionSource: null });
   });
@@ -161,7 +214,7 @@ describe('the rule', () => {
   it('stops at its time limit, and Continue on the batch page goes on without starting over', async () => {
     const { project, pmCookie, importFile } = await world({ prelabel: rule });
     await importFile(`text\n${Array.from({ length: 6 }, (_, i) => `Great ${i}`).join('\n')}\n`);
-    await prelabelsSettled();
+    await runDueJobs();
     await prisma.task.updateMany({ data: { suggestion: undefined, suggestionSource: null } });
     const batch = await prisma.batch.findFirstOrThrow();
     let t = 0;
@@ -178,7 +231,7 @@ describe('the rule', () => {
       }),
       { projectId: project.id, batchId: batch.id },
     );
-    await prelabelsSettled();
+    await runDueJobs();
     expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
       prelabelState: 'DONE',
       // only the four still to do were run; the first two were not started over
@@ -195,7 +248,7 @@ describe('the rule', () => {
   it('leaves a task that someone has been handed, also without a suggestion yet', async () => {
     const { project, importFile, ann } = await world({ prelabel: rule });
     await importFile('text\nGreat\nGreat again\n');
-    await prelabelsSettled();
+    await runDueJobs();
     await prisma.task.updateMany({ data: { suggestion: undefined, suggestionSource: null } });
     // someone claimed the first task before the rule got to it
     await claimNextTask(project, ann.id);
@@ -206,7 +259,7 @@ describe('the rule', () => {
   it('stops at its time limit, and a second run goes on from there', async () => {
     const { importFile } = await world({ prelabel: rule });
     await importFile(`text\n${Array.from({ length: 5 }, (_, i) => `Great ${i}`).join('\n')}\n`);
-    await prelabelsSettled();
+    await runDueJobs();
     await prisma.task.updateMany({ data: { suggestion: undefined, suggestionSource: null } });
     const batch = await prisma.batch.findFirstOrThrow();
 
@@ -252,7 +305,7 @@ describe('the rule', () => {
   it('runs again from the batch page over tasks nobody has started', async () => {
     const { project, pmCookie, importFile, ann } = await world({ prelabel: rule });
     await importFile('text\nGreat\nbroken\n');
-    await prelabelsSettled();
+    await runDueJobs();
     // someone has the first task open: its suggestion stays as they saw it
     await claimNextTask(project, ann.id);
     await prisma.project.update({
@@ -268,7 +321,7 @@ describe('the rule', () => {
       }),
       { projectId: project.id, batchId: batch.id },
     );
-    await prelabelsSettled();
+    await runDueJobs();
     expect((await tasks()).map((t) => t.suggestion)).toEqual([
       { labels: ['positive'] },
       { labels: ['neutral'] },
@@ -380,7 +433,7 @@ describe('a suggestion on the work page and in a submission', () => {
   it('scores the rule against the gold answers on the quality page', async () => {
     const { project, pmCookie, importFile } = await world({ prelabel: rule });
     await importFile('text,_gold\nGreat,positive\nbroken,positive\n');
-    await prelabelsSettled();
+    await runDueJobs();
     const quality = payload<{
       suggestions: { againstGold: Array<{ source: string; tasks: number; score: number }> };
     }>(

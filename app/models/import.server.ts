@@ -8,7 +8,7 @@ import { prisma } from '~/lib/db.server';
 import { internalImageHosts } from '~/lib/env.server';
 
 import { createBatch, earlierBatch, type CreateBatchResult } from './batches.server';
-import { startPrelabel } from './prelabel.server';
+import { wakeJobs } from '~/lib/jobs.server';
 import { projectSchema, requireProject } from './projects.server';
 
 export const SCHEMA_CHANGED =
@@ -85,10 +85,9 @@ export async function importFile(
     idempotencyHash: hash,
     via: input.via ?? 'page',
   });
-  // the project's rule runs after this request has been answered
-  if (created.ok && !created.repeated && created.batch.prelabelState === 'PENDING') {
-    startPrelabel(created.batch.id);
-  }
+  // the project's rule runs after this request has been answered, as a job
+  // that createBatch added with the batch
+  if (created.ok && !created.repeated && created.batch.prelabelState === 'PENDING') wakeJobs();
   return settled(created);
 }
 

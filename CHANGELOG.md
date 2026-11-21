@@ -247,6 +247,12 @@ the period of its approval.
 
 ### Operations
 
+- Background jobs that survive a restart: the suggestion rule runs as a job
+  in the `Job` table, added in the same transaction as the batch. A loop in
+  the app takes due jobs with `FOR UPDATE SKIP LOCKED` and a lease, puts a
+  failed one back with a growing delay and stops after its attempts. With
+  `JOBS_IN_WEB=false` a `worker` service runs the jobs instead. A run cut
+  short by a restart goes on by itself
 - Backup status the app can see: the backup service writes a row to
   `BackupRun` after every dump attempt, and admins see "The last dump failed"
   or "No dump for N hours" on the dashboard's needs-attention list, with the

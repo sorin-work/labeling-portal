@@ -563,14 +563,15 @@ instead of starting from nothing.
   schema refuses is not suggested. The work page reads it like a draft, so a
   later schema edit cannot offer something the schema refuses.
 - **Off the request path.** The import stores the file's predictions and
-  marks the batch `PENDING` when the project has a rule. The rule runs after
-  the response, in the same process (`startPrelabel` in
-  `app/models/prelabel.server.ts`), and stops after
+  marks the batch `PENDING` when the project has a rule, and `startPrelabel`
+  (`app/models/prelabel.server.ts`) adds a `prelabel` job in the same
+  transaction. A job loop runs it (see "Background jobs"), and it stops after
   `PRELABEL_TIME_LIMIT_MS` (15 seconds), keeping what it did and saying so on
   the batch page (`TIMED_OUT`), where "Continue" goes on with the tasks still
   to do. "Run again from scratch", for a changed rule, takes back what the
-  rule suggested on tasks nobody has been handed and runs it again. A run
-  that a restart cut short goes on when the batch page is opened. Only tasks
+  rule suggested on tasks nobody has been handed and runs it again; both add
+  a job with the change. A run that a restart cut short is a job whose lease
+  runs out, and another loop takes it. Only tasks
   without a suggestion that nobody has been handed are touched, so a file's
   prediction wins and nobody sees a suggestion change under them. Writes and
   the reset lock the task rows by id first and then check, under the lock,
@@ -594,6 +595,64 @@ instead of starting from nothing.
   only a rule's suggestion of the task it was copied from. A project that
   uses only file predictions therefore has gold tasks without suggestions,
   and the quality page says that they can be told apart.
+
+## Background jobs
+
+`Job` rows hold work that runs off the request: a kind, a JSON payload, when
+it is due (`runAt`), the attempts so far out of `maxAttempts`, a lease
+(`lockedUntil`, `lockedBy`), the last error, and `doneAt` or `failedAt`. The
+code is `app/lib/jobs.server.ts`; the kinds and their handlers are
+`JOB_HANDLERS` in `app/models/jobs.server.ts`. Today there is one,
+`prelabel`.
+
+- **Adding.** `enqueueJob(tx, ...)` takes the transaction of the change the
+  job belongs to, so the batch and its job commit together. A job with a
+  `key` (`prelabel:<batchId>`) is not added again while one with the same
+  key is open; the key is guarded by an advisory lock, the last lock its
+  transaction takes. After the commit the caller calls `wakeJobs()`, so the
+  loop of the same process starts at once instead of at its next look.
+- **Taking.** `takeJobs` is one statement: it picks due jobs whose lease is
+  free with `FOR UPDATE SKIP LOCKED`, sets a lease of `LEASE_MS` (a minute)
+  and counts the attempt. Two loops never take one job while its lease holds.
+  Every take counts, also one whose process was killed: a job whose lease ran
+  out on its last attempt is failed with "The last attempt never finished"
+  and its `giveUp` is called, instead of being taken again. Its dates go
+  through `utc()`, like every other raw query.
+- **Running.** The handler runs after that statement has committed, so the
+  loop holds no lock while a handler works. Job rows are the only rows the
+  loop locks, and never together with anything else, so the claim path's
+  lock order (task, then assignment) is not touched; the prelabel handler
+  keeps that order in its own writes.
+- **After.** Done sets `doneAt`. A failure stores the first line of the error
+  and puts the job back after `retryDelayMs` (30 seconds, doubling, at most
+  an hour); after the last attempt it sets `failedAt` and calls the
+  handler's `giveUp` (for `prelabel`: the batch becomes `FAILED`). Both
+  writes name the attempt they belong to, so a run whose lease ran out
+  cannot undo what a newer run of the same job wrote.
+- **Twice.** While a handler works, its lease is renewed every
+  `HEARTBEAT_MS` (20 seconds) through the attempt fence, so only a run that
+  hangs or whose process stopped loses its job. A lease that runs out while
+  a handler still works lets another loop take the job. Handlers must be
+  safe to run twice, and get `holds(tx)`, which locks the job row and says
+  whether this attempt still holds it: the prelabel run writes the batch's
+  state only then (job row first, then the batch), so a stalled run cannot
+  write over a newer result. The prelabel
+  handler leaves a batch alone that is no longer `PENDING`, and a run only
+  touches tasks without a suggestion that nobody was handed.
+- **The loop.** `startJobLoop` looks for due jobs every `POLL_MS` (five
+  seconds), straight away again after it found some, and when woken. It is
+  polling, not `LISTEN`/`NOTIFY`: one indexed query, and no connection held
+  open. The web process starts it from `app/entry.server.tsx` unless
+  `JOBS_IN_WEB=false`. The `worker` compose service runs the same build with
+  `docker/worker.mjs`, which calls `runJobWorker` from the entry. On SIGTERM
+  the loop takes no more jobs; the one it runs finishes, or the process is
+  killed and its lease runs out. A reload in development starts a new loop
+  with the current handlers and stops the old one.
+- **Tests** call `runDueJobs(now)` instead of waiting for timers.
+- **Upgrade.** The migration turns every batch that was still `PENDING` into
+  a job, so nothing waits for its batch page to be opened.
+- **Not here**: done and failed jobs are never removed (one per import), and
+  there is no page that lists jobs.
 
 ## Accessibility
 

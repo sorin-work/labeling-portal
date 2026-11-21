@@ -5,15 +5,17 @@ import { scoreAgainstGold } from '~/domain/gold';
 import { parsePrelabel, suggest } from '~/domain/prelabel';
 import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
+import { enqueueJob, type JobHandler, type JobRun } from '~/lib/jobs.server';
 
 /**
  * Running a project's suggestion rule over a batch. It never runs inside the
  * request that imported the batch: the import marks the batch `PENDING` and
- * `startPrelabel` runs it after the response has gone, in the same process.
- * A run stops after `PRELABEL_TIME_LIMIT_MS` and says so on the batch; what it
- * did is kept, and "Continue" on the batch page goes on from there. One task
- * costs a bounded amount of work (see `findTerms`), so the limit holds. A batch
- * that was left `PENDING` by a restart is picked up when its page is opened.
+ * `startPrelabel` adds a background job in the same transaction, which the
+ * job loop of whichever process is free runs (`lib/jobs.server.ts`). A run
+ * stops after `PRELABEL_TIME_LIMIT_MS` and says so on the batch; what it did
+ * is kept, and "Continue" on the batch page goes on from there. One task
+ * costs a bounded amount of work (see `findTerms`), so the limit holds. The
+ * job is in the database, so a restart does not lose it.
  *
  * Only tasks that have no suggestion yet and that nobody has been handed are
  * touched (a file's `_prediction` wins over the rule), and never
@@ -28,37 +30,64 @@ export type PrelabelState = 'PENDING' | 'DONE' | 'TIMED_OUT' | 'FAILED';
 
 export type PrelabelOutcome = { state: PrelabelState; suggested: number; tried: number };
 
-/** Runs this process has going now, by batch. */
-const running = new Map<string, Promise<void>>();
+export const PRELABEL_JOB = 'prelabel';
 
-/** Starts a run in the background, unless one is going already. Returns at once. */
-export function startPrelabel(batchId: string): void {
-  if (running.has(batchId)) return;
-  const run = new Promise<void>((resolve) => setImmediate(resolve))
-    .then(() => runPrelabel(batchId))
-    .then(
-      () => undefined,
-      async () => {
-        await prisma.batch
-          .update({
-            where: { id: batchId },
-            data: { prelabelState: 'FAILED', prelabelNote: 'The suggestion rule failed.' },
-          })
-          .catch(() => {});
-      },
-    )
-    .finally(() => running.delete(batchId));
-  running.set(batchId, run);
+const jobKey = (batchId: string) => `prelabel:${batchId}`;
+
+/**
+ * Adds the job that runs the rule over the batch, unless one is waiting
+ * already. Pass the transaction that marks the batch `PENDING`. The caller
+ * calls `wakeJobs()` after it has committed, so this process starts at once.
+ */
+export async function startPrelabel(
+  db: Prisma.TransactionClient | typeof prisma,
+  batchId: string,
+): Promise<void> {
+  await enqueueJob(db, {
+    kind: PRELABEL_JOB,
+    payload: { batchId },
+    key: jobKey(batchId),
+    maxAttempts: 3,
+  });
 }
 
-export function isPrelabelRunning(batchId: string): boolean {
-  return running.has(batchId);
+/** Whether a run of the rule over the batch is waiting or going, in any process. */
+export async function isPrelabelRunning(batchId: string): Promise<boolean> {
+  const open = await prisma.job.count({
+    where: { key: jobKey(batchId), doneAt: null, failedAt: null },
+  });
+  return open > 0;
 }
 
-/** Waits until the runs going now have ended. For tests and for a clean shutdown. */
-export async function prelabelsSettled(): Promise<void> {
-  while (running.size > 0) await Promise.all(running.values());
+function batchOf(payload: unknown): string {
+  const batchId = (payload as { batchId?: unknown } | null)?.batchId;
+  if (typeof batchId !== 'string') throw new Error('A prelabel job needs a batchId.');
+  return batchId;
 }
+
+/**
+ * The job. Safe to run twice: a run only touches tasks that have no
+ * suggestion and nobody was handed, and a batch that is no longer `PENDING`
+ * (done by an earlier run, or deleted) is left alone.
+ */
+export const prelabelJob: JobHandler = {
+  async run(payload, run) {
+    const batchId = batchOf(payload);
+    const batch = await prisma.batch.findUnique({
+      where: { id: batchId },
+      select: { prelabelState: true },
+    });
+    if (batch?.prelabelState !== 'PENDING') return;
+    // a run that stalled past its lease does not write over the newer run's result
+    await runPrelabel(batchId, { holds: run.holds });
+  },
+  async giveUp(payload) {
+    await prisma.batch.updateMany({
+      where: { id: batchOf(payload), prelabelState: 'PENDING' },
+      data: { prelabelState: 'FAILED', prelabelNote: 'The suggestion rule failed.' },
+    });
+  },
+};
 
 /**
  * Runs the rule over the batch's tasks that have no suggestion yet. `clock`
@@ -66,7 +95,7 @@ export async function prelabelsSettled(): Promise<void> {
  */
 export async function runPrelabel(
   batchId: string,
-  options: { timeLimitMs?: number; clock?: () => number } = {},
+  options: { timeLimitMs?: number; clock?: () => number; holds?: JobRun['holds'] } = {},
 ): Promise<PrelabelOutcome> {
   const clock = options.clock ?? Date.now;
   const deadline = clock() + (options.timeLimitMs ?? PRELABEL_TIME_LIMIT_MS);
@@ -74,10 +103,15 @@ export async function runPrelabel(
     where: { id: batchId },
     include: { project: { select: { schema: true, prelabel: true } } },
   });
+  // the batch's state is written only while this run's job attempt still
+  // holds the job (job row first, then the batch)
   const finish = async (outcome: PrelabelOutcome, note: string) => {
-    await prisma.batch.update({
-      where: { id: batchId },
-      data: { prelabelState: outcome.state, prelabelNote: note },
+    await prisma.$transaction(async (tx) => {
+      if (options.holds && !(await options.holds(tx))) return;
+      await tx.batch.update({
+        where: { id: batchId },
+        data: { prelabelState: outcome.state, prelabelNote: note },
+      });
     });
     return outcome;
   };
@@ -187,15 +221,19 @@ export async function resetRuleSuggestions(batchId: string): Promise<number> {
       where: { id: batchId },
       data: { prelabelState: 'PENDING', prelabelNote: null },
     });
+    await startPrelabel(tx, batchId);
     return reset;
   });
 }
 
 /** For "Continue" after a run stopped at its time limit: goes on with the tasks still to do. */
 export async function continuePrelabel(batchId: string): Promise<void> {
-  await prisma.batch.update({
-    where: { id: batchId },
-    data: { prelabelState: 'PENDING', prelabelNote: null },
+  await prisma.$transaction(async (tx) => {
+    await tx.batch.update({
+      where: { id: batchId },
+      data: { prelabelState: 'PENDING', prelabelNote: null },
+    });
+    await startPrelabel(tx, batchId);
   });
 }
 
