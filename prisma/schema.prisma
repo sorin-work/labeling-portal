@@ -566,3 +566,17 @@ model RecoveryCode {
 
   @@unique([userId, codeHash])
 }
+
+/// The counters of the rate limits (`lib/rate-limit.server.ts`), shared by
+/// every app process. UNLOGGED in the database (see the migration): a crash
+/// may lose the counts, which only ends a lockout early, and the writes on
+/// every API request stay out of the write-ahead log.
+model RateLimitHit {
+  /// the limiter's name and the key it counts, e.g. `login:ann@example.com`
+  key         String   @id
+  count       Int
+  windowStart DateTime
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}
