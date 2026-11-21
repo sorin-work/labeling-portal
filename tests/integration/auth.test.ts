@@ -1,6 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { signInPause } from '~/lib/rate-limit.server';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { action as loginAction } from '~/routes/login';
 import { loader as homeLoader } from '~/routes/dashboard';
@@ -19,11 +17,6 @@ import {
 
 describe('sign in', () => {
   beforeEach(resetDb);
-  const savedProxy = process.env.TRUST_PROXY;
-  afterEach(() => {
-    if (savedProxy === undefined) delete process.env.TRUST_PROXY;
-    else process.env.TRUST_PROXY = savedProxy;
-  });
 
   it('signs a member in and redirects to the requested page', async () => {
     const org = await createOrg();
@@ -55,20 +48,13 @@ describe('sign in', () => {
   });
 
   it('blocks an email and address after too many wrong passwords', async () => {
-    process.env.TRUST_PROXY = 'true';
     const org = await createOrg();
     await createMember(org.id, 'ANNOTATOR', {
       email: 'locked@example.test',
       password: 'secret-pass',
     });
     const attempt = (password: string) =>
-      run(
-        loginAction,
-        makeRequest('/login', {
-          form: { email: 'locked@example.test', password },
-          headers: { 'X-Forwarded-For': '203.0.113.5' },
-        }),
-      );
+      run(loginAction, makeRequest('/login', { form: { email: 'locked@example.test', password } }));
 
     for (let i = 0; i < 10; i++) expect(statusOf(await attempt('wrong'))).toBe(401);
     const blocked = await attempt('secret-pass');
@@ -76,30 +62,34 @@ describe('sign in', () => {
     expect(payload<{ error: string }>(blocked).error).toMatch(/Too many attempts/);
   });
 
-  it('without a known client address, slows wrong passwords and never refuses the right one', async () => {
-    delete process.env.TRUST_PROXY;
-    const waits: number[] = [];
-    const spy = vi.spyOn(signInPause, 'wait').mockImplementation(async (ms) => {
-      waits.push(ms);
-    });
-    try {
-      const org = await createOrg();
-      await createMember(org.id, 'ANNOTATOR', {
-        email: 'slow@example.test',
-        password: 'secret-pass',
-      });
-      const attempt = (password: string) =>
-        run(loginAction, makeRequest('/login', { form: { email: 'slow@example.test', password } }));
-      for (let i = 0; i < 10; i++) expect(statusOf(await attempt('wrong'))).toBe(401);
-      expect(statusOf(await attempt('secret-pass'))).toBe(302);
-      expect(waits).toEqual([0, 0, 0, 250, 500, 1000, 2000, 4000, 5000, 5000, 5000]);
-    } finally {
-      spy.mockRestore();
-    }
+  it('keeps separate counts for two socket addresses', async () => {
+    const org = await createOrg();
+    await createMember(org.id, 'ANNOTATOR', { email: 'two@example.test', password: 'secret-pass' });
+    const from = (clientAddress: string, password: string) =>
+      run(
+        loginAction,
+        makeRequest('/login', { form: { email: 'two@example.test', password } }),
+        {},
+        { clientAddress },
+      );
+    for (let i = 0; i < 12; i++) await from('203.0.113.8', 'wrong');
+    expect(statusOf(await from('203.0.113.8', 'secret-pass'))).toBe(429);
+    // the owner's own address was never wrong
+    expect(statusOf(await from('198.51.100.3', 'secret-pass'))).toBe(302);
+    // a header is not believed without TRUST_PROXY
+    const spoofed = await run(
+      loginAction,
+      makeRequest('/login', {
+        form: { email: 'two@example.test', password: 'secret-pass' },
+        headers: { 'X-Forwarded-For': '198.51.100.3' },
+      }),
+      {},
+      { clientAddress: '203.0.113.8' },
+    );
+    expect(statusOf(spoofed)).toBe(429);
   });
 
   it('gives a burst of parallel attempts no more tries than one at a time', async () => {
-    process.env.TRUST_PROXY = 'true';
     const org = await createOrg();
     await createMember(org.id, 'ANNOTATOR', {
       email: 'burst@example.test',
@@ -109,10 +99,9 @@ describe('sign in', () => {
       Array.from({ length: 40 }, () =>
         run(
           loginAction,
-          makeRequest('/login', {
-            form: { email: 'burst@example.test', password: 'wrong' },
-            headers: { 'X-Forwarded-For': '203.0.113.7' },
-          }),
+          makeRequest('/login', { form: { email: 'burst@example.test', password: 'wrong' } }),
+          {},
+          { clientAddress: '203.0.113.7' },
         ).then(statusOf),
       ),
     );

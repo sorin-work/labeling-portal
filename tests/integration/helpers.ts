@@ -101,9 +101,11 @@ export async function run<F extends RouteFn>(
   fn: F,
   request: Request,
   params: Record<string, string> = {},
+  /** what the server puts in the load context, such as the socket's `clientAddress` */
+  context: Record<string, unknown> = {},
 ): Promise<unknown> {
   try {
-    return await fn({ request, params, context: {} } as never);
+    return await fn({ request, params, context } as never);
   } catch (error) {
     if (error instanceof Response) return error;
     throw error;

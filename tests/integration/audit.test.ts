@@ -294,21 +294,12 @@ describe('what is recorded', () => {
       email: 'ann-audit@example.test',
       password: 'secret-pass',
     });
-    // a lockout needs an address to lock; without one wrong passwords are only slowed
-    process.env.TRUST_PROXY = 'true';
     const signIn = (email: string, password: string) =>
-      run(
-        loginAction,
-        makeRequest('/login', {
-          form: { email, password },
-          headers: { 'X-Forwarded-For': '203.0.113.20' },
-        }),
-      );
+      run(loginAction, makeRequest('/login', { form: { email, password } }));
     expect(statusOf(await signIn('ann-audit@example.test', 'secret-pass'))).toBe(302);
 
     for (let i = 0; i < 12; i++) await signIn('ann-audit@example.test', 'wrong');
     for (let i = 0; i < 12; i++) await signIn('nobody-audit@example.test', 'wrong');
-    delete process.env.TRUST_PROXY;
     expect(await actions(org.id)).toEqual(['auth.signed_in', 'auth.locked']);
     expect(await prisma.activity.count()).toBe(2);
   });
