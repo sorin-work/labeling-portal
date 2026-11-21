@@ -3,7 +3,10 @@ const DEV_SECRET = 'dev-only-session-secret-change-me-0123456789';
 /** Reads the session secret, refusing to start in production with the default. */
 export function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
-  if (secret && secret.length >= 16) return secret;
+  if (secret && secret.length >= 16) {
+    if (isSampleSessionSecret(secret)) warnSampleSecret();
+    return secret;
+  }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SESSION_SECRET must be set to at least 16 characters in production');
   }
@@ -69,4 +72,50 @@ export class TotpKeyMissing extends Error {
  */
 export function trustProxy(): boolean {
   return process.env.TRUST_PROXY === 'true';
+}
+
+/**
+ * The compose file's `SESSION_SECRET` is a published sample (it has
+ * `change-me` in it), so that `docker compose up` works on a laptop. Anyone
+ * who read the repository can sign cookies with it. In production it is
+ * allowed for a browser on the same machine only: the start log warns, and
+ * `refuseSampleSecretOffLocalhost` answers every request that reached the
+ * app under another host name.
+ */
+export function isSampleSessionSecret(secret = process.env.SESSION_SECRET ?? ''): boolean {
+  return process.env.NODE_ENV === 'production' && /change-me/.test(secret);
+}
+
+let warned = false;
+function warnSampleSecret() {
+  if (warned) return;
+  warned = true;
+  console.warn(
+    [
+      '',
+      '*****************************************************************',
+      '* SESSION_SECRET is the sample value from docker-compose.yml.  *',
+      '* Anyone can forge a session with it. It is accepted only for  *',
+      '* requests to localhost; set your own SESSION_SECRET (16+      *',
+      '* random characters) before serving the app to anyone else.    *',
+      '*****************************************************************',
+      '',
+    ].join('\n'),
+  );
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * Throws a 503 for a request under a host name other than localhost while
+ * the sample session secret is in use in production.
+ */
+export function refuseSampleSecretOffLocalhost(request: Request): void {
+  if (!isSampleSessionSecret()) return;
+  const host = new URL(request.url).hostname.toLowerCase();
+  if (LOCAL_HOSTS.has(host)) return;
+  throw new Response(
+    'This server still uses the sample SESSION_SECRET from docker-compose.yml, which is only allowed on localhost. Set SESSION_SECRET to 16 or more random characters of your own.',
+    { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } },
+  );
 }

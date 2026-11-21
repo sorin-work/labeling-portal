@@ -367,6 +367,10 @@ More detail: [architecture](docs/architecture.md),
   HTTPS (the compose file already does).
 - **"SESSION_SECRET must be set"** on start: production refuses the built-in
   development secret. Set `SESSION_SECRET` to 16 or more random characters.
+- **A warning about the sample SESSION_SECRET, or a 503 that names it**: the
+  compose file's secret is a published sample so that the quick start works.
+  It is accepted only for requests to `localhost`; under any other host name
+  every page answers 503 until you set `SESSION_SECRET` of your own.
 - **Integration tests fail with "database does not exist"**: create the test
   database (`createdb labeling_test`) or use `docker-compose.dev.yml`, which
   creates it on first start, and point `TEST_DATABASE_URL` at it.

@@ -257,6 +257,8 @@ the period of its approval.
 
 ### Operations
 
+- The sample `SESSION_SECRET` of the compose file logs a warning at start
+  and is refused for requests under any host name other than localhost
 - Rate limits shared between processes: the sign-in, second-step and API
   limits count in an UNLOGGED PostgreSQL table, one statement per attempt,
   so a restart no longer clears a lockout and two app processes do not each
