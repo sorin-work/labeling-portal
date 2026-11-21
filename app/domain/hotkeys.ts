@@ -185,7 +185,8 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
     // Not Backspace: a reviewer who clicks a span leaves the feedback box, and
     // the next Backspace is meant for text.
     { action: 'remove', keys: ['Delete'], label: 'Remove the selected span', destructive: true },
-    { action: 'undoRemove', keys: ['Mod+z'], label: 'Put back the span that was just removed' },
+    { action: 'undo', keys: ['Mod+z'], label: 'Undo' },
+    { action: 'redo', keys: ['Mod+Shift+z'], label: 'Redo' },
     // The text keys only act while the text has focus (Tab to it); anywhere
     // else the arrows and Enter keep what they do.
     {
