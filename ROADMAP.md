@@ -916,5 +916,8 @@ Revoke button. Different from the design: that admin revoke is new
 person's own account page would not have helped the admin. "Sign out
 everywhere" signs out this browser too, and admins end their own sessions from
 the account page, not People. An open work page still reaches "Draft not
-saved" through the redirect. Still open: a list of sessions with device and
+saved" through the redirect. Also beyond the design: removing a person bumps
+the version and revokes their tokens in that organisation, so a re-add brings
+neither back. The version is per account, so ending sessions signs the person
+out of their other organisations too, and People says so. Still open: a list of sessions with device and
 time, which needs a table of sessions.

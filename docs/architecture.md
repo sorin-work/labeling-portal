@@ -718,10 +718,16 @@ expired.
 - **Audit.** "Sign out everywhere" and "End sessions" are both
   `person.sessions_ended`; `detail.own` tells them apart. A password change
   keeps its own entry and adds none.
+- **One number per account, not per organisation.** Someone who is in more
+  than one organisation is signed out of all of them when an admin of one
+  ends their sessions or sets their password. That fails safe after a
+  takeover, and the People page says so before "End sessions".
+- **Removing a person** ends their sessions too (the number goes up) and
+  revokes their API tokens for that organisation, so adding them again does
+  not bring an old cookie or token back. A role change is read on every
+  request and needs nothing.
 - **Not here**: a list of sessions with device and time. That needs a table of
   sessions and a write on every sign-in, which a version number does not.
-  Removing a person already ends their sessions (the membership is gone), and
-  a role change is read on every request.
 
 ## Audit trail
 

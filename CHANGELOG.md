@@ -222,7 +222,8 @@ the period of its approval.
   password, your own or someone else's, ends the other sessions too; the tab
   that changed its own stays signed in. Cookies made before the upgrade keep
   working. API tokens are left alone and listed with Revoke. Both actions are
-  in the audit trail
+  in the audit trail. Removing a person also ends their sessions and revokes
+  their API tokens in that organisation
 - A JSON API under `/api/v1/`: list and show projects, upload a batch (with
   an `Idempotency-Key` so a retried upload does not double it), download the
   labels in any export format and look a task up by its external id. It

@@ -83,6 +83,17 @@ export async function action({ request }: Route.ActionArgs) {
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
     return data<ActionData>({ message: 'Role updated.' });
   }
+  if ((intent === 'password' || intent === 'sessions') && userId === user.id) {
+    return data<ActionData>(
+      {
+        error:
+          intent === 'password'
+            ? 'Change your own password on your account page.'
+            : 'Sign yourself out everywhere from your account page.',
+      },
+      { status: 400 },
+    );
+  }
   if (intent === 'password') {
     const result = await setPassword(
       membership.orgId,
@@ -97,15 +108,11 @@ export async function action({ request }: Route.ActionArgs) {
     });
   }
   if (intent === 'sessions') {
-    if (userId === user.id)
-      return data<ActionData>(
-        { error: 'Sign yourself out everywhere from your account page.' },
-        { status: 400 },
-      );
     const result = await endSessions(membership.orgId, user.id, userId);
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
     return data<ActionData>({
-      message: 'Their sessions ended. Every browser they were signed in on asks them to sign in.',
+      message:
+        'Their sessions ended, in this organisation and any other they are in. Every browser they were signed in on asks them to sign in.',
       tokens: await stillWorking(membership.orgId, userId),
     });
   }
@@ -117,7 +124,10 @@ export async function action({ request }: Route.ActionArgs) {
       String(form.get('tokenId') ?? ''),
     );
     if (!revoked.ok)
-      return data<ActionData>({ error: 'That token is already revoked.' }, { status: 404 });
+      return data<ActionData>(
+        { error: 'That token was not found for this person, or it is already revoked.' },
+        { status: 404 },
+      );
     return data<ActionData>({
       message: 'Token revoked.',
       tokens: await stillWorking(membership.orgId, userId),
@@ -220,7 +230,11 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                     <Form
                       method="post"
                       onSubmit={(event) => {
-                        if (!confirm(`Sign ${person.name} out in every browser?`))
+                        if (
+                          !confirm(
+                            `Sign ${person.name} out in every browser? This also signs them out of any other organisation they are in.`,
+                          )
+                        )
                           event.preventDefault();
                       }}
                     >
