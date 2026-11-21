@@ -31,15 +31,22 @@ export async function lockTaskOfAssignment(
     FOR NO KEY UPDATE OF t`;
 }
 
-/** A deadlock (40P01) or a serialization failure (40001) that PostgreSQL resolved by aborting us. */
+/**
+ * A deadlock (40P01) or a serialization failure (40001) that PostgreSQL
+ * resolved by aborting us, a lock wait that ran out (55P03, `lock_timeout`),
+ * or a transaction Prisma gave up on (P2028). All of them are worth one more
+ * try rather than an error for the person.
+ */
 export function isLockConflict(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === 'P2034') return true;
+    if (error.code === 'P2034' || error.code === 'P2028') return true;
     const code = (error.meta as { code?: string } | undefined)?.code;
-    if (code === '40P01' || code === '40001') return true;
+    if (code === '40P01' || code === '40001' || code === '55P03') return true;
   }
   const message = error instanceof Error ? error.message : String(error);
-  return /\b(40P01|40001)\b|deadlock detected|could not serialize/.test(message);
+  return /\b(40P01|40001|55P03|P2028)\b|deadlock detected|could not serialize|lock timeout/.test(
+    message,
+  );
 }
 
 /**
