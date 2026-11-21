@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { pruneRateLimits, RateLimiter } from '~/lib/rate-limit.server';
+import { pruneRateLimits, rateLimitHash, RateLimiter } from '~/lib/rate-limit.server';
+import { action as loginAction } from '~/routes/login';
 
-import { prisma, resetDb } from './helpers';
+import { createMember, createOrg, makeRequest, prisma, resetDb, run, statusOf } from './helpers';
 
 const t0 = Date.parse('2026-11-21T12:00:00Z');
 
@@ -57,6 +58,78 @@ describe('rate limits in the database', () => {
     await limiter.hit('old', t0);
     await limiter.hit('new', t0 + 5000);
     expect(await pruneRateLimits(new Date(t0 + 2000))).toBe(1);
-    expect((await prisma.rateLimitHit.findMany()).map((r) => r.key)).toEqual(['test:new']);
+    expect((await prisma.rateLimitHit.findMany()).map((r) => r.key)).toEqual([
+      rateLimitHash('test:new'),
+    ]);
+  });
+
+  it('stores keys hashed, whatever their length, and peeks without counting', async () => {
+    const limiter = new RateLimiter('test', 5, 1000);
+    const long = 'x'.repeat(5000);
+    await limiter.hit(long, t0, '203.0.113.9');
+    const [row] = await prisma.rateLimitHit.findMany();
+    expect(row).toMatchObject({ name: 'test', subject: rateLimitHash(long) });
+    expect(row.key).toHaveLength(64);
+    expect(await limiter.peek(long, t0 + 1, '203.0.113.9')).toEqual({
+      count: 1,
+      retryAfterSeconds: 1,
+    });
+    expect((await limiter.peek(long, t0 + 1, '203.0.113.9')).count).toBe(1);
+    expect((await limiter.peek(long, t0 + 1)).count).toBe(0);
+  });
+});
+
+describe('the sign-in limit', () => {
+  beforeEach(resetDb);
+  const saved = process.env.TRUST_PROXY;
+  afterEach(() => {
+    process.env.TRUST_PROXY = saved;
+  });
+
+  const signIn = (email: string, password: string, from?: string) =>
+    run(
+      loginAction,
+      makeRequest('/login', {
+        form: { email, password },
+        headers: from ? { 'X-Forwarded-For': from } : undefined,
+      }),
+    );
+
+  it('does not let an address hammering an email stop its owner elsewhere', async () => {
+    process.env.TRUST_PROXY = 'true';
+    const org = await createOrg();
+    await createMember(org.id, 'ANNOTATOR', {
+      email: 'owner@example.test',
+      password: 'right-pass',
+    });
+    for (let i = 0; i < 40; i += 1) await signIn('owner@example.test', 'wrong', '203.0.113.66');
+    // the attacker's address is locked, with the right password too
+    expect(statusOf(await signIn('owner@example.test', 'right-pass', '203.0.113.66'))).toBe(429);
+    // the owner from home signs in
+    expect(statusOf(await signIn('owner@example.test', 'right-pass', '198.51.100.4'))).toBe(302);
+    expect(await prisma.activity.count({ where: { action: 'auth.locked' } })).toBe(1);
+  });
+
+  it('gives a new address fewer tries while an email is guessed at from many', async () => {
+    process.env.TRUST_PROXY = 'true';
+    const org = await createOrg();
+    await createMember(org.id, 'ANNOTATOR', { email: 'busy@example.test', password: 'right-pass' });
+    // thirty wrong passwords from three addresses, under each address's limit
+    for (let a = 0; a < 3; a += 1) {
+      for (let i = 0; i < 10; i += 1) await signIn('busy@example.test', 'wrong', `203.0.113.${a}`);
+    }
+    const fresh = '192.0.2.50';
+    for (let i = 0; i < 3; i += 1) {
+      expect(statusOf(await signIn('busy@example.test', 'wrong', fresh))).toBe(401);
+    }
+    expect(statusOf(await signIn('busy@example.test', 'wrong', fresh))).toBe(429);
+    // a right password from yet another address still signs in on its first try
+    expect(statusOf(await signIn('busy@example.test', 'right-pass', '192.0.2.99'))).toBe(302);
+  });
+
+  it('answers 400 for an email longer than any real one, without a lookup or a row', async () => {
+    const result = await signIn(`${'a'.repeat(3000)}@example.test`, 'whatever');
+    expect(statusOf(result)).toBe(400);
+    expect(await prisma.rateLimitHit.count()).toBe(0);
   });
 });
