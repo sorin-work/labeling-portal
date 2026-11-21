@@ -773,6 +773,57 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 - Sign-in attempts are rate limited per email (ten failures per fifteen
   minutes, in memory).
 
+## Two-step sign-in
+
+An authenticator app's six-digit code after the password (TOTP, RFC 6238:
+HMAC-SHA1, 30-second steps), in `app/domain/totp.ts`, which is tested
+against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
+
+- **Setup** on the account page: a new 160-bit secret is kept as
+  `User.totpPending` and shown as text and as a QR code of its `otpauth://`
+  address, drawn on the server by the `qrcode` package (nothing is sent
+  anywhere). It turns on once a code from it is right. Then ten recovery
+  codes are made and shown once; only their SHA-256 is kept
+  (`RecoveryCode`). Turning it on ends every other session (item 20), and
+  this tab gets a new cookie.
+- **The secret at rest.** It has to be read back, so it is encrypted, not
+  hashed: AES-256-GCM in `lib/secret-box.server.ts` under a key made from
+  `TOTP_KEY`, its own variable so that rotating `SESSION_SECRET` does not
+  break every second step. Production asks for it only when someone sets up
+  or uses the feature. A changed key makes the secrets unreadable; the
+  second page says so and an admin resets the people concerned.
+- **Signing in.** After the right password the cookie holds only
+  `pending` (who, the organisation, the session version and the time, for
+  ten minutes), which `getCurrentUser` does not read, and the browser goes to
+  `/login/two-step`. A right code there makes the session; a password change
+  or "sign out everywhere" in between sends it back to the password page.
+  The sign-in is recorded only then, with `twoStep: code` or `recovery`.
+- **A code works once.** `totpLastStep` holds the time step of the last
+  code taken, and one conditional update moves it forward only, so the same
+  code cannot be taken twice, not even by two requests at once. One step of
+  clock drift is allowed either way. A recovery code is marked used the same
+  way.
+- **Wrong codes** are limited to five per fifteen minutes per account and
+  client address (`twoStepLimiter`), so someone who has the password and
+  guesses from elsewhere does not lock the owner out of their own browser.
+  The first refused attempt is recorded (`auth.two_step_locked`). React
+  Router gives the app a Fetch request and not the socket, so the address
+  comes from the proxy: with `TRUST_PROXY=true`, the last `X-Forwarded-For`
+  entry (`lib/client-address.server.ts`). Without a proxy nothing a client
+  sends is believed and the limit is per account only, which a guesser can
+  use to hold the owner off for fifteen minutes.
+- **The organisation rule** (`Organization.twoStepRequired`, on People)
+  asks it of admins and project managers. `getCurrentUser` reads the rule and
+  whether the person has it in the query it already makes; `requireUser`
+  sends those who have not set it up to `/account` until they do. An admin
+  can only turn the rule on with their own second step on. API tokens are
+  not affected: they are made after a sign-in and revoked on their own.
+- **Reset** on People clears a person's secret and recovery codes and ends
+  their sessions (`person.two_step_reset`). One's own can be turned off on
+  the account page with a code, unless the rule asks it of the role.
+- **Not here**: passkeys (WebAuthn), and making new recovery codes without
+  a reset.
+
 ## Sessions
 
 The session is a signed cookie (`app/lib/session.server.ts`) that lives for

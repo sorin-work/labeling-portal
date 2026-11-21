@@ -23,6 +23,9 @@ services:
       # The name is what a refused restore lists as still connected.
       DATABASE_URL: postgresql://labeling:labeling@db:5432/labeling?application_name=labeling-portal
       SESSION_SECRET: ${SESSION_SECRET:-local-docker-session-secret-change-me-0123456789}
+      # Encrypts the two-step secrets. Keep it with your backups: without it
+      # nobody with two-step on can sign in until an admin resets them.
+      TOTP_KEY: ${TOTP_KEY:-local-docker-totp-key-change-me-0123456789}
       # Creates the demo organisation, users and projects on first start.
       SEED_DEMO: ${SEED_DEMO:-true}
       # Lists the demo accounts on the sign-in page.
