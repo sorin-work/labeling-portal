@@ -35,6 +35,8 @@ async function loadReturned(assignmentId: string, userId: string) {
       project: true,
       task: true,
       reviews: {
+        // the decision that sent it back or fixed it; a spot check is neither
+        where: { spotCheck: false },
         orderBy: { createdAt: 'desc' },
         take: 1,
         include: { dispute: { include: { resolvedBy: { select: { name: true } } } } },

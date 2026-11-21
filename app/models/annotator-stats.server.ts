@@ -65,7 +65,13 @@ export async function reviewerStats(
   now = new Date(),
 ): Promise<ReviewerStats> {
   const since = new Date(now.getTime() - days * DAY);
-  const standing = { reviewerId: userId, createdAt: { gte: since }, overturnedAt: null };
+  // spot checks decide nothing, so they are not among the decisions counted here
+  const standing = {
+    reviewerId: userId,
+    createdAt: { gte: since },
+    overturnedAt: null,
+    spotCheck: false,
+  };
   const groups = await prisma.review.groupBy({
     by: ['decision'],
     where: standing,

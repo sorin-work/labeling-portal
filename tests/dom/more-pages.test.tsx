@@ -41,6 +41,7 @@ function review(kind: Kind): Data<typeof reviewLoader> {
     project: { id: 'p1', name: 'Reviews' },
     schema: KINDS[kind].schema,
     ownWork: false,
+    spotCheck: false,
     hold: { reviewer: 'Rita Reviewer', mine: true, until: new Date(at.getTime() + 15 * 60_000) },
     sampleNote: null,
     assignment: {
@@ -62,6 +63,7 @@ function review(kind: Kind): Data<typeof reviewLoader> {
         feedback: 'Missed one.',
         createdAt: at,
         overturned: false,
+        spotCheck: false,
       },
     ],
   };
@@ -276,6 +278,8 @@ const annotator = (userId: string, name: string, flagged: boolean) => ({
   goldAttempts: 6,
   goldAccuracy: flagged ? 0.5 : 0.95,
   flagged,
+  spotChecks: flagged ? 2 : 0,
+  spotCheckSendBacks: flagged ? 1 : 0,
 });
 
 const quality: Data<typeof qualityLoader> = {

@@ -8,9 +8,16 @@ import { Pagination } from '~/components/pagination';
 import { requireUser } from '~/lib/auth.server';
 import { projectTitle } from '~/lib/meta';
 import { paginate, readPage } from '~/lib/pagination';
+import { redirectWithFlash } from '~/lib/flash.server';
 import { formatDateTime } from '~/lib/format';
+import { can } from '~/lib/permissions';
 import { projectSchema, requireProject } from '~/models/projects.server';
-import { listPendingReviews, pendingByAnnotator, reserveNextReview } from '~/models/reviews.server';
+import {
+  listPendingReviews,
+  pendingByAnnotator,
+  releaseReviewHold,
+  reserveNextReview,
+} from '~/models/reviews.server';
 
 import type { Route } from './+types/project-review';
 
@@ -37,6 +44,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   });
   const schema = projectSchema(project);
   return {
+    // managers can free a reservation a reviewer walked away from
+    canRelease: can(current.membership.role, 'manageProjects'),
     done: url.searchParams.has('done'),
     page,
     annotator,
@@ -46,6 +55,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       return {
         id: a.id,
         heldBy: hold ? (hold.mine ? 'You' : hold.reviewer) : null,
+        // whose live hold a manager would release; the write checks it is still theirs
+        holderId: hold && !hold.mine ? a.reviewHeldById : null,
         annotator: a.user.name,
         submittedAt: a.submittedAt,
         activeSeconds: a.activeSeconds,
@@ -63,13 +74,30 @@ export async function loader({ request, params }: Route.LoaderArgs) {
  */
 export async function action({ request, params }: Route.ActionArgs) {
   const current = await requireUser(request);
+  const form = await request.formData();
+  if (form.get('intent') === 'release-hold') {
+    const project = await requireProject(current, params.projectId, 'manageProjects');
+    const released = await releaseReviewHold(
+      project,
+      String(form.get('assignmentId') ?? ''),
+      String(form.get('holderId') ?? ''),
+      current.user.id,
+    );
+    return redirectWithFlash(
+      request,
+      `/projects/${project.id}/review`,
+      released
+        ? 'Released. Any reviewer can take that submission now.'
+        : 'Nothing to release: that reviewer no longer holds the submission.',
+    );
+  }
   const project = await requireProject(current, params.projectId, 'review');
   const next = await reserveNextReview(project.id, current.user.id);
   return redirect(next ? `/review/${next.id}` : `/projects/${project.id}/review?done=1`);
 }
 
 export default function ProjectReview({ loaderData }: Route.ComponentProps) {
-  const { pending, done, annotator, annotators, page } = loaderData;
+  const { pending, done, annotator, annotators, page, canRelease } = loaderData;
   return (
     <div className="space-y-4">
       {done && (
@@ -153,7 +181,23 @@ export default function ProjectReview({ loaderData }: Route.ComponentProps) {
                     <td className="px-4 py-2 text-slate-500">
                       {item.submittedAt ? formatDateTime(item.submittedAt) : ''}
                     </td>
-                    <td className="px-4 py-2 text-slate-500">{item.heldBy ?? ''}</td>
+                    <td className="px-4 py-2 text-slate-500">
+                      {item.heldBy ?? ''}
+                      {canRelease && item.holderId && (
+                        <Form method="post" className="ml-2 inline">
+                          <input type="hidden" name="assignmentId" value={item.id} />
+                          <input type="hidden" name="holderId" value={item.holderId} />
+                          <Button
+                            name="intent"
+                            value="release-hold"
+                            variant="secondary"
+                            aria-label={`Release the reservation ${item.heldBy} has`}
+                          >
+                            Release
+                          </Button>
+                        </Form>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

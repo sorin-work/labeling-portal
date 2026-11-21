@@ -9,6 +9,7 @@ import {
 
 import { payableSince } from '~/domain/payouts';
 import { holdCutoff } from '~/domain/review-hold';
+import { spotCheckRefusal, type SpotCheckForm, type SpotCheckRefusal } from '~/domain/spot-check';
 import { lockTaskOfAssignment, prisma, retryOnLockConflict, utc } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
@@ -298,5 +299,142 @@ export async function recordReview(
     await refreshTaskStatus(assignment.taskId, tx, now);
     await logDecision(tx, assignment, reviewerId, input, now);
     return { ok: true, review, assignment };
+  });
+}
+
+export type SpotCheckResult =
+  { ok: true; review: Review } | { ok: false; error: SpotCheckRefusal | 'not_found' };
+
+/**
+ * Records a spot check on accepted work that no reviewer has seen. Nothing
+ * about the submission changes: not its status, its payable date, its task
+ * or the consensus. The decision is a review row with `spotCheck` set, and
+ * an audit entry.
+ *
+ * It changes no assignment's state and locks no task or clock, so it takes
+ * only the submission's row (docs/architecture.md, "Lock order"), and checks
+ * under that lock that no review exists yet: of two reviewers spot checking
+ * at once, the second is refused.
+ */
+export async function recordSpotCheck(
+  assignmentId: string,
+  reviewerId: string,
+  input: SpotCheckForm,
+  now = new Date(),
+): Promise<SpotCheckResult> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Assignment" WHERE id = ${assignmentId} FOR UPDATE`;
+    const assignment = await tx.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        task: { select: { isGold: true, isQualification: true } },
+        _count: { select: { reviews: true } },
+      },
+    });
+    if (!assignment) return { ok: false, error: 'not_found' };
+    const refused = spotCheckRefusal({
+      status: assignment.status,
+      reviewStatus: assignment.reviewStatus,
+      isGold: assignment.task.isGold,
+      isQualification: assignment.task.isQualification,
+      reviews: assignment._count.reviews,
+      ownWork: assignment.userId === reviewerId,
+    });
+    if (refused) return { ok: false, error: refused };
+    const review = await tx.review.create({
+      data: {
+        assignmentId,
+        reviewerId,
+        decision: input.verdict,
+        qaScore: input.qaScore,
+        feedback: input.feedback,
+        spotCheck: true,
+        createdAt: now,
+      },
+    });
+    const [task, annotator] = await Promise.all([
+      tx.task.findUniqueOrThrow({ where: { id: assignment.taskId }, select: { position: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: assignment.userId }, select: { name: true } }),
+    ]);
+    await logActivity(tx, {
+      projectId: assignment.projectId,
+      actorId: reviewerId,
+      action: 'review.spot_checked',
+      detail: {
+        assignmentId,
+        taskId: assignment.taskId,
+        position: task.position,
+        userId: assignment.userId,
+        userName: annotator.name,
+        decision: input.verdict,
+        qaScore: input.qaScore,
+      },
+      createdAt: now,
+    });
+    return { ok: true, review };
+  });
+}
+
+/**
+ * The reviewer who holds a submission lets go of it before the hold runs
+ * out, so another reviewer can take it at once. One conditional write on the
+ * hold being theirs, so it cannot free a submission someone else took over.
+ */
+export async function letGoOfReviewHold(assignmentId: string, reviewerId: string): Promise<boolean> {
+  const freed = await prisma.assignment.updateMany({
+    where: { id: assignmentId, status: 'SUBMITTED', reviewStatus: 'PENDING', reviewHeldById: reviewerId },
+    data: { reviewHeldById: null, reviewHeldAt: null },
+  });
+  return freed.count > 0;
+}
+
+/**
+ * A manager frees a live hold from the review queue, with an audit entry.
+ * `holderId` is the reviewer the queue showed: the write only goes through
+ * while that reviewer still holds it, so a hold that changed hands since the
+ * page loaded is left alone. Only the submission's row is written.
+ */
+export async function releaseReviewHold(
+  project: { id: string; orgId: string },
+  assignmentId: string,
+  holderId: string,
+  actorId: string,
+  now = new Date(),
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const [freed] = await tx.assignment.updateManyAndReturn({
+      where: {
+        id: assignmentId,
+        projectId: project.id,
+        status: 'SUBMITTED',
+        reviewStatus: 'PENDING',
+        reviewHeldById: holderId,
+        reviewHeldAt: { gt: holdCutoff(now) },
+      },
+      data: { reviewHeldById: null, reviewHeldAt: null },
+      select: { taskId: true, userId: true },
+    });
+    if (!freed) return false;
+    const [task, holder, annotator] = await Promise.all([
+      tx.task.findUniqueOrThrow({ where: { id: freed.taskId }, select: { position: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: holderId }, select: { name: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: freed.userId }, select: { name: true } }),
+    ]);
+    await logActivity(tx, {
+      orgId: project.orgId,
+      projectId: project.id,
+      actorId,
+      action: 'review.hold_released',
+      detail: {
+        assignmentId,
+        taskId: freed.taskId,
+        position: task.position,
+        holderId,
+        holderName: holder.name,
+        userName: annotator.name,
+      },
+      createdAt: now,
+    });
+    return true;
   });
 }

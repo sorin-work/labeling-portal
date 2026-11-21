@@ -70,6 +70,8 @@ export function countResolvers(
 
 /** The latest decision on a submission, with what a dispute needs to know about it. */
 const latestReview = {
+  // a spot check moves no money and decides nothing, so it cannot be disputed
+  where: { spotCheck: false },
   orderBy: { createdAt: 'desc' },
   take: 1,
   include: { dispute: { select: { id: true } } },

@@ -105,6 +105,9 @@ function exportPage(
           suggestionUnchanged: detailed,
           user: withEmail ? { select: { email: true } } : false,
           reviews: {
+            // a spot check is picked, not drawn, and never corrects: its
+            // score is not the work's review score
+            where: { spotCheck: false },
             orderBy: { createdAt: 'asc' },
             select: {
               decision: true,

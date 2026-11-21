@@ -34,6 +34,8 @@ export const ACTIVITY_ACTIONS = {
   'gold.restored': 'Gold task brought back',
   'gold.rescored': 'Gold task rescored',
   'review.decided': 'Review decision',
+  'review.spot_checked': 'Spot check',
+  'review.hold_released': 'Review reservation released',
   'dispute.resolved': 'Dispute settled',
   'person.added': 'Person added',
   'person.role': 'Role changed',
@@ -275,6 +277,12 @@ export function describeActivity(action: string, detail: unknown): string {
     }
     case 'review.decided':
       return `${DECISIONS[String(d.decision)] ?? 'reviewed'} the work of ${who} on task #${String(d.position)} (QA ${String(d.qaScore)})`;
+    case 'review.spot_checked':
+      return `spot checked the work of ${who} on task #${String(d.position)}: ${
+        d.decision === 'SEND_BACK' ? 'would have sent it back' : 'fine'
+      } (QA ${String(d.qaScore)})`;
+    case 'review.hold_released':
+      return `released the reservation ${typeof d.holderName === 'string' ? d.holderName : 'a reviewer'} had on the work of ${who} on task #${String(d.position)}`;
     case 'dispute.resolved':
       return `${d.outcome === 'OVERTURNED' ? 'overturned' : 'upheld'} a review of the work of ${who} on task #${String(d.position)} after a dispute`;
     case 'person.added':
