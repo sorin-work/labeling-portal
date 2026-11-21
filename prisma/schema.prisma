@@ -601,11 +601,18 @@ model RecoveryCode {
 /// may lose the counts, which only ends a lockout early, and the writes on
 /// every API request stay out of the write-ahead log.
 model RateLimitHit {
-  /// the limiter's name and the key it counts, e.g. `login:ann@example.com`
+  /// SHA-256 of the limiter's name and the full key (`login`, `ann@example.com|203.0.113.9`),
+  /// so a long or odd key never becomes a long primary key
   key         String   @id
+  /// the limiter's name
+  name        String
+  /// SHA-256 of what is counted, without the address part: lets an operator
+  /// clear every row of one email (see the README)
+  subject     String
   count       Int
   windowStart DateTime
   expiresAt   DateTime
 
   @@index([expiresAt])
+  @@index([name, subject])
 }

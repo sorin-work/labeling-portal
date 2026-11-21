@@ -4,6 +4,8 @@
 -- the schema; it does not compare it either.
 CREATE UNLOGGED TABLE "RateLimitHit" (
     "key" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "subject" TEXT NOT NULL,
     "count" INTEGER NOT NULL,
     "windowStart" TIMESTAMP(3) NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -14,3 +16,6 @@ CREATE UNLOGGED TABLE "RateLimitHit" (
 -- CreateIndex
 CREATE INDEX "RateLimitHit_expiresAt_idx" ON "RateLimitHit"("expiresAt");
 
+
+-- CreateIndex
+CREATE INDEX "RateLimitHit_name_subject_idx" ON "RateLimitHit"("name", "subject");
