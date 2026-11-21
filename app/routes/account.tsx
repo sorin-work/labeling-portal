@@ -1,19 +1,23 @@
 import { data, Form } from 'react-router';
 
 import { Alert, Button, Card, Field, Input, PageHeader } from '~/components/ui';
+import { beforeSignOut } from '~/components/use-draft-save';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from '~/lib/password.server';
 import { ROLE_LABELS } from '~/lib/permissions';
 import { formatDateTime } from '~/lib/format';
+import { destroyUserSession, renewSessionCookie } from '~/lib/session.server';
 import { logActivity } from '~/models/activity.server';
 import {
   createApiToken,
+  listActiveApiTokens,
   listApiTokens,
   MAX_TOKEN_NAME,
   revokeApiToken,
   TOKEN_LIFETIMES,
 } from '~/models/api-tokens.server';
+import { endSessions } from '~/models/people.server';
 
 import type { Route } from './+types/account';
 
@@ -24,8 +28,17 @@ export function meta() {
 export async function loader({ request }: Route.LoaderArgs) {
   const { user, membership } = await requireUser(request);
   // only the person's own tokens, and nothing in them that could be used
-  const tokens = await listApiTokens(membership.orgId, user.id);
-  return { user, role: membership.role, tokens, lifetimes: TOKEN_LIFETIMES };
+  const [tokens, active] = await Promise.all([
+    listApiTokens(membership.orgId, user.id),
+    listActiveApiTokens(membership.orgId, user.id),
+  ]);
+  return {
+    user,
+    role: membership.role,
+    tokens,
+    activeTokens: active.map((t) => t.name),
+    lifetimes: TOKEN_LIFETIMES,
+  };
 }
 
 type ActionData = {
@@ -75,6 +88,11 @@ export async function action({ request }: Route.ActionArgs) {
       );
     return data<ActionData>({ message: 'Token revoked.' });
   }
+  if (intent === 'sessions') {
+    // every browser, this one included; tokens keep working
+    await endSessions(membership.orgId, user.id, user.id);
+    return destroyUserSession(request);
+  }
   if (intent !== 'password') return data<ActionData>({ error: 'Unknown action.' }, { status: 400 });
   const current = String(form.get('current') ?? '');
   const next = String(form.get('next') ?? '');
@@ -100,20 +118,38 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
   const passwordHash = await hashPassword(next);
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+  const updated = await prisma.$transaction(async (tx) => {
+    // ends every other session; this tab gets a cookie with the new version below
+    const row = await tx.user.update({
+      where: { id: user.id },
+      data: { passwordHash, sessionVersion: { increment: 1 } },
+      select: { sessionVersion: true },
+    });
     // who, and nothing about the password
     await logActivity(tx, {
       orgId: membership.orgId,
       actorId: user.id,
       action: 'account.password',
     });
+    return row;
   });
-  return data<ActionData>({ message: 'Password changed.' });
+  const active = await listActiveApiTokens(membership.orgId, user.id);
+  return data<ActionData>(
+    {
+      message:
+        'Password changed. You are signed out in every other browser.' +
+        (active.length > 0 ? ` ${tokensStillWork(active.length)}` : ''),
+    },
+    { headers: { 'Set-Cookie': await renewSessionCookie(request, updated.sessionVersion) } },
+  );
+}
+
+function tokensStillWork(count: number) {
+  return `Your ${count === 1 ? 'API token still works' : `${count} API tokens still work`}: revoke ${count === 1 ? 'it' : 'them'} below if someone else may have ${count === 1 ? 'it' : 'them'}.`;
 }
 
 export default function Account({ loaderData, actionData }: Route.ComponentProps) {
-  const { user, role, tokens, lifetimes } = loaderData;
+  const { user, role, tokens, activeTokens, lifetimes } = loaderData;
   const result = actionData as ActionData | undefined;
   return (
     <div className="max-w-xl space-y-6">
@@ -159,6 +195,29 @@ export default function Account({ loaderData, actionData }: Route.ComponentProps
           </Field>
           <input type="hidden" name="intent" value="password" />
           <Button type="submit">Change password</Button>
+        </Form>
+      </Card>
+      <Card>
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Sessions
+        </h2>
+        <p className="mb-3 text-sm text-slate-600">
+          Signs you out in every browser where you are signed in, this one too. Changing your
+          password does the same for every browser but this one.
+          {activeTokens.length > 0 &&
+            ` API tokens are not sessions and keep working: ${activeTokens.map((n) => `“${n}”`).join(', ')}. Revoke them below if they may be in the wrong hands.`}
+        </p>
+        <Form
+          method="post"
+          onSubmit={(event) => {
+            if (!confirm('Sign out in every browser, this one too?')) event.preventDefault();
+            else beforeSignOut();
+          }}
+        >
+          <input type="hidden" name="intent" value="sessions" />
+          <Button type="submit" variant="secondary">
+            Sign out everywhere
+          </Button>
         </Form>
       </Card>
       <Card>

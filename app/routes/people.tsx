@@ -3,12 +3,15 @@ import { data, Form, useNavigation } from 'react-router';
 
 import { Alert, Badge, Button, Card, Field, Input, PageHeader } from '~/components/ui';
 import { requireRole } from '~/lib/auth.server';
+import { prisma } from '~/lib/db.server';
 import { formatDate } from '~/lib/format';
 import { fieldErrors } from '~/lib/http';
 import { ROLE_LABELS, ROLES } from '~/lib/permissions';
+import { listActiveApiTokens, revokeApiTokenOf } from '~/models/api-tokens.server';
 import {
   addPerson,
   changeRole,
+  endSessions,
   listPeople,
   newPersonSchema,
   removePerson,
@@ -30,7 +33,32 @@ export async function loader({ request }: Route.LoaderArgs) {
   };
 }
 
-type ActionData = { errors?: Record<string, string>; error?: string; message?: string };
+type ActionData = {
+  errors?: Record<string, string>;
+  error?: string;
+  message?: string;
+  /** after their sessions ended: the person's API tokens that still work */
+  tokens?: {
+    userId: string;
+    name: string;
+    list: Array<{ id: string; name: string; prefix: string }>;
+  };
+};
+
+/** The tokens a password change or "End sessions" left working, to show with a way to revoke them. */
+async function stillWorking(orgId: string, userId: string): Promise<ActionData['tokens']> {
+  const list = await listActiveApiTokens(orgId, userId);
+  if (list.length === 0) return undefined;
+  const person = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { name: true },
+  });
+  return {
+    userId,
+    name: person.name,
+    list: list.map((t) => ({ id: t.id, name: t.name, prefix: t.prefix })),
+  };
+}
 
 export async function action({ request }: Route.ActionArgs) {
   const { user, membership } = await requireRole(request, ['ADMIN']);
@@ -63,7 +91,37 @@ export async function action({ request }: Route.ActionArgs) {
       String(form.get('password') ?? ''),
     );
     if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
-    return data<ActionData>({ message: 'Password updated. Share it with them privately.' });
+    return data<ActionData>({
+      message: 'Password updated and every session they had ended. Share it with them privately.',
+      tokens: await stillWorking(membership.orgId, userId),
+    });
+  }
+  if (intent === 'sessions') {
+    if (userId === user.id)
+      return data<ActionData>(
+        { error: 'Sign yourself out everywhere from your account page.' },
+        { status: 400 },
+      );
+    const result = await endSessions(membership.orgId, user.id, userId);
+    if (!result.ok) return data<ActionData>({ error: result.error }, { status: 400 });
+    return data<ActionData>({
+      message: 'Their sessions ended. Every browser they were signed in on asks them to sign in.',
+      tokens: await stillWorking(membership.orgId, userId),
+    });
+  }
+  if (intent === 'token-revoke') {
+    const revoked = await revokeApiTokenOf(
+      membership.orgId,
+      user.id,
+      userId,
+      String(form.get('tokenId') ?? ''),
+    );
+    if (!revoked.ok)
+      return data<ActionData>({ error: 'That token is already revoked.' }, { status: 404 });
+    return data<ActionData>({
+      message: 'Token revoked.',
+      tokens: await stillWorking(membership.orgId, userId),
+    });
   }
   if (intent === 'remove') {
     const result = await removePerson(membership.orgId, user.id, userId);
@@ -85,6 +143,30 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
         <div className="space-y-3 lg:col-span-2">
           {result?.message && <Alert tone="success">{result.message}</Alert>}
           {result?.error && <Alert>{result.error}</Alert>}
+          {result?.tokens && (
+            <Alert tone="info">
+              <div>
+                API tokens are not sessions. These of {result.tokens.name} still work. Revoke the
+                ones that may be in the wrong hands; a script that uses one stops working.
+              </div>
+              <ul className="mt-2 space-y-1">
+                {result.tokens.list.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center gap-2">
+                    <span>
+                      {t.name} <code>{t.prefix}…</code>
+                    </span>
+                    <Form method="post">
+                      <input type="hidden" name="userId" value={result.tokens!.userId} />
+                      <input type="hidden" name="tokenId" value={t.id} />
+                      <Button name="intent" value="token-revoke" variant="secondary">
+                        Revoke
+                      </Button>
+                    </Form>
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          )}
           <ul className="divide-y divide-slate-200 rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
             {people.map((person) => (
               <li key={person.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -133,6 +215,18 @@ export default function People({ loaderData, actionData }: Route.ComponentProps)
                         className="text-rose-700"
                       >
                         Remove
+                      </Button>
+                    </Form>
+                    <Form
+                      method="post"
+                      onSubmit={(event) => {
+                        if (!confirm(`Sign ${person.name} out in every browser?`))
+                          event.preventDefault();
+                      }}
+                    >
+                      <input type="hidden" name="userId" value={person.id} />
+                      <Button name="intent" value="sessions" variant="ghost">
+                        End sessions
                       </Button>
                     </Form>
                     <details className="w-full text-sm">
