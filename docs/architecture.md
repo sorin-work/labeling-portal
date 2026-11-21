@@ -88,15 +88,19 @@ tests/integration/  loaders and actions against a real PostgreSQL
    `takeBackRefusal` is the rule: the annotator's last submission in the
    project, taken back once, never reviewed or spot checked, and either
    waiting for review with no live hold or accepted without review on a task
-   that is still open. A gold task is refused when the project shows gold
+   that is still open and was not measured for agreement yet (no extra
+   slots, no stored agreement). A gold task is refused when the project shows gold
    feedback, since the annotator has seen the expected answer; with feedback
    off it is offered like any other task, or the missing offer would tell
    gold apart, and scored again when handed in. The take-back locks the task
-   row, then writes the submission with every changeable part of the rule in
-   its `where`. The resubmission returns to the review status kept in
-   `takenBackFrom`: work that was waiting for review waits again with the
-   same sample draw, work that needed no review is accepted and payable
-   again at once (and can complete its task). The credited time and the rate
+   row and then the submission's row, which a spot check takes too, so a
+   spot check at the same moment either waits or is seen; then it writes
+   the submission with every changeable part of the rule in its `where`.
+   The resubmission returns to the review status kept in `takenBackFrom`:
+   work that was waiting for review waits again with the same sample draw,
+   work that needed no review is accepted again at once (and can complete
+   its task) and keeps the payable date of its first submission, so no pay
+   period that included it changes. The credited time and the rate
    stay; revising adds time within the revision cap.
 5. When `overlap` submissions (plus any extra slots) are accepted the task is
    complete and the accepted answers are merged into a consensus with an
