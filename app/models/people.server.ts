@@ -83,7 +83,9 @@ export async function changeRole(orgId: string, actorId: string, userId: string,
 
 /**
  * Sets a new password for a member of the organisation (e.g. after they
- * forgot it). The audit trail says who set whose password, and nothing else.
+ * forgot it, or after their account was taken over). It ends every session
+ * they have, in every browser. The audit trail says who set whose password,
+ * and nothing else.
  */
 export async function setPassword(
   orgId: string,
@@ -104,7 +106,10 @@ export async function setPassword(
   if (!member) return { ok: false as const, error: 'Person not found.' };
   const passwordHash = await hashPassword(password);
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+    await tx.user.update({
+      where: { id: userId },
+      data: { passwordHash, sessionVersion: { increment: 1 } },
+    });
     await logActivity(tx, {
       orgId,
       actorId,
@@ -113,6 +118,31 @@ export async function setPassword(
     });
   });
   return { ok: true as const };
+}
+
+/**
+ * Ends every session of a member: each browser they are signed in on goes to
+ * the sign-in page on its next request. When the actor is the member, this is
+ * "Sign out everywhere" on the account page and the caller drops the cookie
+ * of the browser that asked too. API tokens are not sessions and are left
+ * alone.
+ */
+export async function endSessions(orgId: string, actorId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const member = await tx.membership.findUnique({
+      where: { orgId_userId: { orgId, userId } },
+      include: { user: { select: { name: true } } },
+    });
+    if (!member) return { ok: false as const, error: 'Person not found.' };
+    await tx.user.update({ where: { id: userId }, data: { sessionVersion: { increment: 1 } } });
+    await logActivity(tx, {
+      orgId,
+      actorId,
+      action: 'person.sessions_ended',
+      detail: { userId, userName: member.user.name, own: actorId === userId },
+    });
+    return { ok: true as const };
+  });
 }
 
 export async function removePerson(orgId: string, actorId: string, userId: string) {
