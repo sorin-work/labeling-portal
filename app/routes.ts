@@ -5,6 +5,7 @@ export default [
   route('logout', 'routes/logout.tsx'),
   route('healthz', 'routes/healthz.ts'),
   route('payouts/export', 'routes/payouts-export.ts'),
+  route('payouts/runs/:runId/export', 'routes/payouts-run-export.ts'),
   route('audit/export', 'routes/audit-export.ts'),
   route('api/v1/projects', 'routes/api-v1-projects.ts'),
   route('api/v1/projects/:projectId', 'routes/api-v1-project.ts'),
