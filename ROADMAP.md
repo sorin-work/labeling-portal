@@ -65,7 +65,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Shipped | ops           | M    | -          |
 | 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
-| 28  | Two-step sign-in                             | Later   | security      | M    | 20         |
+| 28  | Two-step sign-in                             | Shipped | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
 | 30  | Webhooks                                     | Later   | api           | L    | 26         |
 | 31  | Rate limits shared between processes         | Maybe   | security      | S    | -          |
@@ -198,39 +198,6 @@ added by mistake cannot be undone.
   storing history in the draft.
 - Tests: unit tests in `tests/unit/history.test.ts` with span lists; a DOM
   test for the keys and the announcements, with axe.
-
-### 28. Two-step sign-in
-
-A new feature. A password is the only thing between the internet and an
-admin who can read every answer, change pay rates and download every export.
-Other labeling tools offer a second step, and an authenticator app needs no
-service.
-
-- TOTP (RFC 6238, six digits, 30 seconds) in a pure `domain/totp.ts` with
-  `node:crypto`'s HMAC, tested against the RFC's vectors. Enrolment on the
-  account page shows the secret as text and as a QR code, asks for one code
-  before turning it on, and gives ten one-time recovery codes, stored hashed.
-- Sign-in: after the password, a second page. Until the code is right the
-  cookie holds only a pending user, which `getCurrentUser` does not accept.
-  Codes are rate limited per person like passwords.
-- An organisation setting can require it for admins and project managers.
-  An admin can reset someone's second step from People, with an audit entry.
-  Turning it on and resetting it end other sessions, which is why it depends
-  on item 20.
-- Tricky: where the secret is kept. It has to be read back, so it cannot be
-  hashed. Encrypting it with a key derived from `SESSION_SECRET` ties two
-  things together that rotate differently; a separate `TOTP_KEY` is one more
-  variable to lose. Undecided; I lean towards the separate key, required as
-  soon as anyone turns the feature on.
-- Tricky: a code can be used twice within its 30 seconds. Store the last used
-  time step and refuse it again. Allow one step of clock drift either way.
-- Tricky: the QR code. A package such as `qrcode` that renders SVG on the
-  server is simpler than writing an encoder, and sends nothing anywhere.
-- Undecided: passkeys (WebAuthn). Better, but more code and harder to test
-  without a browser; a later item.
-- Tests: unit tests for the codes; integration tests for enrolment, sign-in
-  with and without the second step, a replayed code, a recovery code used
-  once, the organisation rule and an admin's reset.
 
 ### 29. Ranking several responses
 
@@ -862,3 +829,23 @@ attempt, so a run whose lease ran out cannot undo a newer one; the migration
 turns batches left `PENDING` into jobs; the batch page no longer starts a run
 when it is opened. Still open: finished jobs are never removed and nothing
 lists them.
+
+### 28. Two-step sign-in
+
+TOTP in `domain/totp.ts` (tested against the RFC 4226 and 6238 vectors),
+set up on the account page with the secret as text and as a QR code drawn
+on the server by `qrcode`, turned on by one right code, with ten recovery
+codes kept as SHA-256. After the password the cookie holds only a pending
+sign-in until `/login/two-step` gets a right code. Decided: the secret is
+encrypted with AES-256-GCM under a separate `TOTP_KEY`, asked for in
+production only once someone uses the feature; a code works once through
+the stored time step, moved forward in one conditional update, with one
+step of drift either way. Wrong codes are limited per account and client
+address so a guesser elsewhere does not lock the owner out; the address
+comes from `X-Forwarded-For` only with `TRUST_PROXY=true`, since the app
+never sees the socket, and without it the limit is per account. The
+organisation rule on People asks it of admins and project managers, who are
+kept on their account page until they set it up; an admin can only turn the
+rule on with their own on. Turning it on and an admin's reset end the
+person's sessions. Still open: passkeys, and new recovery codes without a
+reset.
