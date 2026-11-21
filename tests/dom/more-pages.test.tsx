@@ -98,6 +98,7 @@ function revise(kind: Kind, mode: 'revise' | 'compare'): Data<typeof reviseLoade
     draft: null,
     draftNote: null,
     draftSeconds: 0,
+    takenBack: false,
     feedback: 'Please look again at the second half.',
     editable: mode === 'revise',
     dispute: null,

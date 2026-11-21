@@ -14,6 +14,7 @@ function workData(kind: Kind, id = 'a1'): Awaited<ReturnType<typeof workLoader>>
   return {
     userTag: 'tag-u1',
     instructionsChanged: false,
+    takeBack: null,
     assignment: {
       id,
       claimedAt: new Date().toISOString(),

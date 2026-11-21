@@ -10,6 +10,7 @@ import {
   resubmitAssignment,
   skipAssignment,
   submitAssignment,
+  takeBackSubmission,
 } from '~/models/queue.server';
 import { holdReview, recordReview, recordSpotCheck } from '~/models/reviews.server';
 
@@ -287,6 +288,32 @@ describe('the task row before the assignment row', () => {
     holder.release();
     await holder.done;
     expect((await pending).ok).toBe(true);
+  });
+
+  it('a take-back waits for the task row before it touches the submission', async () => {
+    const { project, ann } = await setup();
+    await prisma.project.update({ where: { id: project.id }, data: { reviewRequired: true } });
+    const reviewing = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const claim = await claimNextTask(reviewing, ann.id, new Date(Date.now() - 60_000));
+    if (!claim.ok) throw new Error('no claim');
+    await submitAssignment(claim.assignment.id, ann.id, {
+      answer: { labels: ['positive'] },
+      activeSeconds: 1,
+      reviewRequired: true,
+    });
+    const holder = hold(taskLock(claim.assignment.taskId));
+    await holder.ready;
+    const pending = takeBackSubmission(claim.assignment.id, ann.id);
+    await settle();
+    // waiting on the task row, with the submission neither locked nor written
+    expect(await lockable(assignmentProbe(claim.assignment.id))).toBe(true);
+    const meanwhile = await prisma.assignment.findUniqueOrThrow({
+      where: { id: claim.assignment.id },
+    });
+    expect(meanwhile.reviewStatus).toBe('PENDING');
+    holder.release();
+    await holder.done;
+    expect(await pending).toEqual({ ok: true });
   });
 
   it('two reviewers taking over each other’s lapsed reservations queue instead of deadlocking', async () => {
