@@ -370,8 +370,17 @@ More detail: [architecture](docs/architecture.md),
 - **Integration tests fail with "database does not exist"**: create the test
   database (`createdb labeling_test`) or use `docker-compose.dev.yml`, which
   creates it on first start, and point `TEST_DATABASE_URL` at it.
-- **"Too many attempts" on sign-in**: ten failed attempts lock an email for
-  fifteen minutes. Restarting the app clears the counter.
+- **"Too many attempts" on sign-in**: ten wrong passwords lock that email
+  from that address for fifteen minutes (three while the email is being
+  guessed at from many places). The right password from another address
+  still works. To clear an email's count before the window ends (the counts
+  are kept as hashes, so this hashes the email the same way):
+
+  ```bash
+  docker compose exec db psql -U labeling labeling -c \
+    "DELETE FROM \"RateLimitHit\" WHERE name IN ('login', 'login-email') AND subject = encode(sha256(convert_to(lower('ann@example.com'), 'UTF8')), 'hex')"
+  ```
+
 - **A task is stuck as claimed**: claims expire after the project's time limit
   and are released the next time anyone asks for work in that project. An
   admin or project manager can release a claim at once from "Claims" on the

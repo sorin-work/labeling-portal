@@ -812,13 +812,27 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 
 `RateLimiter` in `app/lib/rate-limit.server.ts` counts in PostgreSQL, so
 every app process shares one count and a restart does not clear a lockout.
-There are four: `login` (ten failed sign-ins per email per fifteen
-minutes), `two-step` (five wrong codes per account and client address per
+There are five: `login` (ten wrong passwords per email and client address
+per fifteen minutes), `login-email` (wrong passwords per email from
+anywhere), `two-step` (five wrong codes per account and client address per
 fifteen minutes), `two-step-account` (twenty wrong codes per account per
 hour) and `api` (120 requests a minute per token).
 
-- **One row per key** in `RateLimitHit`, named after the limiter
-  (`login:ann@example.com`). An attempt is one statement, `INSERT ... ON
+- **Sign-in** counts wrong passwords only, per email and address
+  (`clientAddress`, so per email alone without `TRUST_PROXY`). A right
+  password from an address that is not locked always signs in, so someone
+  hammering an email from one place does not lock its owner out from
+  another. Past thirty wrong passwords for an email in fifteen minutes from
+  anywhere, every address gets three of its own instead of ten. The check
+  reads the counts first (`peek`) and adds to them only after a wrong
+  password, so two wrong passwords at the same moment can go one over. The
+  lockout is recorded once, by the wrong password that reaches the limit.
+  An email longer than 254 characters is refused before any lookup.
+
+- **One row per key** in `RateLimitHit`. The key is the SHA-256 of the
+  limiter's name and the full key, so a long or odd key cannot make the
+  statement fail; `name` and `subject` (the SHA-256 of the key without its
+  address) let an operator clear one email's rows (README, Troubleshooting). An attempt is one statement, `INSERT ... ON
 CONFLICT (key) DO UPDATE`, that adds one to the count, or starts the row
   over when its window is past, and returns the count. A window starts with
   the first attempt of a key, as the memory limiter did, so a burst is not
@@ -830,7 +844,8 @@ CONFLICT (key) DO UPDATE`, that adds one to the count, or starts the row
   keeps those writes out of the write-ahead log. A crash empties the table,
   which only ends lockouts early. A dump still holds its rows.
 - **Pruning.** Every thousandth attempt in a process removes the rows whose
-  window is past. A key that comes back starts a new row.
+  window is past, without waiting for it: a failed clean-up is logged and
+  never fails the attempt. A key that comes back starts a new row.
 - Dates go through `utc()`, as in every raw query.
 
 ## Two-step sign-in

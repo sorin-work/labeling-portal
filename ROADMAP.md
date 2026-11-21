@@ -812,5 +812,9 @@ window is past, so a window still starts with the first attempt as before
 and a burst is never split by a clock boundary. `justLocked` is true for
 exactly one attempt, since the row puts concurrent ones in line. Decided:
 always the table, no memory limiter left, so there is one code path. Old
-rows go every thousandth attempt in a process, not on a row count. Still
-open: nothing.
+rows go every thousandth attempt in a process, not on a row count. After
+review: keys are stored as SHA-256 with the limiter's name and a hashed
+subject, an email over 254 characters is refused before any lookup, pruning
+is not awaited, and the sign-in counts only wrong passwords per email and
+address, so nobody can lock an owner out from elsewhere; an email guessed
+at from many places gives every address three tries. Still open: nothing.
