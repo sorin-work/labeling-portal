@@ -24,6 +24,7 @@ const settings: ProjectSettings = {
   goldEvery: null,
   agreementThreshold: null,
   maxExtraAnnotators: 1,
+  dailyTaskLimit: null,
   qualificationRequired: false,
   qualificationPassPercent: 80,
   payMode: 'PER_TASK',
@@ -137,5 +138,22 @@ describe('describeActivity', () => {
     expect(isActivityAction('something.new')).toBe(false);
     expect(isActivityAction('toString')).toBe(false);
     expect(isActivityAction('auth.locked')).toBe(true);
+  });
+});
+
+describe('the daily limit and released claims in the trail', () => {
+  it('reads as sentences', () => {
+    expect(settingsChanges(settings, { ...settings, dailyTaskLimit: 40 })).toEqual({
+      dailyTaskLimit: [null, 40],
+    });
+    expect(describeSettingsChanges({ dailyTaskLimit: [null, 40] })).toEqual([
+      'the daily limit from none to 40 tasks a day',
+    ]);
+    expect(
+      describeActivity('assignment.released', { userName: 'Ann', position: 7, seconds: 720 }),
+    ).toBe('released the claim of Ann on task #7, crediting 12 minutes of their time');
+    expect(
+      describeActivity('assignment.released', { userName: 'Ann', position: 7, seconds: 0 }),
+    ).toBe('released the claim of Ann on task #7');
   });
 });

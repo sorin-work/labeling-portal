@@ -1,6 +1,7 @@
 import { Form, Link } from 'react-router';
 
 import { Badge, Button, Card, EmptyState, StatCard } from '~/components/ui';
+import { startOfUtcDay } from '~/domain/daily-limit';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { formatDateTime, KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
@@ -14,10 +15,6 @@ import type { Route } from './+types/dashboard';
 
 export function meta() {
   return [{ title: 'Dashboard · Labeling Portal' }];
-}
-
-function startOfUtcDay(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

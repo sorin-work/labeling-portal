@@ -5,6 +5,7 @@ import { isLockConflict, retryOnLockConflict } from '~/lib/db.server';
 import {
   claimNextTask,
   releaseAssignment,
+  releaseClaim,
   releaseExpiredClaims,
   resubmitAssignment,
   skipAssignment,
@@ -204,6 +205,53 @@ describe('the task row before the assignment row', () => {
       ),
     ).toBe(false);
     expect(await lockable(assignmentProbe(claim.assignment.id))).toBe(true);
+    holder.release();
+    await holder.done;
+    expect((await pending).ok).toBe(true);
+  });
+
+  it('a manager’s release takes the annotator’s clock, then the task row, then the claim', async () => {
+    const { org, project, ann } = await setup();
+    const claim = await claimNextTask(project, ann.id, new Date(Date.now() - 60_000));
+    if (!claim.ok) throw new Error('no claim');
+    const pm = await createMember(org.id, 'PROJECT_MANAGER');
+    const holder = hold(taskLock(claim.assignment.taskId));
+    await holder.ready;
+    const pending = releaseClaim(project, claim.assignment.id, pm.id);
+    await settle();
+    // waiting for the task row: the clock is taken already, the assignment not yet
+    expect(
+      await lockable(
+        Prisma.sql`SELECT id FROM "Membership" WHERE "orgId" = ${org.id} AND "userId" = ${ann.id} FOR NO KEY UPDATE NOWAIT`,
+      ),
+    ).toBe(false);
+    expect(await lockable(assignmentProbe(claim.assignment.id))).toBe(true);
+    holder.release();
+    await holder.done;
+    expect((await pending).ok).toBe(true);
+  });
+
+  it('a claim under a daily limit counts under the clock, before it locks any task', async () => {
+    const { org, project, tasks, ann } = await setup();
+    const limited = await prisma.project.update({
+      where: { id: project.id },
+      data: { dailyTaskLimit: 5 },
+    });
+    const holder = hold(
+      Prisma.sql`SELECT id FROM "Membership" WHERE "orgId" = ${org.id} AND "userId" = ${ann.id} FOR NO KEY UPDATE`,
+    );
+    await holder.ready;
+    const pending = claimNextTask(limited, ann.id, new Date(Date.now() - 60_000));
+    await settle();
+    // blocked on the clock, with no claim made and no task row taken yet
+    expect(await prisma.assignment.count({ where: { userId: ann.id } })).toBe(0);
+    for (const task of tasks) {
+      expect(
+        await lockable(
+          Prisma.sql`SELECT id FROM "Task" WHERE id = ${task.id} FOR NO KEY UPDATE NOWAIT`,
+        ),
+      ).toBe(true);
+    }
     holder.release();
     await holder.done;
     expect((await pending).ok).toBe(true);

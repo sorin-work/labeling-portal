@@ -7,6 +7,7 @@
  * a gold edit names the task, not what was answered.
  */
 import { centsToDecimal } from './payouts';
+import { spokenDuration } from './release-claim';
 import { describeSchemaChange } from './schema-diff';
 
 /** Every action the trail records, with how the filter on `/audit` names it. */
@@ -24,6 +25,7 @@ export const ACTIVITY_ACTIONS = {
   'batch.resumed': 'Batch resumed',
   'task.adjudicated': 'Task settled in adjudication',
   'task.escalated': 'Task sent to adjudication',
+  'assignment.released': 'Claim released by a manager',
   'member.added': 'Added to a project',
   'member.removed': 'Removed from a project',
   'qualification.reset': 'Qualification reset',
@@ -70,6 +72,7 @@ export type ProjectSettings = {
   goldEvery: number | null;
   agreementThreshold: number | null;
   maxExtraAnnotators: number;
+  dailyTaskLimit: number | null;
   qualificationRequired: boolean;
   qualificationPassPercent: number;
   payMode: string;
@@ -89,6 +92,7 @@ const COMPARED = [
   'goldEvery',
   'agreementThreshold',
   'maxExtraAnnotators',
+  'dailyTaskLimit',
   'qualificationRequired',
   'qualificationPassPercent',
   'payMode',
@@ -128,6 +132,7 @@ const FIELD_NAMES: Record<string, string> = {
   goldEvery: 'gold spacing',
   agreementThreshold: 'the agreement threshold',
   maxExtraAnnotators: 'the extra annotators',
+  dailyTaskLimit: 'the daily limit',
   qualificationRequired: 'the qualification test',
   qualificationPassPercent: 'the pass mark',
   payMode: 'the pay mode',
@@ -149,6 +154,8 @@ function formatValue(field: string, value: unknown): string {
       return `${String(value)}%`;
     case 'goldEvery':
       return `one in ${String(value)}`;
+    case 'dailyTaskLimit':
+      return `${String(value)} tasks a day`;
     case 'agreementThreshold':
     case 'maxExtraAnnotators':
       return String(value);
@@ -240,6 +247,12 @@ export function describeActivity(action: string, detail: unknown): string {
       })`;
     case 'task.escalated':
       return `sent task #${String(d.position)} to adjudication without waiting for an extra annotator`;
+    case 'assignment.released':
+      return `released the claim of ${who} on task #${String(d.position)}${
+        typeof d.seconds === 'number' && d.seconds > 0
+          ? `, crediting ${spokenDuration(d.seconds)} of their time`
+          : ''
+      }`;
     case 'member.added':
       return `added ${who} to the project`;
     case 'member.removed':

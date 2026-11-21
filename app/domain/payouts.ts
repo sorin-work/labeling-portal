@@ -18,6 +18,11 @@ export type PaidWork = {
   payMode: PayMode;
   rateCents: number;
   activeSeconds: number;
+  /**
+   * a claim a manager released on an hourly project: its credited time is
+   * paid, but it is not a task
+   */
+  released?: boolean;
 };
 
 /** A block of work that is paid as one: same person, project, pay mode and rate. */
@@ -118,9 +123,10 @@ export function computePayouts(work: PaidWork[]): { lines: PayoutLine[]; totalCe
       };
       line.projects.push(block);
     }
-    block.tasks += 1;
+    const tasks = item.released ? 0 : 1;
+    block.tasks += tasks;
     block.seconds += item.activeSeconds;
-    line.tasks += 1;
+    line.tasks += tasks;
     line.seconds += item.activeSeconds;
   }
   for (const line of lines.values()) {

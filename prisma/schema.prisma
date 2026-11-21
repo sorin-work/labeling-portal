@@ -190,6 +190,8 @@ model Project {
   queueOrder               QueueOrder             @default(IMPORT)
   /// about one gold task in every N; empty leaves gold where its position puts it
   goldEvery                Int?
+  /// tasks one person may submit (or hold) in the project per UTC day; empty is no limit
+  dailyTaskLimit           Int?
   /// a task whose agreement is under this (0 to 1) gets extra annotators, then adjudication; empty is off
   agreementThreshold       Float?
   /// how many extra annotators a task under the threshold gets before adjudication (0 to 3)

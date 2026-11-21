@@ -33,7 +33,9 @@ or fix the work.
   abandoned claims, up to three extensions per claim, skip with a reason,
   release.
   Managers give batches a priority or pause them, can shuffle the order for
-  each annotator and can space gold tasks out ("about one in every N")
+  each annotator, can space gold tasks out ("about one in every N"), can set
+  a daily task limit per person and can release a claim someone walked away
+  from
 - **Suggested answers**: a `_prediction` column in an import, or a project
   rule (keyword or phrase lists) that runs after the import, suggests an
   answer. Annotators see it as a suggestion and take it or not; it never
@@ -333,7 +335,9 @@ More detail: [architecture](docs/architecture.md),
 - **"Too many attempts" on sign-in**: ten failed attempts lock an email for
   fifteen minutes. Restarting the app clears the counter.
 - **A task is stuck as claimed**: claims expire after the project's time limit
-  and are released the next time anyone asks for work in that project.
+  and are released the next time anyone asks for work in that project. An
+  admin or project manager can release a claim at once from "Claims" on the
+  task page.
 - **"Draft not saved" next to the working time**: saving has stopped for this
   task, and what is on the screen can no longer be handed in. Either the claim
   ran out of time (submitting takes you back to the project and the task

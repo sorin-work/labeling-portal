@@ -78,6 +78,8 @@ async function main() {
     rateCents: number;
     /** share of submissions that go to review; everything when left out */
     reviewSamplePercent?: number;
+    /** tasks one person may hand in per UTC day; no limit when left out */
+    dailyTaskLimit?: number;
     rows: Array<Record<string, unknown>>;
     /** a suggestion rule; its suggestions are made here, as an import would */
     prelabel?: object;
@@ -143,6 +145,7 @@ async function main() {
       timeLimitMinutes: 20,
       payMode: 'HOURLY',
       rateCents: 1800,
+      dailyTaskLimit: 40,
       rows: pairwiseRows,
     },
     {
@@ -191,6 +194,7 @@ async function main() {
         payMode: spec.payMode,
         rateCents: spec.rateCents,
         reviewSamplePercent: spec.reviewSamplePercent,
+        dailyTaskLimit: spec.dailyTaskLimit,
         prelabel: spec.prelabel as Prisma.InputJsonValue | undefined,
         members: { create: workers.map((u) => ({ userId: u.id })) },
       },

@@ -71,6 +71,15 @@ describe('parseProjectForm', () => {
     }
   });
 
+  it('reads the daily limit, empty being no limit', () => {
+    const none = parseProjectForm(form(valid));
+    expect(none.ok && none.value.dailyTaskLimit).toBeNull();
+    const forty = parseProjectForm(form({ ...valid, dailyTaskLimit: '40' }));
+    expect(forty.ok && forty.value.dailyTaskLimit).toBe(40);
+    const bad = parseProjectForm(form({ ...valid, dailyTaskLimit: '0' }));
+    expect(!bad.ok && bad.errors.dailyTaskLimit).toMatch(/from 1 to/);
+  });
+
   it('reads the share of submissions to review', () => {
     const sampled = parseProjectForm(form({ ...valid, reviewSamplePercent: '20' }));
     expect(sampled.ok && sampled.value.reviewSamplePercent).toBe(20);

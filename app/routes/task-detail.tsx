@@ -11,6 +11,7 @@ import { parseAnswerJson, type Answer } from '~/domain/answers';
 import { formatGoldScore, parseGoldReason } from '~/domain/gold';
 import { finalAnswer, isAccepted } from '~/domain/outcome';
 import { assignmentRef } from '~/domain/reference';
+import { releaseConfirmation, spokenDuration } from '~/domain/release-claim';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
@@ -36,6 +37,7 @@ import {
   type GoldRefusal,
 } from '~/models/gold.server';
 import { projectSchema, requireProject, requireTaskViewer } from '~/models/projects.server';
+import { releaseClaim } from '~/models/queue.server';
 
 import type { Route } from './+types/task-detail';
 
@@ -147,6 +149,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       activeSeconds: a.activeSeconds,
       goldScore: task.isGold ? a.goldScore : null,
       skipReason: a.skipReason,
+      // a manager can take a claim back; the question says what the annotator loses
+      release:
+        canManage && a.status === 'ACTIVE'
+          ? releaseConfirmation({
+              annotator: a.user.name,
+              claimedAt: a.claimedAt,
+              now,
+              hasDraft: a.draft !== null,
+              draftSeconds: a.draftSeconds,
+              payMode: project.payMode,
+            })
+          : null,
       answer: a.answer ? finalAnswer<Answer>(a.answer, a.reviews) : null,
       corrected: a.reviews.some((r) => r.decision === 'FIX' && !r.overturnedAt),
       reviews: a.reviews.map((r) => ({
@@ -225,6 +239,35 @@ export async function action({ request, params }: Route.ActionArgs) {
       request,
       here,
       'Settled. The chosen answer is the result of this task.',
+    );
+  }
+
+  if (intent === 'release-claim') {
+    const result = await releaseClaim(
+      project,
+      String(form.get('assignmentId') ?? ''),
+      current.user.id,
+    );
+    if (!result.ok && result.error === 'not_found') throw notFound('Claim not found');
+    if (!result.ok && result.error === 'expired') {
+      return redirectWithFlash(
+        request,
+        here,
+        'That claim had already run out of time, so it was marked as expired and nothing was credited. The task is back in the queue.',
+      );
+    }
+    if (!result.ok) {
+      return data(
+        { error: 'That claim is not active any more: it was submitted, skipped or released.' },
+        { status: 409 },
+      );
+    }
+    return redirectWithFlash(
+      request,
+      here,
+      result.creditedSeconds > 0
+        ? `Released. The task is back in the queue, and ${spokenDuration(result.creditedSeconds)} of the annotator's time was credited.`
+        : 'Released. The task is back in the queue.',
     );
   }
 
@@ -549,6 +592,26 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 {a.annotator}: {titleCase(a.status)} · claimed {formatDateTime(a.claimedAt)} · ref{' '}
                 {a.ref}
                 {a.skipReason && <span className="text-slate-500"> · “{a.skipReason}”</span>}
+                {a.release && (
+                  <Form
+                    method="post"
+                    className="ml-2 inline"
+                    onSubmit={(event) => {
+                      if (!confirm(a.release ?? '')) event.preventDefault();
+                    }}
+                  >
+                    <input type="hidden" name="assignmentId" value={a.id} />
+                    <Button
+                      name="intent"
+                      value="release-claim"
+                      variant="secondary"
+                      disabled={busy}
+                      aria-label={`Release the claim of ${a.annotator}`}
+                    >
+                      Release
+                    </Button>
+                  </Form>
+                )}
               </li>
             ))}
           </ul>

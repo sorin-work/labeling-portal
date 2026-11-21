@@ -55,6 +55,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       agreementThreshold:
         project.agreementThreshold === null ? null : Math.round(project.agreementThreshold * 100),
       maxExtraAnnotators: project.maxExtraAnnotators,
+      dailyTaskLimit: project.dailyTaskLimit,
       qualificationRequired: project.qualificationRequired,
       qualificationPassPercent: project.qualificationPassPercent,
       payMode: project.payMode,

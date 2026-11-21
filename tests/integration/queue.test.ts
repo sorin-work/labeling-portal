@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { emptyAnswer } from '~/domain/answers';
 import { DRAFT_MAX_BYTES } from '~/domain/drafts';
 import { SCHEMA_TEMPLATES } from '~/domain/task-schema';
+import { payoutReport } from '~/models/payouts.server';
 import {
   claimNextTask,
   clampActiveSeconds,
+  countAvailable,
   extendAssignment,
   releaseAssignment,
+  releaseClaim,
   releaseExpiredClaims,
   saveDraft,
   skipAssignment,
@@ -16,6 +19,7 @@ import {
 import { action as workAction, loader as workLoader } from '~/routes/work';
 import { action as draftAction } from '~/routes/work-draft';
 import { action as claimAction } from '~/routes/project-work';
+import { action as taskAction } from '~/routes/task-detail';
 
 import {
   addToProject,
@@ -734,5 +738,258 @@ describe('drafts', () => {
     expect(statusOf(expired)).toBe(409);
     const row = await prisma.assignment.findUniqueOrThrow({ where: { id: late.id } });
     expect(row.draft).toBeNull();
+  });
+});
+
+describe('a manager releasing a claim', () => {
+  beforeEach(resetDb);
+
+  async function claimed() {
+    const base = await setup();
+    const claimedAt = new Date(Date.now() - 20 * 60_000);
+    const claim = await claimNextTask(base.project, base.ann.id, claimedAt);
+    if (!claim.ok) throw new Error('no claim');
+    const saved = await saveDraft(
+      claim.assignment.id,
+      base.ann.id,
+      { draft: { labels: ['positive'] }, activeSeconds: 12 * 60 },
+      new Date(claimedAt.getTime() + 15 * 60_000),
+    );
+    expect(saved.ok).toBe(true);
+    const pm = await createMember(base.org.id, 'PROJECT_MANAGER', { name: 'Pat' });
+    const taskId = claim.assignment.taskId;
+    const release = async (cookie: string) =>
+      run(
+        taskAction,
+        makeRequest(`/projects/${base.project.id}/tasks/${taskId}`, {
+          cookie,
+          form: { intent: 'release-claim', assignmentId: claim.assignment.id },
+        }),
+        { projectId: base.project.id, taskId },
+      );
+    return { ...base, claim: claim.assignment, pm, release };
+  }
+
+  it('puts the task back in the queue, drops the draft and records who did it', async () => {
+    const { org, project, ann, claim, pm, release } = await claimed();
+    const result = await release(await cookieFor(pm, org.id));
+    expect(statusOf(result)).toBe(302);
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(row).toMatchObject({ status: 'RELEASED', draft: null, draftSeconds: 0 });
+    // a per-task project pays accepted tasks only, so no time is credited
+    expect(row).toMatchObject({ activeSeconds: 0, payableAt: null });
+    const entry = await prisma.activity.findFirstOrThrow({
+      where: { action: 'assignment.released' },
+    });
+    expect(entry).toMatchObject({ actorId: pm.id, projectId: project.id });
+    expect(entry.detail).toMatchObject({ taskId: claim.taskId, userId: ann.id, seconds: 0 });
+
+    const other = await createMember(org.id, 'ANNOTATOR');
+    const next = await claimNextTask(project, other.id);
+    expect(next.ok && next.assignment.taskId).toBe(claim.taskId);
+  });
+
+  it('is for managers: a reviewer may not release a claim', async () => {
+    const { org, project, claim, release } = await claimed();
+    const reviewer = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, reviewer);
+    expect(statusOf(await release(await cookieFor(reviewer, org.id)))).toBe(403);
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(row.status).toBe('ACTIVE');
+  });
+
+  it('leaves a claim alone that was submitted in the meantime', async () => {
+    const { org, ann, claim, pm, release } = await claimed();
+    const submitted = await submitAssignment(claim.id, ann.id, {
+      answer: { labels: ['negative'] },
+      activeSeconds: 60,
+      reviewRequired: true,
+    });
+    expect(submitted.ok).toBe(true);
+    expect(statusOf(await release(await cookieFor(pm, org.id)))).toBe(409);
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(row).toMatchObject({ status: 'SUBMITTED', answer: { labels: ['negative'] } });
+    expect(await prisma.activity.count({ where: { action: 'assignment.released' } })).toBe(0);
+  });
+
+  it('refuses the annotator’s submission and draft save after the release', async () => {
+    const { org, ann, claim, pm, cookie, release } = await claimed();
+    await release(await cookieFor(pm, org.id));
+    const submit = await run(
+      workAction,
+      makeRequest(`/work/${claim.id}`, {
+        cookie,
+        form: { answer: JSON.stringify({ labels: ['positive'] }), activeSeconds: '60' },
+      }),
+      { assignmentId: claim.id },
+    );
+    expect(statusOf(submit)).toBe(409);
+    expect(payload<{ error: string }>(submit).error).toBe('This task is no longer yours.');
+    expect(await saveDraft(claim.id, ann.id, { activeSeconds: 60 })).toEqual({
+      ok: false,
+      error: 'not_active',
+    });
+  });
+
+  it('credits the time the draft saves recorded on an hourly project, as pay but not as a task', async () => {
+    const { org, project, ann, claim, pm } = await claimed();
+    const hourly = await prisma.project.update({
+      where: { id: project.id },
+      data: { payMode: 'HOURLY', rateCents: 1800 },
+    });
+    const now = new Date();
+    const result = await releaseClaim(hourly, claim.id, pm.id, now);
+    expect(result).toEqual({ ok: true, creditedSeconds: 12 * 60 });
+    const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(row).toMatchObject({ activeSeconds: 720, payMode: 'HOURLY', rateCents: 1800 });
+    // the minutes are on the person's clock, so no other work of theirs gets them again
+    expect(await prisma.creditedInterval.count({ where: { userId: ann.id } })).toBe(1);
+    const day = now.toISOString().slice(0, 10);
+    const report = await payoutReport(org.id, { from: day, to: day });
+    expect(report.lines).toHaveLength(1);
+    expect(report.lines[0]).toMatchObject({ tasks: 0, seconds: 720, amountCents: 360 });
+  });
+
+  it('pays nothing for a claim that ran out, whether the release or the expiry comes first', async () => {
+    for (const order of ['release first', 'expiry first'] as const) {
+      await resetDb();
+      const { org, project, ann, claim, pm, release } = await claimed();
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { payMode: 'HOURLY', rateCents: 1800 },
+      });
+      // the claim ran out ten minutes ago, and nobody has asked for work since
+      await prisma.assignment.update({
+        where: { id: claim.id },
+        data: { expiresAt: new Date(Date.now() - 10 * 60_000) },
+      });
+      if (order === 'expiry first') await releaseExpiredClaims(project.id);
+      const result = await release(await cookieFor(pm, org.id));
+      // the release marks it expired itself, or finds it expired already
+      expect(statusOf(result)).toBe(order === 'release first' ? 302 : 409);
+      const row = await prisma.assignment.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(row).toMatchObject({ status: 'EXPIRED', activeSeconds: 0, payableAt: null });
+      expect(await prisma.creditedInterval.count({ where: { userId: ann.id } })).toBe(0);
+      expect(await prisma.activity.count({ where: { action: 'assignment.released' } })).toBe(0);
+      if (order === 'release first') {
+        expect(await releaseClaim(project, claim.id, pm.id)).toEqual({
+          ok: false,
+          error: 'not_active',
+        });
+      }
+    }
+  });
+
+  it('only releases claims of the project it is asked in', async () => {
+    const { org, claim, pm } = await claimed();
+    const elsewhere = await createTestProject(org.id, { name: 'Other' });
+    expect(await releaseClaim(elsewhere, claim.id, pm.id)).toEqual({
+      ok: false,
+      error: 'not_found',
+    });
+  });
+});
+
+describe('the daily task limit', () => {
+  beforeEach(resetDb);
+
+  async function limited(limit: number) {
+    const org = await createOrg();
+    const base = await createTestProject(org.id, { reviewRequired: false });
+    const project = await prisma.project.update({
+      where: { id: base.id },
+      data: { dailyTaskLimit: limit },
+    });
+    await createTasks(project.id, [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }]);
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    await addToProject(project.id, ann);
+    return { org, project, ann };
+  }
+
+  async function submitAt(project: { id: string }, userId: string, at: Date) {
+    const fresh = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    const claim = await claimNextTask(fresh, userId, at);
+    if (!claim.ok) return claim;
+    const done = await submitAssignment(
+      claim.assignment.id,
+      userId,
+      { answer: { labels: ['positive'] }, activeSeconds: 30, reviewRequired: false },
+      new Date(at.getTime() + 60_000),
+    );
+    if (!done.ok) throw new Error(done.error);
+    return claim;
+  }
+
+  it('refuses a claim once the day’s submissions reach the limit, and counts skips out', async () => {
+    const { project, ann } = await limited(2);
+    const morning = new Date('2026-03-02T08:00:00Z');
+    const first = await claimNextTask(project, ann.id, morning);
+    if (!first.ok) throw new Error('no claim');
+    // a skip earns nothing and does not count
+    await skipAssignment(first.assignment.id, ann.id, 'Other: unreadable');
+    expect((await submitAt(project, ann.id, new Date('2026-03-02T09:00:00Z'))).ok).toBe(true);
+    expect((await submitAt(project, ann.id, new Date('2026-03-02T10:00:00Z'))).ok).toBe(true);
+    expect(await claimNextTask(project, ann.id, new Date('2026-03-02T11:00:00Z'))).toEqual({
+      ok: false,
+      reason: 'limit',
+    });
+  });
+
+  it('starts again at midnight UTC', async () => {
+    const { project, ann } = await limited(1);
+    expect((await submitAt(project, ann.id, new Date('2026-03-02T23:50:00Z'))).ok).toBe(true);
+    expect(await claimNextTask(project, ann.id, new Date('2026-03-02T23:59:00Z'))).toEqual({
+      ok: false,
+      reason: 'limit',
+    });
+    const next = await claimNextTask(project, ann.id, new Date('2026-03-03T00:00:00Z'));
+    expect(next.ok).toBe(true);
+  });
+
+  it('counts a claim that is still held, and still gives it back on a reload', async () => {
+    const { project, ann } = await limited(1);
+    const at = new Date(Date.now() - 60_000);
+    const first = await claimNextTask(project, ann.id, at);
+    expect(first.ok).toBe(true);
+    // the claim is the one task of the day: it is resumed, not refused
+    expect(await claimNextTask(project, ann.id, at)).toMatchObject({ ok: true, resumed: true });
+  });
+
+  it('gives two tabs claiming at the same moment one claim between them', async () => {
+    const { project, ann } = await limited(1);
+    const at = new Date(Date.now() - 60_000);
+    const results = await Promise.all([
+      claimNextTask(project, ann.id, at),
+      claimNextTask(project, ann.id, at),
+      claimNextTask(project, ann.id, at),
+    ]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    const ids = new Set(results.map((r) => (r.ok ? r.assignment.id : '')));
+    expect(ids.size).toBe(1);
+    expect(await prisma.assignment.count({ where: { userId: ann.id } })).toBe(1);
+  });
+
+  it('makes the dashboard count agree with the claim', async () => {
+    const { project, ann } = await limited(1);
+    const evening = new Date('2026-03-02T20:00:00Z');
+    expect((await countAvailable([project.id], ann.id, evening)).get(project.id)).toBe(4);
+    await submitAt(project, ann.id, evening);
+    const later = new Date('2026-03-02T21:00:00Z');
+    expect((await countAvailable([project.id], ann.id, later)).get(project.id)).toBe(0);
+    expect(await claimNextTask(project, ann.id, later)).toMatchObject({ reason: 'limit' });
+    const tomorrow = new Date('2026-03-03T00:30:00Z');
+    expect((await countAvailable([project.id], ann.id, tomorrow)).get(project.id)).toBe(3);
+  });
+
+  it('sends the annotator to the project page with a message that says when the day turns', async () => {
+    const { org, project, ann } = await limited(1);
+    await submitAt(project, ann.id, new Date(Date.now() - 5 * 60_000));
+    const cookie = await cookieFor(ann, org.id);
+    const result = await run(
+      claimAction,
+      makeRequest(`/projects/${project.id}/work`, { cookie, form: {} }),
+      { projectId: project.id },
+    );
+    expect(locationOf(result)).toBe(`/projects/${project.id}?queue=limit`);
   });
 });
