@@ -235,7 +235,7 @@ describe('the api refuses', () => {
 
   it('more than the limit of requests a minute per token', async () => {
     const { read, write } = await setup();
-    apiLimiter.reset(
+    await apiLimiter.reset(
       (await prisma.apiToken.findFirstOrThrow({ where: { tokenHash: hashToken(read) } })).id,
     );
     let last = 0;
