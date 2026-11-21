@@ -14,9 +14,12 @@ import type { PayoutRange } from './payouts.server';
  *
  * Lock order (docs/architecture.md, "Pay runs"): the organisation's pay run
  * lock first (an advisory lock, exclusive here), then the assignment rows of
- * the period in id order. Closing locks no task row and no work clock, and
- * nothing that holds an assignment row of a closed-to-be period waits for the
- * pay run lock, so the two cannot wait for each other in a circle.
+ * the period in id order, `FOR NO KEY UPDATE` so that the foreign-key checks
+ * of reviews, disputes, spot checks and rescores on them are not held up.
+ * Closing locks no task row and no work clock. A write that sets a payable
+ * date takes the pay run lock shared after its own rows (the exception to
+ * "pay run lock first"); it never holds a row the close wants, see
+ * docs/architecture.md, "Pay runs".
  *
  * The work is marked by the `UPDATE ... payRunId IS NULL` that also decides
  * what the lines hold: the lines are computed from exactly the rows marked,
@@ -52,7 +55,7 @@ export async function closePayRun(
           AND a."payRunId" IS NULL
           AND a."payableAt" >= ${utc(period.start)} AND a."payableAt" < ${utc(period.end)}
         ORDER BY a.id
-        FOR UPDATE OF a`;
+        FOR NO KEY UPDATE OF a`;
       const ids = locked.map((r) => r.id);
       const rows = await tx.assignment.findMany({
         where: { id: { in: ids } },
