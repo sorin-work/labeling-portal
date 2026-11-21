@@ -145,6 +145,11 @@ export async function endSessions(orgId: string, actorId: string, userId: string
   });
 }
 
+/**
+ * Removes someone from the organisation. Their sessions end (the version goes
+ * up, so a cookie made before does not come back if they are added again)
+ * and their API tokens for this organisation are revoked.
+ */
 export async function removePerson(orgId: string, actorId: string, userId: string) {
   if (actorId === userId) return { ok: false as const, error: 'You cannot remove yourself.' };
   return prisma.$transaction(async (tx) => {
@@ -155,11 +160,21 @@ export async function removePerson(orgId: string, actorId: string, userId: strin
     if (!member) return { ok: false as const, error: 'Person not found.' };
     await tx.projectMember.deleteMany({ where: { userId, project: { orgId } } });
     await tx.membership.delete({ where: { id: member.id } });
+    await tx.user.update({ where: { id: userId }, data: { sessionVersion: { increment: 1 } } });
+    const revoked = await tx.apiToken.updateMany({
+      where: { orgId, userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     await logActivity(tx, {
       orgId,
       actorId,
       action: 'person.removed',
-      detail: { userId, userName: member.user.name, role: member.role },
+      detail: {
+        userId,
+        userName: member.user.name,
+        role: member.role,
+        tokensRevoked: revoked.count,
+      },
     });
     return { ok: true as const };
   });
