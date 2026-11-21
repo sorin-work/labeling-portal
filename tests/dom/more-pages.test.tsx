@@ -144,6 +144,7 @@ function task(kind: Kind): Data<typeof taskLoader> {
     goldScore: null,
     skipReason: null,
     release: null,
+    spotCheckable: false,
     answer: answers[kind] as never,
     corrected: false,
     reviews: [],
