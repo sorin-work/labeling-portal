@@ -799,9 +799,10 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 
 `RateLimiter` in `app/lib/rate-limit.server.ts` counts in PostgreSQL, so
 every app process shares one count and a restart does not clear a lockout.
-There are three: `login` (ten failed sign-ins per email per fifteen
+There are four: `login` (ten failed sign-ins per email per fifteen
 minutes), `two-step` (five wrong codes per account and client address per
-fifteen minutes) and `api` (120 requests a minute per token).
+fifteen minutes), `two-step-account` (twenty wrong codes per account per
+hour) and `api` (120 requests a minute per token).
 
 - **One row per key** in `RateLimitHit`, named after the limiter
   (`login:ann@example.com`). An attempt is one statement, `INSERT ... ON
