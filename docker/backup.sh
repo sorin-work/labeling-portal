@@ -30,6 +30,8 @@ dir=${BACKUP_DIR:-/backups}
 keep=${BACKUP_KEEP:-7}
 interval=${BACKUP_INTERVAL_SECONDS:-86400}
 status=${BACKUP_STATUS:-on}
+# where psql's complaint about a row it could not write is kept for the log
+work_file=${TMPDIR:-/tmp}/backup-record.$$
 
 # A dump holds accounts, password hashes, answers and pay data: owner only.
 umask 077
@@ -129,7 +131,12 @@ prune() {
   warn_about_future_dumps "$clock"
 }
 
-# Writes the row of one attempt to "BackupRun":
+# How many rows "BackupRun" keeps. A database that is down gets an attempt
+# a minute, so without a limit a long outage would add 1,440 rows a day.
+runs_keep=500
+
+# Writes the row of one attempt to "BackupRun" and removes all but the newest
+# $runs_keep rows:
 #   record <started> <ok: true or false> <file> <bytes> <message>
 # Empty values are stored as nothing. The values go in as psql variables, so
 # a message with quotes in it cannot break the statement. The row is written
@@ -138,14 +145,32 @@ record() {
   [ "$status" != off ] || return 0
   if ! psql -qAtX -v ON_ERROR_STOP=1 \
     -v started="$1" -v finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -v ok="$2" \
-    -v file="$3" -v bytes="$4" -v message="$5" -v interval="$interval" >/dev/null 2>&1 <<'SQL'
+    -v file="$3" -v bytes="$4" -v message="$5" -v interval="$interval" \
+    -v keep="$runs_keep" >/dev/null 2>"$work_file" <<'SQL'
 insert into "BackupRun" ("startedAt", "finishedAt", ok, file, bytes, message, "intervalSeconds")
 values (:'started', :'finished', :'ok'::boolean, nullif(:'file', ''),
-        nullif(:'bytes', '')::bigint, nullif(:'message', ''), :'interval'::integer)
+        nullif(:'bytes', '')::bigint, nullif(:'message', ''), :'interval'::integer);
+delete from "BackupRun"
+where id not in (select id from "BackupRun" order by id desc limit :'keep'::integer);
 SQL
   then
-    log "could not record this attempt in the BackupRun table (is the app's migration there yet?), so the app does not know about it"
+    missing=$(psql -AtXq -c "select to_regclass('public.\"BackupRun\"') is null" 2>/dev/null) || missing=''
+    if [ "$missing" = t ]; then
+      log "the database has no BackupRun table yet (an older app, or its migrations have not run), so this attempt is not recorded"
+    else
+      log "could not record this attempt in BackupRun: $(head -n 1 "$work_file")"
+    fi
   fi
+  rm -f "$work_file"
+}
+
+# What a failed pg_dump said, for its row: the first "pg_dump: error:" line,
+# or the first line when there is none, in printable ASCII only and at most
+# 500 characters, so that cutting it cannot split a character in two.
+dump_error() {
+  line=$(grep -m 1 '^pg_dump: error:' "$1" || true)
+  [ -n "$line" ] || line=$(grep -m 1 . "$1" || true)
+  printf '%s' "$line" | tr -cd ' -~' | cut -c 1-500
 }
 
 # pg_dump writes to a hidden .partial file that is renamed when it is
@@ -162,7 +187,7 @@ dump() {
     cat "$errors" >&2
     rm -f "$partial"
     partial=''
-    record "$started" false '' '' "$(tail -n 1 "$errors" | cut -c 1-500)"
+    record "$started" false '' '' "$(dump_error "$errors")"
     rm -f "$errors"
     return 1
   fi

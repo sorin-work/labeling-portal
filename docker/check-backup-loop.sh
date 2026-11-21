@@ -33,7 +33,8 @@ cat >"$work/bin/pg_dump" <<'STUB'
 #!/bin/sh
 echo attempt >>"$STATE/attempts"
 if [ -e "$STATE/fail" ]; then
-  echo "pg_dump: error: connection to server failed" >&2
+  echo "pg_dump: warning: something first" >&2
+  printf 'pg_dump: error: connection to server at "d\303\251p\303\264t" failed\n' >&2
   echo "pg_dump: detail: it's down" >&2
   exit 1
 fi
@@ -93,9 +94,17 @@ case "$*" in
     finish
     ;;
   *" ok="*)
-    cat >/dev/null
+    sql=$(cat)
     [ ! -e "$STATE/no-status-table" ] || exit 3
+    if [ -e "$STATE/status-fails" ]; then
+      echo 'ERROR:  permission denied for table BackupRun' >&2
+      exit 3
+    fi
     echo "$*" >>"$STATE/runs"
+    echo "$sql" | grep -q 'delete from "BackupRun"' || echo "no prune" >>"$STATE/runs"
+    ;;
+  *to_regclass*)
+    if [ -e "$STATE/no-status-table" ]; then echo t; else echo f; fi
     ;;
   *pg_database*)
     name=$(echo "$*" | sed -E "s/.*datname = '([^']+)'.*/\1/")
@@ -233,7 +242,14 @@ begin "without the BackupRun table the dump still counts, and the log says so"
 touch "$STATE/no-status-table"
 run_loop
 expect 1 1
-grep -q "could not record this attempt" "$STATE/log" || fail "the log does not say that the row was not written"
+grep -q "has no BackupRun table yet" "$STATE/log" || fail "the log does not say that the table is missing"
+
+begin "a row that cannot be written for another reason: the log says why"
+touch "$STATE/status-fails"
+run_loop
+expect 1 1
+grep -q "could not record this attempt in BackupRun: ERROR:  permission denied" "$STATE/log" || fail "the log does not give psql's reason"
+! grep -q "no BackupRun table yet" "$STATE/log" || fail "the log blames a missing table"
 
 begin "BACKUP_STATUS=off writes no rows"
 export BACKUP_STATUS=off
@@ -354,8 +370,9 @@ run_loop
 [ -z "$(ls -A "$BACKUP_DIR" | grep '\.partial$' || true)" ] || fail "a partial dump was left behind"
 [ "$(count "$STATE/runs")" -eq "$(count "$STATE/attempts")" ] || fail "not every failed attempt has a row"
 grep -q -F "ok=false" "$STATE/runs" || fail "the failed attempt is not recorded as failed"
-grep -q -F "message=pg_dump: detail: it's down" "$STATE/runs" || fail "the row does not carry the last line pg_dump wrote: $(cat "$STATE/runs")"
-grep -q "pg_dump: error: connection to server failed" "$STATE/log" || fail "what pg_dump said is not in the log"
+grep -q -F 'message=pg_dump: error: connection to server at "dpt" failed -v' "$STATE/runs" || fail "the row does not carry pg_dump's error line in ASCII: $(cat "$STATE/runs")"
+! grep -q "no prune" "$STATE/runs" || fail "the rows are not pruned after a write"
+grep -q "pg_dump: detail: it.s down" "$STATE/log" || fail "what pg_dump said is not in the log"
 echo "ok: $case_name"
 
 begin "once, with every other dump dated in the future: all of them stay"
