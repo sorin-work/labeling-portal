@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { enqueueJob, processDueJobs, takeJobs, type JobHandlers } from '~/lib/jobs.server';
+import {
+  enqueueJob,
+  LOST_ATTEMPT,
+  processDueJobs,
+  takeJobs,
+  type JobHandlers,
+} from '~/lib/jobs.server';
 
 import { prisma, resetDb } from './helpers';
 
@@ -86,6 +92,42 @@ describe('background jobs', () => {
     expect((await processDueJobs(handlers, later(60_000), { workerId: 'b' })).taken).toBe(1);
     expect(runs).toHaveLength(1);
     expect(await prisma.job.findFirstOrThrow()).toMatchObject({ attempts: 2 });
+    expect((await prisma.job.findFirstOrThrow()).doneAt).not.toBeNull();
+  });
+
+  it('fails a job whose last attempt was killed instead of taking it again', async () => {
+    const { handlers, runs, gaveUp } = counting();
+    await enqueueJob(prisma, { kind: 'test', payload: {}, runAt: now, maxAttempts: 2 });
+    // two loops in a row take it and die
+    await takeJobs(now, 'gone-1', { leaseMs: 60_000 });
+    await takeJobs(later(60_000), 'gone-2', { leaseMs: 60_000 });
+    const result = await processDueJobs(handlers, later(120_000));
+    expect(result.taken).toBe(0);
+    expect(runs).toHaveLength(0);
+    expect(gaveUp).toEqual([LOST_ATTEMPT]);
+    expect(await prisma.job.findFirstOrThrow()).toMatchObject({
+      attempts: 2,
+      failedAt: later(120_000),
+      lastError: LOST_ATTEMPT,
+      lockedBy: null,
+    });
+  });
+
+  it('renews the lease while a handler works, so nobody else takes the job', async () => {
+    let seenByOther = -1;
+    const handlers: JobHandlers = {
+      test: {
+        async run() {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          // the first lease (40 ms) has run out by now; the renewed one has not
+          seenByOther = (await takeJobs(new Date(), 'b')).length;
+        },
+      },
+    };
+    await enqueueJob(prisma, { kind: 'test', payload: {} });
+    await processDueJobs(handlers, new Date(), { leaseMs: 40, heartbeatMs: 10 });
+    expect(seenByOther).toBe(0);
+    expect(await prisma.job.findFirstOrThrow()).toMatchObject({ attempts: 1 });
     expect((await prisma.job.findFirstOrThrow()).doneAt).not.toBeNull();
   });
 

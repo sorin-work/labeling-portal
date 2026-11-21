@@ -165,14 +165,31 @@ describe('the rule', () => {
     await runDueJobs();
     const batch = await prisma.batch.findFirstOrThrow();
     const before = await tasks();
-    await prelabelJob.run({ batchId: batch.id }, { id: 'x', attempts: 2, maxAttempts: 3 });
+    await prelabelJob.run(
+      { batchId: batch.id },
+      { job: { id: 'x', attempts: 2, maxAttempts: 3 }, holds: async () => true },
+    );
     expect(await tasks()).toEqual(before);
     expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
       prelabelState: 'DONE',
       prelabelNote: 'Suggested an answer for 1 of 2 tasks.',
     });
     // a batch that was deleted in the meantime
-    await prelabelJob.run({ batchId: 'gone' }, { id: 'y', attempts: 1, maxAttempts: 3 });
+    await prelabelJob.run(
+      { batchId: 'gone' },
+      { job: { id: 'y', attempts: 1, maxAttempts: 3 }, holds: async () => true },
+    );
+  });
+
+  it('a run that no longer holds its job writes no result on the batch', async () => {
+    const { importFile } = await world({ prelabel: rule });
+    await importFile('text\nGreat\n');
+    const batch = await prisma.batch.findFirstOrThrow();
+    await runPrelabel(batch.id, { holds: async () => false });
+    expect(await prisma.batch.findFirstOrThrow()).toMatchObject({
+      prelabelState: 'PENDING',
+      prelabelNote: null,
+    });
   });
 
   it('marks the batch failed once the job gives up', async () => {
