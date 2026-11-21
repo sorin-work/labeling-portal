@@ -60,7 +60,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 20  | Signing out everywhere                       | Shipped | security      | S    | -          |
 | 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
 | 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
-| 23  | Backup status the app can see                | Next    | ops           | S    | -          |
+| 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
 | 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Later   | ops           | M    | -          |
@@ -196,37 +196,6 @@ wait for a reviewer to send it back.
 - Tests: `tests/integration/queue.test.ts` for each allowed and refused
   state, gold with and without feedback, the sampling outcome kept; unit
   tests for the rule.
-
-### 23. Backup status the app can see
-
-Improves item 7, whose notes say that nothing warns when a dump fails apart
-from the service's log. The backup service and the app share nothing but the
-database, so nobody who uses the app notices that the last good dump is a
-month old.
-
-- Data: a `BackupRun` table (started, finished, file, bytes, ok, message)
-  made by a Prisma migration like every other table. `docker/backup.sh`
-  writes a row with `psql` after each attempt, and copes with the table not
-  being there yet (an older app, or a stack that is still migrating).
-- The admin's needs-attention list (`models/attention.server.ts`) gets "The
-  last dump failed" and "No dump for N hours" once the service has written at
-  least one row, so a stack without the backup profile is not warned. `/healthz`
-  could carry the time of the last good dump without turning it into a 503;
-  undecided, I lean towards the needs-attention list only.
-- Tricky: the row of a dump is written after the dump, so it is in the next
-  dump, not its own. After a restore the table ends at the dump before the
-  one that was restored. Say so on the page instead of pretending.
-- Tricky: `docker/check-backup.sh` compares the row count of every table
-  between the database and the restore. A row written after the dump breaks
-  that comparison, so the check has to leave `BackupRun` out or run with
-  status writes off.
-- Undecided: encrypting dumps. The `postgres:17-alpine` image has `openssl`,
-  so `openssl enc` with a passphrase file would work, but a restore then
-  needs the passphrase and a lost passphrase is a lost backup. I lean
-  towards leaving encryption to the disk and documenting that.
-- Tests: an integration test for the attention items from made-up rows;
-  `docker/check-backup-loop.sh` checks that the script writes a row for a
-  good and a failed dump.
 
 ## Later
 
@@ -921,3 +890,19 @@ the version and revokes their tokens in that organisation, so a re-add brings
 neither back. The version is per account, so ending sessions signs the person
 out of their other organisations too, and People says so. Still open: a list of sessions with device and
 time, which needs a table of sessions.
+
+### 23. Backup status the app can see
+
+`BackupRun` rows (start, end, ok, file, bytes, message, interval) written by
+`docker/backup.sh` with `psql` after every attempt, with psql variables so a
+message cannot break the statement; a missing table is a line in the log and
+`BACKUP_STATUS=off` writes nothing. Admins get "The last dump failed" and "No
+dump for N hours" on the dashboard's needs-attention list once a row exists,
+with the last good dump and a note that after a restore the list ends at the
+dump before the restored one. Decided: late means the newest good dump is 1.5
+intervals old, using the interval the newest row carries, so the app needs no
+setting of its own; `/healthz` carries nothing; only admins see it, since a
+dump holds every organisation; encryption is left to the disk and documented.
+The restore check leaves `BackupRun` out of its comparison and checks the
+rows on their own (one fewer in the copy). Still open: rows are never
+pruned, and nothing reaches anyone who does not open the dashboard.
