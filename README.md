@@ -41,7 +41,9 @@ or fix the work.
   answer. Annotators see it as a suggestion and take it or not; it never
   counts as an answer
 - **Drafts**: the answer in progress and its working time are saved to the
-  server while an annotator works, so a reload or a closed tab loses nothing
+  server while an annotator works, so a reload or a closed tab loses nothing.
+  For two minutes after "Submit and next" the annotator can take the last
+  task back and revise it, while no reviewer has looked at it
 - **Review**: approve, send back with feedback, or fix the answer; QA scores
   1-5; annotators revise sent-back work and see corrections. "Start reviewing"
   reserves a submission for one reviewer, for 15 minutes and for as long as

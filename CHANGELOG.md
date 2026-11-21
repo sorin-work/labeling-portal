@@ -18,6 +18,13 @@
 
 ### Importing and labeling
 
+- "Take back the last task" on the work page for two minutes after a
+  submission. The work becomes work to revise on "My work", as if it had
+  been sent back but marked as taken back. Only while nothing has read it:
+  waiting for review and not reserved, or accepted without review on a task
+  that is not complete. Handed in again, it goes where it went the first
+  time, with the same review draw; the time already credited and the rate
+  stay. Gold tasks are not taken back where the project shows gold feedback
 - A daily task limit per project (Settings, Queue). One person may hand in
   that many tasks in the project per UTC day, and a claim they still hold
   counts too; skips do not. A claim past the limit is refused with a message
