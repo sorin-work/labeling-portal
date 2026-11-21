@@ -506,7 +506,7 @@ model BackupRun {
   /// the dump's file name, for a dump that worked
   file            String?
   bytes           BigInt?
-  /// the last line pg_dump wrote, for a dump that failed
+  /// pg_dump's error line, for a dump that failed
   message         String?
   /// BACKUP_INTERVAL_SECONDS of the service, so the app knows when a dump is late
   intervalSeconds Int

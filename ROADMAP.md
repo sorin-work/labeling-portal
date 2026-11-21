@@ -904,5 +904,7 @@ intervals old, using the interval the newest row carries, so the app needs no
 setting of its own; `/healthz` carries nothing; only admins see it, since a
 dump holds every organisation; encryption is left to the disk and documented.
 The restore check leaves `BackupRun` out of its comparison and checks the
-rows on their own (one fewer in the copy). Still open: rows are never
-pruned, and nothing reaches anyone who does not open the dashboard.
+rows on their own (one fewer in the copy). After review: rows are read in
+the order they were written (by id), not by the container's clock; a failed
+row keeps pg_dump's error line in ASCII; the script keeps the newest 500 rows.
+Still open: nothing reaches anyone who does not open the dashboard.
