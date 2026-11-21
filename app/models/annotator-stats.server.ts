@@ -37,7 +37,11 @@ export async function myStats(userId: string, days = 30, now = new Date()): Prom
       .reduce((s, g) => s + g._count._all, 0);
   const submitted = byStatus.reduce((s, g) => s + g._count._all, 0);
   const accepted = count(['APPROVED', 'FIXED', 'NOT_REQUIRED']);
-  const sentBack = count(['SENT_BACK']);
+  // work the annotator took back themselves was not sent back by anyone
+  const takenBack = await prisma.assignment.count({
+    where: { ...where, reviewStatus: 'SENT_BACK', takenBackAt: { not: null } },
+  });
+  const sentBack = count(['SENT_BACK']) - takenBack;
   const decided = accepted + sentBack;
   return {
     submitted,

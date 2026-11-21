@@ -15,7 +15,9 @@ import { startOfUtcDay, underLimit } from '~/domain/daily-limit';
 import { sameAnswer } from '~/domain/gold';
 import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
+import { holdCutoff } from '~/domain/review-hold';
 import { decideReview, type SamplingDecision } from '~/domain/review-sampling';
+import { takeBackRefusal, type TakeBackRefusal, type TakeBackState } from '~/domain/take-back';
 import { extensionsLeft, inExtendWindow, MAX_EXTENSIONS } from '~/domain/time-limit';
 import {
   isLockConflict,
@@ -777,7 +779,10 @@ const REVISION_FIELDS = {
   submittedAt: true,
   activeSeconds: true,
   draftSeconds: true,
-  project: { select: { timeLimitMinutes: true, orgId: true } },
+  takenBackFrom: true,
+  taskId: true,
+  task: { select: { isGold: true } },
+  project: { select: { timeLimitMinutes: true, orgId: true, schema: true } },
 } satisfies Prisma.AssignmentSelect;
 
 type Revised = Prisma.AssignmentGetPayload<{ select: typeof REVISION_FIELDS }>;
@@ -838,20 +843,41 @@ export async function resubmitAssignment(
               cap: revisionCap(limitSeconds(current), current.activeSeconds),
             })
           : { seconds: 0, pieces: [] };
+      // Work the annotator took back returns to the review status it had:
+      // the review draw made at its first submission is kept, so taking back
+      // is not a way to draw again. Work that needed no review is accepted
+      // again at once, a gold task scored again.
+      const accepted = current?.takenBackFrom === 'NOT_REQUIRED';
+      const gold =
+        accepted && current?.task.isGold
+          ? {
+              goldScore: await scoreGoldSubmission(
+                tx,
+                current.taskId,
+                current.project.schema,
+                input.answer,
+              ),
+            }
+          : {};
       const result = await tx.assignment.updateMany({
         // still sent back: a form posted twice adds its time only once
         where: sentBack,
         data: {
           answer: input.answer,
-          reviewStatus: 'PENDING',
+          reviewStatus: accepted ? 'NOT_REQUIRED' : 'PENDING',
           submittedAt: now,
           reviewedAt: null,
-          payableAt: null,
+          payableAt: accepted ? now : null,
+          takenBackFrom: null,
+          ...gold,
           activeSeconds: { increment: credit.seconds },
           ...NO_DRAFT,
         },
       });
       if (result.count > 0) await recordCredit(tx, clock, credit, now);
+      if (result.count > 0 && accepted && current && !current.task.isGold) {
+        await refreshTaskStatus(current.taskId, tx, now);
+      }
       if (result.count === 0) {
         const exists = await tx.assignment.count({ where: { id: assignmentId, userId } });
         return { ok: false, error: exists ? 'not_active' : 'not_found' };
@@ -1089,4 +1115,112 @@ export async function extendAssignment(
   });
   if (updated.count === 0) return { ok: false, error: 'not_active' };
   return { ok: true, expiresAt, extensionsLeft: extensionsLeft(assignment.extensions + 1) };
+}
+
+/**
+ * What the take-back rule (`takeBackRefusal`) needs to know about a
+ * submission, read with `db`. Null when it is not the person's.
+ */
+export async function takeBackState(
+  db: Prisma.TransactionClient,
+  assignmentId: string,
+  userId: string,
+  now: Date,
+): Promise<TakeBackState | null> {
+  const row = await db.assignment.findFirst({
+    where: { id: assignmentId, userId },
+    include: {
+      task: { select: { status: true, isGold: true } },
+      project: { select: { goldFeedback: true } },
+      _count: { select: { reviews: true } },
+    },
+  });
+  if (!row) return null;
+  const later = row.submittedAt
+    ? await db.assignment.count({
+        where: {
+          projectId: row.projectId,
+          userId,
+          status: 'SUBMITTED',
+          id: { not: row.id },
+          submittedAt: { gt: row.submittedAt },
+        },
+      })
+    : 0;
+  return {
+    status: row.status,
+    reviewStatus: row.reviewStatus,
+    submittedAt: row.submittedAt,
+    reviewed: row._count.reviews > 0,
+    held:
+      row.reviewHeldById !== null &&
+      row.reviewHeldAt !== null &&
+      row.reviewHeldAt > holdCutoff(now),
+    taskStatus: row.task.status,
+    isGold: row.task.isGold,
+    goldFeedback: row.project.goldFeedback,
+    takenBackAt: row.takenBackAt,
+    latest: later === 0,
+  };
+}
+
+/**
+ * The annotator takes back what they just handed in, to change it. The
+ * submission becomes work they revise on `/my-work/:id`, the same state as
+ * work a reviewer sent back (`SENT_BACK`, revised from the moment of the
+ * take-back), marked as their own doing (`takenBackAt`) and remembering the
+ * review status it had (`takenBackFrom`), which the resubmission returns to:
+ * the review draw made at submission is kept. The credited time and the
+ * frozen rate stay; revising adds time within the revision cap. The answer
+ * becomes the draft the revise page starts from.
+ *
+ * The rule is `takeBackRefusal`, checked under the task row's lock, and the
+ * write repeats every part of it that another transaction could change in
+ * its `where`: still the same review status, not taken back, no review, no
+ * live hold. Lock order: the task row, then the assignment row. No time is
+ * credited, so the work clock is not taken.
+ */
+export async function takeBackSubmission(
+  assignmentId: string,
+  userId: string,
+  now = new Date(),
+): Promise<{ ok: true } | { ok: false; error: TakeBackRefusal | 'not_found' }> {
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      await lockTaskOfAssignment(tx, assignmentId);
+      const state = await takeBackState(tx, assignmentId, userId, now);
+      if (!state) return { ok: false, error: 'not_found' } as const;
+      const refused = takeBackRefusal(state, now);
+      if (refused) return { ok: false, error: refused } as const;
+      const from = state.reviewStatus as 'PENDING' | 'NOT_REQUIRED';
+      const current = await tx.assignment.findUniqueOrThrow({
+        where: { id: assignmentId },
+        select: { answer: true },
+      });
+      const taken = await tx.assignment.updateMany({
+        where: {
+          id: assignmentId,
+          userId,
+          status: 'SUBMITTED',
+          reviewStatus: from,
+          takenBackAt: null,
+          reviews: { none: {} },
+          OR: [{ reviewHeldById: null }, { reviewHeldAt: { lte: holdCutoff(now) } }],
+        },
+        data: {
+          reviewStatus: 'SENT_BACK',
+          reviewedAt: now,
+          payableAt: null,
+          takenBackAt: now,
+          takenBackFrom: from,
+          reviewHeldById: null,
+          reviewHeldAt: null,
+          draft: current.answer ?? Prisma.DbNull,
+          draftSeconds: 0,
+        },
+      });
+      if (taken.count === 0) return { ok: false, error: 'reviewed' } as const;
+      return { ok: true } as const;
+    }),
+  );
 }
