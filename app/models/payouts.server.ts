@@ -17,6 +17,7 @@ function bounds(range: PayoutRange): { gte: Date; lt: Date } {
 }
 
 const WORK_SELECT = {
+  status: true,
   activeSeconds: true,
   rateCents: true,
   payMode: true,
@@ -45,6 +46,7 @@ function toPaidWork(row: WorkRow): PaidWork {
     payMode: row.payMode,
     rateCents: row.rateCents,
     activeSeconds: row.activeSeconds,
+    released: row.status === 'RELEASED',
   };
 }
 
@@ -52,12 +54,19 @@ function toPaidWork(row: WorkRow): PaidWork {
  * Accepted work that became payable within the range. The date is stored on
  * the assignment (`payableAt`) by the write that accepted the work: the
  * review that approved or fixed it, the submission when no review was needed,
- * or the overturn of a send-back. Work that was accepted before the date was
+ * the overturn of a send-back, or a manager's release of a claim on an
+ * hourly project. Work that was accepted before the date was
  * stored carries its submission date, which is what the reports went by then.
  */
 async function payableWork(db: Db, where: Prisma.AssignmentWhereInput, range: PayoutRange) {
   const rows = await db.assignment.findMany({
-    where: { ...where, status: 'SUBMITTED', payableAt: bounds(range) },
+    where: {
+      ...where,
+      // a claim a manager released carries a payable date only when it was
+      // credited time on an hourly project (`releaseClaim`)
+      status: { in: ['SUBMITTED', 'RELEASED'] },
+      payableAt: bounds(range),
+    },
     select: WORK_SELECT,
   });
   return rows.map(toPaidWork);

@@ -1,3 +1,5 @@
+import { limitReachedMessage } from '~/domain/daily-limit';
+
 /**
  * Messages for the ?queue= parameter the work routes redirect to when there
  * is no task to show.
@@ -9,6 +11,14 @@ const MESSAGES: Record<string, string> = {
   qualified: 'You passed the qualification test. Welcome aboard!',
 };
 
-export function queueMessage(code: string | null): string | null {
+/**
+ * The message for a code. `limit` says when the next UTC day starts, so it
+ * needs the project's limit and the time.
+ */
+export function queueMessage(
+  code: string | null,
+  context: { dailyTaskLimit: number | null; now: Date },
+): string | null {
+  if (code === 'limit') return limitReachedMessage(context.dailyTaskLimit, context.now);
   return code ? (MESSAGES[code] ?? null) : null;
 }

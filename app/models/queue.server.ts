@@ -11,6 +11,7 @@ import {
   type Credit,
   type Interval,
 } from '~/domain/active-time';
+import { startOfUtcDay, underLimit } from '~/domain/daily-limit';
 import { sameAnswer } from '~/domain/gold';
 import { payableSince } from '~/domain/payouts';
 import { goldDraw, SESSION_GAP_MINUTES } from '~/domain/queue-order';
@@ -24,6 +25,7 @@ import {
   utc,
 } from '~/lib/db.server';
 
+import { logActivity } from './activity.server';
 import { blockedByDispute } from './disputes.server';
 import { scoreGoldSubmission } from './gold.server';
 import { isAnnotatorFlagged } from './quality.server';
@@ -31,7 +33,7 @@ import { refreshTaskStatus } from './tasks.server';
 
 export type ClaimResult =
   | { ok: true; assignment: Assignment; resumed: boolean }
-  | { ok: false; reason: 'inactive' | 'empty' | 'unqualified' };
+  | { ok: false; reason: 'inactive' | 'empty' | 'unqualified' | 'limit' };
 
 const MAX_CLAIM_ATTEMPTS = 5;
 
@@ -350,14 +352,59 @@ export async function countAvailable(
   if (projectIds.length === 0) return new Map();
   // the slot counter counts a claim past its limit until it is marked expired
   await expireClaims(projectIds, now);
-  const rows = await prisma.$queryRaw<Array<{ projectId: string; count: bigint }>>`
-    SELECT t."projectId", count(*) AS count
-    FROM "Task" t
-    JOIN "Project" p ON p.id = t."projectId"
-    WHERE t."projectId" IN (${Prisma.join(projectIds)})
-      AND ${eligibleFor(userId, Prisma.sql`p.overlap`)}
-    GROUP BY t."projectId"`;
-  return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
+  const [rows, atLimit] = await Promise.all([
+    prisma.$queryRaw<Array<{ projectId: string; count: bigint }>>`
+      SELECT t."projectId", count(*) AS count
+      FROM "Task" t
+      JOIN "Project" p ON p.id = t."projectId"
+      WHERE t."projectId" IN (${Prisma.join(projectIds)})
+        AND ${eligibleFor(userId, Prisma.sql`p.overlap`)}
+      GROUP BY t."projectId"`,
+    projectsAtLimit(projectIds, userId, now),
+  ]);
+  // a claim refuses someone at the daily limit, so the dashboard offers nothing there
+  return new Map(rows.map((r) => [r.projectId, atLimit.has(r.projectId) ? 0 : Number(r.count)]));
+}
+
+/**
+ * What counts towards a project's daily limit for one person: their
+ * submissions since midnight UTC (the "done today" of the work page) and the
+ * claims they hold. Skips do not count.
+ */
+export async function dailyCount(
+  db: Prisma.TransactionClient,
+  projectId: string,
+  userId: string,
+  now: Date,
+): Promise<{ submittedToday: number; open: number }> {
+  const [submittedToday, open] = await Promise.all([
+    db.assignment.count({
+      where: { projectId, userId, status: 'SUBMITTED', submittedAt: { gte: startOfUtcDay(now) } },
+    }),
+    db.assignment.count({
+      where: { projectId, userId, status: 'ACTIVE', expiresAt: { gt: now } },
+    }),
+  ]);
+  return { submittedToday, open };
+}
+
+/** The projects among these with a daily limit that the person has reached. */
+async function projectsAtLimit(
+  projectIds: string[],
+  userId: string,
+  now: Date,
+): Promise<Set<string>> {
+  const limited = await prisma.project.findMany({
+    where: { id: { in: projectIds }, dailyTaskLimit: { not: null } },
+    select: { id: true, dailyTaskLimit: true },
+  });
+  const reached = await Promise.all(
+    limited.map(async (project) => {
+      const { submittedToday, open } = await dailyCount(prisma, project.id, userId, now);
+      return underLimit(project.dailyTaskLimit, submittedToday, open) ? null : project.id;
+    }),
+  );
+  return new Set(reached.filter((id) => id !== null));
 }
 
 /**
@@ -411,6 +458,20 @@ export async function claimNextTask(
         // looked up without a lock and this transaction ends, letting go of
         // what it picked. The claim then waits for that one task in a
         // transaction of its own (`waitForTask`) and picks again.
+        if (project.dailyTaskLimit !== null) {
+          // The daily limit is counted under a lock on the person's work
+          // clock, which comes before every task row in the lock order, so
+          // two tabs claiming at once are counted one after the other.
+          await lockWorkClock(tx, project.orgId, userId, now);
+          // the other tab may have claimed while this one waited for the lock
+          const held = await tx.assignment.findFirst({
+            where: { projectId: project.id, userId, status: 'ACTIVE', expiresAt: { gt: now } },
+            orderBy: { claimedAt: 'desc' },
+          });
+          if (held) return { resumed: held };
+          const { submittedToday, open } = await dailyCount(tx, project.id, userId, now);
+          if (!underLimit(project.dailyTaskLimit, submittedToday, open)) return 'limit' as const;
+        }
         const first = await pickWithKind(tx, pick);
         if (!first || (!first.wanted && !waitedForWanted)) {
           const next = await pickNextTask(tx, { ...pick, lock: 'none' });
@@ -437,6 +498,10 @@ export async function claimNextTask(
       }),
     );
     if (outcome === 'empty') return { ok: false, reason: 'empty' };
+    if (outcome === 'limit') return { ok: false, reason: 'limit' };
+    if (outcome && 'resumed' in outcome && outcome.resumed) {
+      return { ok: true, assignment: outcome.resumed, resumed: true };
+    }
     if (outcome && 'waitFor' in outcome) {
       if (outcome.forWanted) waitedForWanted = true;
       // a wait that runs out counts as this attempt
@@ -813,6 +878,91 @@ export async function releaseAssignment(
     }),
   );
   return released.count > 0 ? { ok: true } : { ok: false, error: 'not_active' };
+}
+
+export type ReleaseClaimResult =
+  { ok: true; creditedSeconds: number } | { ok: false; error: 'not_found' | 'not_active' };
+
+/**
+ * A manager takes a claim away from the annotator who holds it, so the task
+ * goes back to the queue: what `releaseAssignment` does, without the owner
+ * check. The draft is dropped. The annotator did nothing wrong, so on an
+ * hourly project the working time their draft saves recorded
+ * (`draftSeconds`) is credited the way a submission credits it, through
+ * their work clock and `creditTime`, and becomes payable at once. A per-task
+ * project pays for accepted tasks only, so nothing is credited there.
+ *
+ * The lock order is a submission's: the annotator's work clock, the task
+ * row, then the assignment row. The audit entry is written in the same
+ * transaction.
+ */
+export async function releaseClaim(
+  project: Pick<Project, 'id' | 'orgId' | 'timeLimitMinutes'>,
+  assignmentId: string,
+  actorId: string,
+  now = new Date(),
+): Promise<ReleaseClaimResult> {
+  // whose clock to take, read without a lock: the owner of a claim never changes
+  const owner = await prisma.assignment.findFirst({
+    where: { id: assignmentId, projectId: project.id },
+    select: { userId: true, taskId: true, user: { select: { name: true } } },
+  });
+  if (!owner) return { ok: false, error: 'not_found' };
+  return retryOnLockConflict(() =>
+    prisma.$transaction(async (tx) => {
+      const clock = await lockWorkClock(tx, project.orgId, owner.userId, now);
+      await lockTaskOfAssignment(tx, assignmentId);
+      const claim = await tx.assignment.findFirst({
+        where: { id: assignmentId, status: 'ACTIVE' },
+        select: { claimedAt: true, expiresAt: true, draftSeconds: true },
+      });
+      if (!claim) return { ok: false, error: 'not_active' } as const;
+      // the pay mode as it is now, held against a settings save, as a submission reads it
+      const [pay] = await tx.$queryRaw<Array<{ rateCents: number; payMode: PayMode }>>`
+        SELECT "rateCents", "payMode" FROM "Project" WHERE id = ${project.id} FOR SHARE`;
+      // a claim past its limit that nobody marked expired yet is credited up to its limit
+      const end = claim.expiresAt < now ? claim.expiresAt : now;
+      const credit =
+        pay.payMode === 'HOURLY' && clock
+          ? creditTime({
+              reported: claim.draftSeconds,
+              start: claim.claimedAt,
+              now: end,
+              credited: clock.credited,
+              cap: firstSubmissionCap(project.timeLimitMinutes),
+            })
+          : { seconds: 0, pieces: [] };
+      const paid =
+        credit.seconds > 0
+          ? { rateCents: pay.rateCents, payMode: pay.payMode, payableAt: now }
+          : {};
+      const released = await tx.assignment.updateMany({
+        where: { id: assignmentId, status: 'ACTIVE' },
+        data: { status: 'RELEASED', ...NO_DRAFT, activeSeconds: credit.seconds, ...paid },
+      });
+      if (released.count === 0) return { ok: false, error: 'not_active' } as const;
+      await recordCredit(tx, clock, credit, now);
+      const task = await tx.task.findUniqueOrThrow({
+        where: { id: owner.taskId },
+        select: { position: true },
+      });
+      await logActivity(tx, {
+        orgId: project.orgId,
+        projectId: project.id,
+        actorId,
+        action: 'assignment.released',
+        detail: {
+          taskId: owner.taskId,
+          position: task.position,
+          userId: owner.userId,
+          userName: owner.user.name,
+          seconds: credit.seconds,
+        },
+        createdAt: now,
+      });
+      return { ok: true, creditedSeconds: credit.seconds } as const;
+    }),
+  );
 }
 
 /**

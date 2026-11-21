@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { parseAgreementThreshold, parseMaxExtraAnnotators } from './adjudication';
 import { DEFAULT_DISPUTE_WINDOW_DAYS } from './disputes';
 import { readOptionalNumber } from './form-fields';
+import { parseDailyTaskLimit } from './daily-limit';
 import { parseMoney } from './payouts';
 import { parseGoldEvery, parseQueueOrder } from './queue-order';
 import { readSamplePercent } from './review-sampling';
@@ -40,6 +41,8 @@ export type ProjectInput = z.infer<typeof projectFormSchema> & {
   /** a share from 0.01 to 1; null leaves every task to complete as before */
   agreementThreshold: number | null;
   maxExtraAnnotators: number;
+  /** tasks one person may hand in per UTC day; null is no limit */
+  dailyTaskLimit: number | null;
 };
 
 export type ProjectFormResult =
@@ -83,6 +86,8 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
   if (!threshold.ok) errors.agreementThreshold = threshold.error;
   const extras = parseMaxExtraAnnotators(form.get('maxExtraAnnotators'));
   if (!extras.ok) errors.maxExtraAnnotators = extras.error;
+  const dailyLimit = parseDailyTaskLimit(form.get('dailyTaskLimit'));
+  if (!dailyLimit.ok) errors.dailyTaskLimit = dailyLimit.error;
 
   if (
     !parsed.success ||
@@ -91,7 +96,8 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
     !queueOrder.ok ||
     !goldEvery.ok ||
     !threshold.ok ||
-    !extras.ok
+    !extras.ok ||
+    !dailyLimit.ok
   ) {
     return { ok: false, errors };
   }
@@ -105,6 +111,7 @@ export function parseProjectForm(form: FormData): ProjectFormResult {
       goldEvery: goldEvery.value,
       agreementThreshold: threshold.value,
       maxExtraAnnotators: extras.value,
+      dailyTaskLimit: dailyLimit.value,
     },
   };
 }
