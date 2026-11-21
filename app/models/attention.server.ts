@@ -1,3 +1,4 @@
+import { backupAttention, type BackupAttention } from '~/domain/backups';
 import { isGoldFlagged } from '~/domain/gold';
 import { prisma } from '~/lib/db.server';
 
@@ -12,12 +13,47 @@ export type AttentionItem =
       userName: string;
       accuracy: number;
       attempts: number;
-    };
+    }
+  | BackupAttention;
+
+/** The newest dump that worked, for the line under the admin's list. */
+export type LastBackup = { file: string | null; finishedAt: Date } | null;
+
+/**
+ * The backup items of the needs-attention list and the newest good dump.
+ * `null` when the backup service has never written a row, so a stack that
+ * does not run it hears nothing.
+ */
+export async function backupStatus(
+  now = new Date(),
+): Promise<{ items: BackupAttention[]; lastGood: LastBackup } | null> {
+  const select = {
+    finishedAt: true,
+    ok: true,
+    file: true,
+    message: true,
+    intervalSeconds: true,
+  } as const;
+  const [latest, lastGood] = await Promise.all([
+    prisma.backupRun.findFirst({ orderBy: [{ finishedAt: 'desc' }, { id: 'desc' }], select }),
+    prisma.backupRun.findFirst({
+      where: { ok: true },
+      orderBy: [{ finishedAt: 'desc' }, { id: 'desc' }],
+      select,
+    }),
+  ]);
+  if (!latest) return null;
+  return {
+    items: backupAttention(latest, lastGood, now),
+    lastGood: lastGood ? { file: lastGood.file, finishedAt: lastGood.finishedAt } : null,
+  };
+}
 
 /**
  * Things a manager should look at across the organisation's active projects:
  * submissions waiting for review for more than a day, and annotators whose
- * gold accuracy is below the pass score.
+ * gold accuracy is below the pass score. Backups are in `backupStatus`, for
+ * admins only.
  */
 export async function needsAttention(orgId: string, now = new Date()): Promise<AttentionItem[]> {
   const projects = await prisma.project.findMany({
