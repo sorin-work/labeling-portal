@@ -17,6 +17,7 @@ const layoutData = {
   role: 'ADMIN' as const,
   orgName: 'Acme Labeling',
   flash: null,
+  unread: 2,
 };
 
 /**

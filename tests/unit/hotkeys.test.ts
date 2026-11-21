@@ -385,7 +385,8 @@ describe('keyName', () => {
     expect(keyName(press('Enter', 'Enter'))).toBe('Enter');
     expect(keyName(press('z', 'KeyZ', { ctrlKey: true }))).toBe('Mod+z');
     expect(keyName(press('z', 'KeyZ', { metaKey: true }))).toBe('Mod+z');
-    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBeNull();
+    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBe('Mod+y');
+    expect(keyName(press('Y', 'KeyY', { ctrlKey: true, shiftKey: true }))).toBeNull();
   });
 
   it('does not take a modifier pressed on its own for a key', () => {
@@ -394,11 +395,11 @@ describe('keyName', () => {
     }
   });
 
-  it('knows undo and redo, and no other Ctrl or Cmd letter', () => {
+  it('knows undo and the two redo keys, and no other Ctrl or Cmd letter', () => {
     expect(keyName(press('z', 'KeyZ', { ctrlKey: true }))).toBe('Mod+z');
     expect(keyName(press('z', 'KeyZ', { metaKey: true }))).toBe('Mod+z');
     expect(keyName(press('Z', 'KeyZ', { ctrlKey: true, shiftKey: true }))).toBe('Mod+Shift+z');
-    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBeNull();
+    expect(keyName(press('y', 'KeyY', { ctrlKey: true }))).toBe('Mod+y');
     expect(keyName(press('f', 'KeyF', { ctrlKey: true }))).toBeNull();
     expect(keyName(press('ArrowLeft', 'ArrowLeft', { altKey: true }))).toBeNull();
     expect(keyName(press('ArrowLeft', 'ArrowLeft', { ctrlKey: true }))).toBeNull();
@@ -500,8 +501,10 @@ describe('entity spans', () => {
     expect(interfaceAction(ner, 'Backspace', editing(at(null)))).toBeNull();
   });
 
-  it('can be put back with the undo key, which a text box keeps for itself', () => {
-    expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undoRemove');
+  it('have undo and redo, keys a text box keeps for itself', () => {
+    expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undo');
+    expect(interfaceAction(ner, 'Mod+Shift+z', editing(at(null)))?.action).toBe('redo');
+    expect(interfaceAction(ner, 'Mod+y', editing(at(null)))?.action).toBe('redo');
     expect(interfaceAction(ner, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
   });
 

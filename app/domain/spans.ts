@@ -145,3 +145,32 @@ export function splitAtRange(
       }));
   });
 }
+
+const key = (span: Pick<Span, 'start' | 'end'>) => `${span.start}:${span.end}`;
+
+/**
+ * What an undo or a redo changed in a list of spans, as a sentence for the
+ * live region: the spans that came back, went or changed type. `what` is
+ * "Undone" or "Redone".
+ */
+export function describeSpanStep(
+  text: string,
+  before: readonly Span[],
+  after: readonly Span[],
+  what: string,
+): string {
+  const was = new Map(before.map((s) => [key(s), s]));
+  const now = new Map(after.map((s) => [key(s), s]));
+  const quote = (s: Span) => `${s.label} “${spanText(text, s)}”`;
+  const parts: string[] = [];
+  for (const span of after) {
+    const old = was.get(key(span));
+    if (!old) parts.push(`back: ${quote(span)}`);
+    else if (old.label !== span.label) {
+      parts.push(`“${spanText(text, span)}” is ${span.label}, was ${old.label}`);
+    }
+  }
+  for (const span of before) if (!now.has(key(span))) parts.push(`gone: ${quote(span)}`);
+  const count = `${after.length} span${after.length === 1 ? '' : 's'}`;
+  return parts.length ? `${what}, ${parts.join('; ')}. ${count}.` : `${what}. ${count}.`;
+}

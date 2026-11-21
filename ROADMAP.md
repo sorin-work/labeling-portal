@@ -61,10 +61,10 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 21  | Spot checks and letting go of a review hold  | Shipped | review        | M    | -          |
 | 22  | Taking back the last submission              | Shipped | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Shipped | ops           | S    | -          |
-| 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
+| 24  | Notifications inside the app                 | Shipped | ui            | M    | -          |
 | 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
 | 26  | Background jobs that survive a restart       | Shipped | ops           | M    | -          |
-| 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
+| 27  | Undo and redo for entity spans               | Shipped | labeling      | S    | -          |
 | 28  | Two-step sign-in                             | Shipped | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
 | 30  | Webhooks                                     | Later   | api           | L    | 26         |
@@ -76,38 +76,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 Everything that was here has shipped.
 
 ## Later
-
-### 24. Notifications inside the app
-
-Improves items 9 and 4. Nobody is told anything except through tab counts and
-the "My work" page: not about a send-back or a correction, a new dispute, its
-outcome, or a rescore that changed a gold score. The app sends no mail and
-has no mail service, and adding a hosted one is against how it is run.
-
-- Data: `Notification` (user, organisation, kind, project, link, created,
-  read), written in the same transaction as the event, the way `logActivity`
-  is. A count of unread ones in `routes/app-layout.tsx` (one indexed count per
-  page, `@@index([userId, readAt])`) and a `/notifications` page that marks
-  them as read.
-- Events: work sent back or fixed (`recordReview`), a dispute opened (to the
-  project's managers), a dispute settled (to the annotator and the reviewer
-  who decided), a gold rescore that changed your score, a claim released by
-  a manager (item 19), and changed instructions (`instructionsUpdatedAt`,
-  which the work page already uses for its banner).
-- Tricky: gold must not stand out. A rescore notice says the task was gold,
-  which is fine only where gold feedback already says so after submitting.
-  With feedback off, no notice.
-- Tricky: a dispute can be settled by any reviewer of the project except the
-  one who decided. Notifying all of them is noise; I lean towards the
-  managers only, and the Disputes tab count for reviewers.
-- Tricky: the table grows. Read notifications older than 90 days can go; who
-  removes them depends on item 26, or on a cleanup when the page is opened.
-- Undecided: mail through an SMTP server the owner runs (`SMTP_URL`, off by
-  default). Self-hostable and optional, so it fits the rules, but it brings
-  bounce handling and unsubscribing. I would leave it to a later item.
-- Tests: integration tests that each event writes its notification in the
-  same transaction (a refused review writes none), gold without feedback
-  writes none, the count, and that nobody reads another person's.
 
 ### 25. Marking a pay period as paid
 
@@ -140,28 +108,6 @@ period twice, or forgetting a person, is only noticed by hand.
 - Tests: `tests/integration/payouts.test.ts`: close, refuse overlap and an
   open period, earnings show paid, no assignment in two runs, revision time
   after the close goes to the next run.
-
-### 27. Undo and redo for entity spans
-
-Improves items 3 and 13, whose notes say that a removed span can be put back
-once and that spans do not use the history yet. Boxes have full undo and redo
-through `domain/history.ts`. In `components/labeling/ner.tsx` only the last
-removed span comes back (the `removed` state), and a wrong type or a span
-added by mistake cannot be undone.
-
-- The spans list goes through `domain/history.ts` like the boxes: `Ctrl+Z`,
-  `Ctrl+Shift+Z` and buttons, as rows of the key map in `domain/hotkeys.ts`,
-  in place of `undoRemove`. The selection travels with each step, as it does
-  for boxes.
-- Tricky: the word cursor from item 8 and the live region. Each undo says
-  what came back or went, as the box interface does.
-- Tricky: "Start from the suggestion" (item 18) is a step too, so undo goes
-  back to an empty answer, not past it.
-- Tricky: the history lives in memory per assignment. A reload starts from
-  the draft with no history, the same as boxes; say so in the docs instead of
-  storing history in the draft.
-- Tests: unit tests in `tests/unit/history.test.ts` with span lists; a DOM
-  test for the keys and the announcements, with axe.
 
 ### 29. Ranking several responses
 
@@ -797,6 +743,26 @@ the order they were written (by id), not by the container's clock; a failed
 row keeps pg_dump's error line in ASCII; the script keeps the newest 500 rows.
 Still open: nothing reaches anyone who does not open the dashboard.
 
+### 24. Notifications inside the app
+
+`Notification` (person, organisation, kind, project, link, detail, created,
+read) with `@@index([userId, readAt])`, written by `notify` in the
+transaction of each event: a send-back or a fix (`recordReview`), a dispute
+opened (to admins and managers, as the item leaned), a dispute settled (to
+the annotator and the reviewer who decided), a gold rescore that changed a
+score (only with gold feedback on), a claim a manager released and changed
+instructions (to the project's members). Nobody is told about their own
+action, and a notification holds no answer, feedback or reason. The header
+counts the unread ones of the signed-in organisation; `/notifications`
+pages through them, unread first, and marks them read with a POST once they
+are on screen (or "Mark all as read"), never on a GET. Read ones older than
+90 days are removed by that post; a job of item 26 could do it instead, but
+a person's own page is the one place that reads them. The instructions
+notices are written after the settings save commits. Left
+out, as the item suggested: mail through an SMTP server. Still open: no
+notice reaches someone who never opens the app, and a qualification test or
+a review queue that fills up tells nobody.
+
 ### 26. Background jobs that survive a restart
 
 `Job` rows (kind, payload, run at, attempts out of a maximum, lease, last
@@ -817,6 +783,22 @@ attempt, so a run whose lease ran out cannot undo a newer one; the migration
 turns batches left `PENDING` into jobs; the batch page no longer starts a run
 when it is opened. Still open: finished jobs are never removed and nothing
 lists them.
+
+### 27. Undo and redo for entity spans
+
+The spans of `components/labeling/ner.tsx` go through `domain/history.ts`
+like the boxes, with the picked span in each step, in place of putting back
+the last removed span. `Ctrl+Z`, `Ctrl+Shift+Z` and two buttons, as `undo`
+and `redo` rows of the key map in place of `undoRemove`. Marking, removing
+and changing a type are steps. Any answer set from outside the interface is
+one step of its own, which covers "Start from the suggestion" as the item
+asked (undo goes back to the empty answer and stops, and takes back the
+server's mark that the suggestion was taken) and also a tab's unsaved work
+put back on load. `Ctrl+Y` is a second redo key for spans and boxes. Each undo and redo says what came back, went or
+changed type (`describeSpanStep`). The history is in memory per assignment;
+a reload starts from the draft with none, as the docs say. Still open: the
+word cursor stays where it was after an undo instead of moving to the span
+that changed.
 
 ### 28. Two-step sign-in
 

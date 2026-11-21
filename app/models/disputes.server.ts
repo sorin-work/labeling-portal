@@ -11,6 +11,7 @@ import { lockTaskOfAssignment, prisma } from '~/lib/db.server';
 import { can, ROLES } from '~/lib/permissions';
 
 import { logActivity } from './activity.server';
+import { managersOf, notify } from './notifications.server';
 import { refreshTaskStatus } from './tasks.server';
 
 type Db = typeof prisma | Prisma.TransactionClient;
@@ -123,6 +124,29 @@ export async function openDispute(
         createdAt: now,
       },
     });
+    // the managers settle it or hand it on; the reviewers see the Disputes tab count
+    const [task, opener, managers] = await Promise.all([
+      tx.task.findUniqueOrThrow({ where: { id: assignment.taskId }, select: { position: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: openerId }, select: { name: true } }),
+      managersOf(tx, assignment.project.orgId),
+    ]);
+    await notify(
+      tx,
+      managers.map((userId) => ({
+        userId,
+        orgId: assignment.project.orgId,
+        projectId: assignment.projectId,
+        kind: 'dispute.opened' as const,
+        link: `/projects/${assignment.projectId}/disputes/${dispute.id}`,
+        detail: {
+          projectName: assignment.project.name,
+          position: task.position,
+          actorName: opener.name,
+        },
+        createdAt: now,
+      })),
+      openerId,
+    );
     return { ok: true, dispute };
   });
 }
@@ -190,7 +214,11 @@ export async function resolveDispute(
     const [task, annotator] = await Promise.all([
       tx.task.findUniqueOrThrow({
         where: { id: dispute.assignment.taskId },
-        select: { position: true, projectId: true },
+        select: {
+          position: true,
+          projectId: true,
+          project: { select: { orgId: true, name: true } },
+        },
       }),
       tx.user.findUniqueOrThrow({
         where: { id: dispute.assignment.userId },
@@ -213,6 +241,41 @@ export async function resolveDispute(
       },
       createdAt: now,
     });
+    // the annotator who disputed and the reviewer who decided hear the outcome
+    const resolver = await tx.user.findUniqueOrThrow({
+      where: { id: resolverId },
+      select: { name: true },
+    });
+    const told = {
+      orgId: task.project.orgId,
+      projectId: task.projectId,
+      kind: 'dispute.resolved' as const,
+      createdAt: now,
+    };
+    const about = {
+      projectName: task.project.name,
+      position: task.position,
+      actorName: resolver.name,
+      outcome: input.outcome,
+    };
+    await notify(
+      tx,
+      [
+        {
+          ...told,
+          userId: dispute.assignment.userId,
+          link: `/my-work/${dispute.assignmentId}`,
+          detail: { ...about, role: 'annotator' },
+        },
+        {
+          ...told,
+          userId: dispute.review.reviewerId,
+          link: `/projects/${task.projectId}/disputes/${disputeId}`,
+          detail: { ...about, role: 'reviewer' },
+        },
+      ],
+      resolverId,
+    );
     if (input.outcome === 'UPHELD') return { ok: true };
 
     // the task row before the assignment row, as everywhere (lockTaskOfAssignment)

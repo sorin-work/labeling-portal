@@ -10,8 +10,8 @@ import { KIND_LABELS, type SchemaKind, type TaskSchema } from './task-schema';
  *
  * Key names: digits are '0' to '9', letters are lower case, other keys use
  * their `KeyboardEvent.key` name ('Delete', 'Escape', '?', 'ArrowLeft').
- * 'Mod+' is Ctrl or Cmd, and only 'Mod+Enter', 'Mod+z' and 'Mod+Shift+z'
- * exist. 'Shift+' is only written for the arrow keys and Tab; elsewhere Shift
+ * 'Mod+' is Ctrl or Cmd, and only 'Mod+Enter', 'Mod+z', 'Mod+Shift+z' and
+ * 'Mod+y' exist. 'Shift+' is only written for the arrow keys and Tab; elsewhere Shift
  * is part of typing the character. '*' stands for any other key.
  */
 
@@ -185,7 +185,8 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
     // Not Backspace: a reviewer who clicks a span leaves the feedback box, and
     // the next Backspace is meant for text.
     { action: 'remove', keys: ['Delete'], label: 'Remove the selected span', destructive: true },
-    { action: 'undoRemove', keys: ['Mod+z'], label: 'Put back the span that was just removed' },
+    { action: 'undo', keys: ['Mod+z'], label: 'Undo' },
+    { action: 'redo', keys: ['Mod+Shift+z', 'Mod+y'], label: 'Redo' },
     // The text keys only act while the text has focus (Tab to it); anywhere
     // else the arrows and Enter keep what they do.
     {
@@ -253,7 +254,7 @@ export const INTERFACE_KEYS: Record<SchemaKind, KeyBinding[]> = {
       destructive: true,
     },
     { action: 'undo', keys: ['Mod+z'], label: 'Undo' },
-    { action: 'redo', keys: ['Mod+Shift+z'], label: 'Redo' },
+    { action: 'redo', keys: ['Mod+Shift+z', 'Mod+y'], label: 'Redo' },
     { action: 'zoomIn', keys: ['+', '='], label: 'Zoom in', readOnly: true, repeat: true },
     { action: 'zoomOut', keys: ['-'], label: 'Zoom out', readOnly: true, repeat: true },
     { action: 'fit', keys: ['f'], label: 'Fit the whole image', readOnly: true },
@@ -343,6 +344,8 @@ export function keyName(press: KeyPress): string | null {
   if (press.ctrlKey || press.metaKey) {
     if (press.key === 'Enter') return 'Mod+Enter';
     if (press.key.toLowerCase() === 'z') return press.shiftKey ? 'Mod+Shift+z' : 'Mod+z';
+    // the other common redo key
+    if (press.key.toLowerCase() === 'y' && !press.shiftKey) return 'Mod+y';
     return null;
   }
   if (/^\d$/.test(press.key)) return press.key;
@@ -532,6 +535,7 @@ const KEY_WORDS: Record<string, string> = {
   'Mod+Enter': 'Ctrl + Enter',
   'Mod+z': 'Ctrl + Z',
   'Mod+Shift+z': 'Ctrl + Shift + Z',
+  'Mod+y': 'Ctrl + Y',
   'Shift+Tab': 'Shift + Tab',
   ArrowLeft: '←',
   ArrowRight: '→',

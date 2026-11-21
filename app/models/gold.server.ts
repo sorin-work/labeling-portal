@@ -18,6 +18,7 @@ import { parseTaskSchema } from '~/domain/task-schema';
 import { prisma, retryOnLockConflict } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
+import { notify } from './notifications.server';
 import { projectSchema } from './projects.server';
 
 type Tx = Prisma.TransactionClient;
@@ -345,6 +346,24 @@ export async function applyRescore(
         },
         createdAt: now,
       });
+      // A notice says the task was gold. Only where gold feedback tells the
+      // annotator that already, after they hand it in, and only for a gold
+      // task that counts; a qualification question is not in the queue.
+      if (project.goldFeedback && task.isGold && !task.isQualification && !task.goldRetiredAt) {
+        await notify(
+          tx,
+          plan.changes.map((change) => ({
+            userId: change.userId,
+            orgId: project.orgId,
+            projectId: project.id,
+            kind: 'gold.rescored' as const,
+            link: `/my-work/${change.assignmentId}`,
+            detail: { projectName: project.name, from: change.from, to: change.to },
+            createdAt: now,
+          })),
+          actorId,
+        );
+      }
     }
     return { ok: true, plan };
   });
