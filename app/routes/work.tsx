@@ -29,6 +29,7 @@ import { droppedNote, fitDraft } from '~/domain/drafts';
 import { pageShortcut } from '~/domain/hotkeys';
 import { withoutImportId } from '~/domain/import';
 import { SKIP_REASONS } from '~/domain/skip';
+import { takeBackRefusal, takeBackUntil } from '~/domain/take-back';
 import { renderMarkdown } from '~/domain/markdown';
 import { describeSuggestion } from '~/domain/prelabel';
 import { assignmentRef } from '~/domain/reference';
@@ -46,6 +47,8 @@ import {
   releaseExpiredClaims,
   skipAssignment,
   submitAssignment,
+  takeBackState,
+  takeBackSubmission,
 } from '~/models/queue.server';
 
 import type { Route } from './+types/work';
@@ -85,8 +88,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const lastSubmission = await prisma.assignment.findFirst({
     where: { projectId: project.id, userId: user.id, status: 'SUBMITTED' },
     orderBy: { submittedAt: 'desc' },
-    select: { submittedAt: true },
+    select: { id: true, submittedAt: true },
   });
+  // the task just handed in can be taken back for a short while
+  const now = new Date();
+  const lastState = lastSubmission
+    ? await takeBackState(prisma, lastSubmission.id, user.id, now)
+    : null;
+  const takeBack =
+    lastSubmission && lastState && lastState.submittedAt && !takeBackRefusal(lastState, now)
+      ? { id: lastSubmission.id, until: takeBackUntil(lastState.submittedAt).toISOString() }
+      : null;
   const instructionsChanged = Boolean(
     project.instructionsUpdatedAt &&
     lastSubmission?.submittedAt &&
@@ -96,6 +108,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     // the key of unsaved work in the tab; the user's id does not leave the server
     userTag: userTag(user.id),
     instructionsChanged,
+    takeBack,
     assignment: {
       id: assignment.id,
       claimedAt: assignment.claimedAt.toISOString(),
@@ -169,6 +182,23 @@ export async function action({ request, params }: Route.ActionArgs) {
     // the page tells the server when the suggestion was taken; a submission reads it from there
     const marked = await markSuggestionTaken(assignment.id, user.id);
     return data({ error: marked ? null : 'This task is no longer yours.' });
+  }
+
+  if (intent === 'take-back') {
+    const id = String(form.get('submissionId') ?? '');
+    const taken = await takeBackSubmission(id, user.id);
+    if (!taken.ok) {
+      return data(
+        {
+          error:
+            taken.error === 'too_late'
+              ? 'The time to take that task back has run out.'
+              : 'That task can no longer be taken back.',
+        },
+        { status: 409 },
+      );
+    }
+    return redirect(`/my-work/${id}`);
   }
 
   if (intent === 'release') {
@@ -340,6 +370,7 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
           </div>
         </div>
         {actionData?.error && <Alert>{actionData.error}</Alert>}
+        {loaderData.takeBack && <TakeBack key={loaderData.takeBack.id} {...loaderData.takeBack} />}
         {assignment.draftNote && <Alert tone="info">{assignment.draftNote}</Alert>}
         <TimeWarning
           key={assignment.expiresAt}
@@ -469,5 +500,32 @@ function WorkPage({ loaderData, actionData, next }: Route.ComponentProps & { nex
         </Card>
       </aside>
     </div>
+  );
+}
+
+/**
+ * "Take back the last task", for `TAKE_BACK_MINUTES` after a submission. It
+ * goes away by itself when the time is up; the server checks the time again.
+ */
+function TakeBack({ id, until }: { id: string; until: string }) {
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    const left = new Date(until).getTime() - Date.now();
+    if (left <= 0) {
+      setOpen(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setOpen(false), left);
+    return () => window.clearTimeout(timer);
+  }, [until]);
+  if (!open) return null;
+  return (
+    <Form method="post" className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+      <input type="hidden" name="submissionId" value={id} />
+      <span>Handed in the last task by mistake?</span>
+      <Button name="intent" value="take-back" variant="secondary">
+        Take back the last task
+      </Button>
+    </Form>
   );
 }
