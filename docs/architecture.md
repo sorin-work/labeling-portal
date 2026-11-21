@@ -203,9 +203,10 @@ in a circle:
    statement `ORDER BY id`).
 
 Closing a pay period adds one lock in front of this order, the
-organisation's pay run lock, which a close takes before any assignment row
-and nothing takes after one except to move a payable date into the past
-(see "Pay runs" below).
+organisation's pay run lock, which a close takes before any assignment row.
+The one exception is a write that sets a payable date: it takes the lock
+shared after its own rows, which cannot close a circle for the reason given
+under "Pay runs" below.
 
 The slot counter is why the task row comes before the assignment row: when an
 assignment enters or leaves `ACTIVE`/`SUBMITTED` (a claim, a skip, a release,
@@ -1168,7 +1169,11 @@ was closed, or as not paid yet. A closing is in the audit trail
 - **Only a period that is over.** Work becomes payable at the moment it is
   accepted, so a period whose last day has not ended in UTC could still
   gain work after the close; such a close is refused (`closeRefusal` in
-  `app/domain/pay-runs.ts`). Two runs never share a day.
+  `app/domain/pay-runs.ts`), and so is one in the first five minutes after
+  the period ends (`CLOSE_GRACE_MS`): that is longer than any transaction may
+  run (30 seconds), so work accepted by a transaction that began just before
+  midnight has been written, or given up, before the close looks. Two runs
+  never share a day.
 - **No work in two runs.** The close marks exactly the payable rows of the
   period that have no run (`payRunId IS NULL`), after locking them, and
   computes the lines from those rows, so the lines and the marks agree.
@@ -1189,14 +1194,23 @@ was closed, or as not paid yet. A closing is in the audit trail
   for, and time added later is paid with the work in the run that pays it.
 - **Lock order.** Closing takes the organisation's pay run lock (a
   transaction advisory lock on `pay-run:<orgId>`) exclusively, then the
-  assignment rows of the period in id order, and no task row or work clock.
-  The trigger above takes the same lock shared, and only for a payable date
-  before today, so a close and such a write run one after the other: either
-  the write sees the run and moves the date, or the close sees the written
-  date and pays it. A write that waits for the shared lock holds its task
-  and assignment rows, but the close never waits for those rows: they are
-  not payable in the period before that write. Every other write is
-  untouched by the lock.
+  assignment rows of the period in id order with `FOR NO KEY UPDATE` (so the
+  foreign-key checks of reviews, disputes, spot checks and rescores on those
+  rows do not wait), and no task row or work clock. Every write that sets a
+  payable date takes the same lock shared, in the trigger above, so a close
+  and such a write run one after the other: either the write sees the run
+  and moves the date, or the close sees the written date and pays it.
+- **The one exception to "pay run lock first".** The trigger takes the
+  shared lock after its transaction already holds its task and assignment
+  rows, so it is the one place where the pay run lock comes after rows. It
+  cannot close a circle today: the close only waits for rows that are
+  already payable in the period and have no run, and no write sets a new
+  payable date on such a row. The writes that set one start from a row that
+  is not payable (a submission, a review decision, an overturned send-back,
+  a resubmission, a manager's release); taking work back clears the date,
+  which takes no lock; an overturned correction keeps its date. A future
+  write that moves the payable date of work that is already payable has to
+  take the pay run lock before its rows.
 
 ## Changing the schema once work exists
 
