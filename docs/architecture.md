@@ -771,7 +771,31 @@ pure code: the geometry in `app/domain/geometry.ts`, undo in
 - Every project has an **activity** tab, and admins have `/audit` for the
   whole organisation. See "Audit trail" below.
 - Sign-in attempts are rate limited per email (ten failures per fifteen
-  minutes, in memory).
+  minutes). See "Rate limits".
+
+## Rate limits
+
+`RateLimiter` in `app/lib/rate-limit.server.ts` counts in PostgreSQL, so
+every app process shares one count and a restart does not clear a lockout.
+There are three: `login` (ten failed sign-ins per email per fifteen
+minutes), `two-step` (five wrong codes per account and client address per
+fifteen minutes) and `api` (120 requests a minute per token).
+
+- **One row per key** in `RateLimitHit`, named after the limiter
+  (`login:ann@example.com`). An attempt is one statement, `INSERT ... ON
+CONFLICT (key) DO UPDATE`, that adds one to the count, or starts the row
+  over when its window is past, and returns the count. A window starts with
+  the first attempt of a key, as the memory limiter did, so a burst is not
+  split by a clock boundary.
+- **`justLocked` once.** The row puts concurrent attempts in line, so
+  exactly one of them sees `limit + 1`, and a lockout is recorded once.
+- **UNLOGGED.** The table is created `UNLOGGED` in its migration (Prisma's
+  schema cannot say so): the API writes a row on every request, and this
+  keeps those writes out of the write-ahead log. A crash empties the table,
+  which only ends lockouts early. A dump still holds its rows.
+- **Pruning.** Every thousandth attempt in a process removes the rows whose
+  window is past. A key that comes back starts a new row.
+- Dates go through `utc()`, as in every raw query.
 
 ## Two-step sign-in
 

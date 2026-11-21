@@ -240,6 +240,10 @@ the period of its approval.
 
 ### Operations
 
+- Rate limits shared between processes: the sign-in, second-step and API
+  limits count in an UNLOGGED PostgreSQL table, one statement per attempt,
+  so a restart no longer clears a lockout and two app processes do not each
+  allow the full limit. A lockout is still recorded once
 - Two-step sign-in: an authenticator app's six-digit code after the
   password, set up on the account page with a QR code drawn on the server,
   and ten one-time recovery codes. The secret is encrypted with `TOTP_KEY`,

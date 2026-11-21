@@ -26,7 +26,8 @@ curl -H "Authorization: Bearer $LP_TOKEN" https://labels.example.test/api/v1/pro
 ```
 
 - A read-only token can call every `GET` route and nothing else.
-- Each token may make 120 requests a minute (per app process). More answer
+- Each token may make 120 requests a minute, counted for all app processes
+  together. More answer
   429 with `Retry-After`.
 - The list on the account page says when a token was last used, to the
   minute.
