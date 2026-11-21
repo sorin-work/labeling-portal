@@ -14,6 +14,12 @@
 # and for the order they are pruned in. Modification times are not looked
 # at: on a network share they come from another machine's clock.
 #
+# After every dump attempt a row goes into the app's "BackupRun" table, so
+# that the app can tell an admin when the last dump failed or is late. A
+# database without that table (an app older than it, or a stack that is
+# still migrating) gets no row and a line in the log, and the dump is not
+# affected. BACKUP_STATUS=off writes no rows.
+#
 # A dump whose name is dated in the future was made while the clock was
 # wrong. Such dumps, and dumps whose name holds a date that does not exist,
 # are never removed here and do not use up BACKUP_KEEP, and every run names
@@ -23,6 +29,7 @@ set -eu
 dir=${BACKUP_DIR:-/backups}
 keep=${BACKUP_KEEP:-7}
 interval=${BACKUP_INTERVAL_SECONDS:-86400}
+status=${BACKUP_STATUS:-on}
 
 # A dump holds accounts, password hashes, answers and pay data: owner only.
 umask 077
@@ -122,17 +129,45 @@ prune() {
   warn_about_future_dumps "$clock"
 }
 
+# Writes the row of one attempt to "BackupRun":
+#   record <started> <ok: true or false> <file> <bytes> <message>
+# Empty values are stored as nothing. The values go in as psql variables, so
+# a message with quotes in it cannot break the statement. The row is written
+# after the dump, so it is in the next dump and not in its own.
+record() {
+  [ "$status" != off ] || return 0
+  if ! psql -qAtX -v ON_ERROR_STOP=1 \
+    -v started="$1" -v finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -v ok="$2" \
+    -v file="$3" -v bytes="$4" -v message="$5" -v interval="$interval" >/dev/null 2>&1 <<'SQL'
+insert into "BackupRun" ("startedAt", "finishedAt", ok, file, bytes, message, "intervalSeconds")
+values (:'started', :'finished', :'ok'::boolean, nullif(:'file', ''),
+        nullif(:'bytes', '')::bigint, nullif(:'message', ''), :'interval'::integer)
+SQL
+  then
+    log "could not record this attempt in the BackupRun table (is the app's migration there yet?), so the app does not know about it"
+  fi
+}
+
 # pg_dump writes to a hidden .partial file that is renamed when it is
 # complete, so a dump that was cut short never counts as a backup. Every
 # step is checked by hand because "set -e" is off inside "if dump".
 dump() {
+  started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   name="labeling-$(date -u +%Y%m%dT%H%M%SZ).dump"
   partial="$dir/.$name.partial"
-  if ! pg_dump --format=custom --file="$partial"; then
+  # What pg_dump says goes to the log as before, and its last line into the
+  # row of a dump that failed.
+  errors=$(mktemp)
+  if ! pg_dump --format=custom --file="$partial" 2>"$errors"; then
+    cat "$errors" >&2
     rm -f "$partial"
     partial=''
+    record "$started" false '' '' "$(tail -n 1 "$errors" | cut -c 1-500)"
+    rm -f "$errors"
     return 1
   fi
+  cat "$errors" >&2
+  rm -f "$errors"
   # Docker runs this as root. Give the dump to whoever owns the folder, so
   # that on the host it belongs to the same user as the folder it is in.
   if [ "$(id -u)" = 0 ]; then
@@ -141,10 +176,13 @@ dump() {
   if ! mv "$partial" "$dir/$name"; then
     rm -f "$partial"
     partial=''
+    record "$started" false '' '' "could not rename the finished dump to $name"
     return 1
   fi
   partial=''
-  log "wrote $name ($(wc -c <"$dir/$name") bytes)"
+  bytes=$(wc -c <"$dir/$name" | tr -d ' ')
+  log "wrote $name ($bytes bytes)"
+  record "$started" true "$name" "$bytes" ''
   prune "$name"
 }
 
