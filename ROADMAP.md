@@ -68,6 +68,8 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 28  | Two-step sign-in                             | Later   | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
 | 30  | Webhooks                                     | Later   | api           | L    | 26         |
+| 31  | Rate limits shared between processes         | Maybe   | security      | S    | -          |
+| 32  | Keeping the audit trail for a set time       | Maybe   | ops           | M    | 26         |
 
 ## Next
 
@@ -483,6 +485,53 @@ task is complete or a batch is done.
   rolled-back transaction.
 
 ## Maybe
+
+### 31. Rate limits shared between processes
+
+Improves item 16 and the sign-in limit. `RateLimiter` in
+`lib/rate-limit.server.ts` is a `Map` in memory: restarting the app clears a
+sign-in lockout (the README says so), and two app processes behind a load
+balancer would each count on their own, so the limits double. The app runs
+as one process today, which is why this is here.
+
+- A fixed-window counter in PostgreSQL: one row per key and window,
+  `INSERT ... ON CONFLICT DO UPDATE SET count = count + 1 RETURNING count`.
+  The same `hit(key, now)` shape, made async, for `loginLimiter` and the API
+  limiter.
+- Tricky: a write on every API request, up to 120 a minute per token. An
+  `UNLOGGED` table keeps that out of the write-ahead log; losing the counts
+  in a crash is fine. Old windows are removed by the next hit that finds
+  more than a few thousand rows, as `prune` does now.
+- Tricky: `justLocked` must still be true for exactly one refused attempt, so
+  the lockout is recorded in the audit trail once.
+- Undecided: whether to keep the memory limiter as the default. I lean
+  towards always using the table; one code path is easier to trust.
+- Tests: integration tests that two limiter instances share a count and that
+  a lockout is reported once.
+
+### 32. Keeping the audit trail for a set time
+
+Improves item 15, whose notes say entries are kept for ever. Every sign-in
+and download adds a row, and the trail keeps a person's name after their
+account is gone. Some organisations have a rule that such records are kept
+for a set time and then removed.
+
+- `auditRetentionDays Int?` on `Organization`, set by admins, empty for ever.
+  A daily job (item 26) removes older entries and leaves one entry that says
+  how many went and up to which day.
+- Tricky: the triggers from item 15 refuse every DELETE, on purpose. A way
+  through is a function owned by the database owner that the trigger lets
+  pass, for example through a setting that only that function sets. Anyone
+  with direct database access could use the same way, so the trail becomes
+  weaker than it is today. The docs have to say that plainly.
+- Tricky: the project activity tab reads the same table, so a schema's change
+  history goes with it.
+- Undecided: removing entries or only removing the names in them (the actor
+  and the person a change was about). I lean towards offering only the
+  second, which keeps the trail whole.
+- Tests: integration tests that the job removes only older entries of its own
+  organisation, leaves its own entry, and that a plain DELETE is still
+  refused.
 
 ## Shipped
 
