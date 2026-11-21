@@ -3,10 +3,10 @@ import { Form, Link } from 'react-router';
 import { Badge, Button, Card, EmptyState, StatCard } from '~/components/ui';
 import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
+import { formatDateTime, KIND_NAMES, STATUS_TONES, titleCase } from '~/lib/format';
 import { can } from '~/lib/permissions';
 import { myStats, reviewerStats } from '~/models/annotator-stats.server';
-import { needsAttention } from '~/models/attention.server';
+import { backupStatus, needsAttention } from '~/models/attention.server';
 import { listProjects } from '~/models/projects.server';
 import { countAvailable } from '~/models/queue.server';
 
@@ -46,8 +46,10 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const stats = canAnnotate ? await myStats(user.id, 30, now) : null;
   const reviewing = membership.role === 'REVIEWER' ? await reviewerStats(user.id, 7, now) : null;
+  // a dump holds every organisation, so only admins hear about it
+  const backups = membership.role === 'ADMIN' ? await backupStatus(now) : null;
   const attention = can(membership.role, 'manageProjects')
-    ? await needsAttention(membership.orgId, now)
+    ? [...(await needsAttention(membership.orgId, now)), ...(backups?.items ?? [])]
     : null;
 
   return {
@@ -56,6 +58,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     canAnnotate,
     stats,
     attention,
+    lastBackup: backups?.lastGood ?? null,
     reviewing,
     submittedToday,
     active: active.map((a) => ({ id: a.id, projectName: a.project.name })),
@@ -66,8 +69,17 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { user, canAnnotate, submittedToday, active, projects, stats, attention, reviewing } =
-    loaderData;
+  const {
+    user,
+    canAnnotate,
+    submittedToday,
+    active,
+    projects,
+    stats,
+    attention,
+    lastBackup,
+    reviewing,
+  } = loaderData;
   const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
   return (
     <div className="space-y-6">
@@ -132,32 +144,60 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
             </p>
           ) : (
             <ul className="space-y-1.5 text-sm">
-              {attention.map((item) =>
-                item.kind === 'stale-reviews' ? (
-                  <li key={`s-${item.projectId}`}>
-                    <Link
-                      to={`/projects/${item.projectId}/review`}
-                      className="text-indigo-700 hover:underline"
-                    >
-                      {item.projectName}
-                    </Link>
-                    : {item.count} submission{item.count === 1 ? '' : 's'} waiting for review for
-                    more than a day
-                  </li>
-                ) : (
-                  <li key={`g-${item.projectId}-${item.userName}`}>
-                    <Link
-                      to={`/projects/${item.projectId}/quality`}
-                      className="text-indigo-700 hover:underline"
-                    >
-                      {item.projectName}
-                    </Link>
-                    : {item.userName} matches gold answers {Math.round(item.accuracy * 100)}% of the
-                    time ({item.attempts} gold tasks)
-                  </li>
-                ),
-              )}
+              {attention.map((item) => {
+                switch (item.kind) {
+                  case 'stale-reviews':
+                    return (
+                      <li key={`s-${item.projectId}`}>
+                        <Link
+                          to={`/projects/${item.projectId}/review`}
+                          className="text-indigo-700 hover:underline"
+                        >
+                          {item.projectName}
+                        </Link>
+                        : {item.count} submission{item.count === 1 ? '' : 's'} waiting for review
+                        for more than a day
+                      </li>
+                    );
+                  case 'low-gold':
+                    return (
+                      <li key={`g-${item.projectId}-${item.userName}`}>
+                        <Link
+                          to={`/projects/${item.projectId}/quality`}
+                          className="text-indigo-700 hover:underline"
+                        >
+                          {item.projectName}
+                        </Link>
+                        : {item.userName} matches gold answers {Math.round(item.accuracy * 100)}% of
+                        the time ({item.attempts} gold tasks)
+                      </li>
+                    );
+                  case 'backup-failed':
+                    return (
+                      <li key="backup-failed">
+                        The last dump failed, {formatDateTime(item.at)}
+                        {item.message ? `: ${item.message}` : '. The backup service log says why.'}
+                      </li>
+                    );
+                  case 'backup-late':
+                    return (
+                      <li key="backup-late">
+                        {item.hours === null
+                          ? 'No dump has worked yet.'
+                          : `No dump for ${item.hours} hours.`}
+                      </li>
+                    );
+                }
+              })}
             </ul>
+          )}
+          {lastBackup && (
+            <p className="mt-3 text-xs text-slate-500">
+              Last good dump: {lastBackup.file ?? 'no file name'},{' '}
+              {formatDateTime(lastBackup.finishedAt)}. A dump is recorded after it is made, so it is
+              in the next dump and not its own. After a restore this list ends at the dump before
+              the one that was restored.
+            </p>
           )}
         </Card>
       )}
