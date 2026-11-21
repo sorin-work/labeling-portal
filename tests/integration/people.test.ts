@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getCurrentUser } from '~/lib/auth.server';
+import { getCurrentUser, requireApiUser } from '~/lib/auth.server';
 import { createApiToken } from '~/models/api-tokens.server';
 import { action as peopleAction, loader as peopleLoader } from '~/routes/people';
 
@@ -232,6 +232,80 @@ describe('people admin', () => {
       }),
     );
     expect(statusOf(mismatched)).toBe(404);
+  });
+
+  it('does not let an old cookie or token back in after a remove and a re-add', async () => {
+    const { org, cookie } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR', {
+      name: 'Ann',
+      email: 'ann-again@example.test',
+    });
+    const theirs = await cookieFor(ann, org.id);
+    const token = await createApiToken(org.id, ann.id, {
+      name: 'Nightly',
+      readOnly: true,
+      expiresInDays: null,
+    });
+    await run(
+      peopleAction,
+      makeRequest('/people', { cookie, form: { intent: 'remove', userId: ann.id } }),
+    );
+    await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: {
+          intent: 'add',
+          name: 'Ann',
+          email: 'ann-again@example.test',
+          role: 'ANNOTATOR',
+          password: 'whatever-1',
+        },
+      }),
+    );
+    expect(await prisma.membership.count({ where: { userId: ann.id } })).toBe(1);
+    expect(await signedIn(theirs)).toBe(false);
+    const api = await requireApiUser(
+      makeRequest('/api/v1/projects', { headers: { Authorization: `Bearer ${token.token}` } }),
+    ).catch((error: unknown) => error);
+    expect(statusOf(api)).toBe(401);
+  });
+
+  it('refuses a token of someone in another organisation, and its own password or sessions', async () => {
+    const { org, admin, cookie } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const elsewhere = await createOrg('Elsewhere');
+    await prisma.membership.create({
+      data: { orgId: elsewhere.id, userId: ann.id, role: 'ANNOTATOR' },
+    });
+    const foreign = await createApiToken(elsewhere.id, ann.id, {
+      name: 'Other org',
+      readOnly: true,
+      expiresInDays: null,
+    });
+    const revoke = await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'token-revoke', userId: ann.id, tokenId: foreign.id },
+      }),
+    );
+    expect(statusOf(revoke)).toBe(404);
+    expect(payload<{ error: string }>(revoke).error).toContain('not found');
+    expect(
+      (await prisma.apiToken.findUniqueOrThrow({ where: { id: foreign.id } })).revokedAt,
+    ).toBeNull();
+
+    const own: Array<Record<string, string>> = [
+      { intent: 'password', userId: admin.id, password: 'brand-new-pass' },
+      { intent: 'sessions', userId: admin.id },
+    ];
+    for (const form of own) {
+      const result = await run(peopleAction, makeRequest('/people', { cookie, form }));
+      expect(statusOf(result)).toBe(400);
+      expect(payload<{ error: string }>(result).error).toContain('account page');
+    }
+    expect(await signedIn(cookie)).toBe(true);
   });
 
   it('is only for admins', async () => {
