@@ -98,11 +98,16 @@ them what comes next. The order:
    (fewer for N below 3) the next claim is regular. The wanted kind is tried
    first and the other kind second, so the queue serves what is left when
    only gold or no gold remains. The pick passes over tasks that other claims
-   hold locked at that moment, so finding only the other kind can also mean
-   that the wanted ones are being claimed: then `claimNextTask` lets go of
-   that task and picks again in a new transaction, waiting for those locks.
-   Without that, annotators claiming at the same time could get gold as their
-   first task and leave a regular slot unused. Without spacing, gold tasks
+   hold locked at that moment. When that leaves nothing, or only the other
+   kind (the wanted ones may just be being claimed), `claimNextTask` looks up
+   the task that would come next without taking a lock, ends the transaction,
+   and waits for that one row in a transaction of its own (`waitForTask`,
+   with a two-second `lock_timeout`), holding nothing else. Then it picks
+   again with `SKIP LOCKED`; a wait counts as one of the claim's attempts.
+   A waiting claim never holds one row while it waits for another, so two
+   waiters, or a waiter and an expiry or a gold copy, cannot deadlock.
+   Without the wait, annotators claiming at the same time could get gold as
+   their first task and leave a regular slot unused. Without spacing, gold tasks
    stay where their position puts them, as before.
 2. **Batches**: not paused (`Batch.pausedAt`), the highest `Batch.priority`
    first, then in import order (the batch's first position).
