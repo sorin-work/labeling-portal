@@ -253,13 +253,17 @@ describe('what is recorded', () => {
     await post({ intent: 'password', userId: dana.id, password: 'second-secret-2' });
     await post({ intent: 'remove', userId: dana.id });
 
-    await run(
+    const changed = await run(
       accountAction,
       makeRequest('/account', {
         cookie,
         form: { current: 'password123', next: 'third-secret-3', confirm: 'third-secret-3' },
       }),
     );
+    // the password change ended the old cookie; the tab that made it got a new one
+    const renewed = (changed as { init: { headers: Record<string, string> } }).init.headers[
+      'Set-Cookie'
+    ].split(';')[0];
 
     expect(await actions(org.id)).toEqual([
       'person.added',
@@ -275,7 +279,7 @@ describe('what is recorded', () => {
     const passwordHash = (await prisma.user.findUniqueOrThrow({ where: { id: dana.id } }))
       .passwordHash;
     expect(stored).not.toContain(passwordHash);
-    expect((await audit(cookie)).entries.map((e) => e.text)).toEqual([
+    expect((await audit(renewed)).entries.map((e) => e.text)).toEqual([
       'changed their own password',
       'removed Dana from the organisation',
       'set a new password for Dana',

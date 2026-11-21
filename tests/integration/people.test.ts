@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { getCurrentUser } from '~/lib/auth.server';
+import { createApiToken } from '~/models/api-tokens.server';
 import { action as peopleAction, loader as peopleLoader } from '~/routes/people';
 
 import {
@@ -139,6 +141,97 @@ describe('people admin', () => {
       }),
     );
     expect(statusOf(short)).toBe(400);
+  });
+
+  async function signedIn(cookie: string) {
+    return (await getCurrentUser(makeRequest('/projects', { cookie }))) !== null;
+  }
+
+  it('ends every session of a member when an admin sets their password', async () => {
+    const { org, cookie } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR');
+    const theirs = await cookieFor(ann, org.id);
+    expect(await signedIn(theirs)).toBe(true);
+    await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'password', userId: ann.id, password: 'brand-new-pass' },
+      }),
+    );
+    expect(await signedIn(theirs)).toBe(false);
+    // the admin who did it is not signed out
+    expect(await signedIn(cookie)).toBe(true);
+  });
+
+  it('ends sessions, names the tokens that still work and lets the admin revoke them', async () => {
+    const { org, admin, cookie } = await setup();
+    const ann = await createMember(org.id, 'ANNOTATOR', { name: 'Ann' });
+    const theirs = await cookieFor(ann, org.id);
+    const token = await createApiToken(org.id, ann.id, {
+      name: 'Nightly',
+      readOnly: true,
+      expiresInDays: null,
+    });
+    const ended = await run(
+      peopleAction,
+      makeRequest('/people', { cookie, form: { intent: 'sessions', userId: ann.id } }),
+    );
+    expect(await signedIn(theirs)).toBe(false);
+    const result = payload<{ tokens: { name: string; list: Array<{ id: string; name: string }> } }>(
+      ended,
+    );
+    expect(result.tokens.name).toBe('Ann');
+    expect(result.tokens.list).toEqual([
+      expect.objectContaining({ id: token.id, name: 'Nightly' }),
+    ]);
+
+    const revoked = await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'token-revoke', userId: ann.id, tokenId: token.id },
+      }),
+    );
+    expect(payload<{ tokens?: unknown }>(revoked).tokens).toBeUndefined();
+    expect(
+      (await prisma.apiToken.findUniqueOrThrow({ where: { id: token.id } })).revokedAt,
+    ).not.toBeNull();
+
+    const entries = await prisma.activity.findMany({ orderBy: { createdAt: 'asc' } });
+    expect(entries.filter((e) => e.action !== 'token.created')).toEqual([
+      expect.objectContaining({
+        action: 'person.sessions_ended',
+        actorId: admin.id,
+        detail: { userId: ann.id, userName: 'Ann', own: false },
+      }),
+      expect.objectContaining({
+        action: 'token.revoked',
+        actorId: admin.id,
+        detail: expect.objectContaining({ userId: ann.id, userName: 'Ann', name: 'Nightly' }),
+      }),
+    ]);
+
+    // not for your own sessions here, and not for a token of someone else's id
+    const self = await run(
+      peopleAction,
+      makeRequest('/people', { cookie, form: { intent: 'sessions', userId: admin.id } }),
+    );
+    expect(statusOf(self)).toBe(400);
+    const other = await createMember(org.id, 'ANNOTATOR');
+    const otherToken = await createApiToken(org.id, other.id, {
+      name: 'Other',
+      readOnly: true,
+      expiresInDays: null,
+    });
+    const mismatched = await run(
+      peopleAction,
+      makeRequest('/people', {
+        cookie,
+        form: { intent: 'token-revoke', userId: ann.id, tokenId: otherToken.id },
+      }),
+    );
+    expect(statusOf(mismatched)).toBe(404);
   });
 
   it('is only for admins', async () => {

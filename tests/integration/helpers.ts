@@ -48,10 +48,15 @@ export async function createMember(
   return user;
 }
 
-export async function cookieFor(user: { id: string }, orgId: string): Promise<string> {
+/**
+ * A session cookie for the user. Without `v` it is a cookie as made before
+ * session versions existed, which counts as version 0.
+ */
+export async function cookieFor(user: { id: string }, orgId: string, v?: number): Promise<string> {
   const session = await sessionStorage.getSession();
   session.set('userId', user.id);
   session.set('orgId', orgId);
+  if (v !== undefined) session.set('v', v);
   const setCookie = await sessionStorage.commitSession(session);
   return setCookie.split(';')[0];
 }
