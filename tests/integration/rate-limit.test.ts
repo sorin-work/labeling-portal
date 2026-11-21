@@ -18,6 +18,7 @@ describe('rate limits in the database', () => {
       allowed: false,
       retryAfterSeconds: 1,
       justLocked: true,
+      count: 3,
     });
     expect((await limiter.hit('a', t0 + 30)).justLocked).toBe(false);
     expect((await limiter.hit('b', t0 + 20)).allowed).toBe(true);
