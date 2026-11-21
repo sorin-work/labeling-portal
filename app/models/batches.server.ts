@@ -6,6 +6,7 @@ import { parseTaskSchema, type TaskSchema } from '~/domain/task-schema';
 import { prisma } from '~/lib/db.server';
 
 import { logActivity } from './activity.server';
+import { startPrelabel } from './prelabel.server';
 
 export type CreateBatchResult =
   | {
@@ -130,6 +131,8 @@ async function writeBatch(
         suggestionSource: row.suggestion === undefined ? undefined : 'file',
       })),
     });
+    // the job commits with the batch, so a crash cannot leave one without the other
+    if (batch.prelabelState === 'PENDING') await startPrelabel(tx, batch.id);
     await logActivity(tx, {
       projectId,
       actorId: input.actorId,
