@@ -829,8 +829,10 @@ kept. The rule is `takeBackRefusal` in `domain/take-back.ts`, a pure
 function with unit tests for every case: the annotator's last submission in
 the project, within the two minutes, never reviewed or spot checked, and
 either `PENDING` without a live hold or `NOT_REQUIRED` on a task that is
-still open. The write repeats it in its `where`, after a lock on the task
-row. Gold is refused with gold feedback on and offered with it off, and
+still open and not yet measured for agreement. The write repeats it in its
+`where`, after locks on the task row and then the submission's row, so a
+spot check at the same moment is seen. Work that needed no review keeps the
+payable date of its first submission when it is handed in again. Gold is refused with gold feedback on and offered with it off, and
 scored again on resubmit. The credited time and the rate stay, and revising
 adds time within the revision cap. Decided: a submission can be taken back
 once, so the window cannot be stretched, and the annotator's acceptance

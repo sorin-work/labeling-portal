@@ -29,6 +29,11 @@ export type TakeBackState = {
   held: boolean;
   /** the status of its task */
   taskStatus: string;
+  /**
+   * the task's agreement was measured on its accepted answers already (it got
+   * extra slots or has a stored agreement)
+   */
+  agreementChecked: boolean;
   isGold: boolean;
   /** the project shows the expected answer after a gold task is handed in */
   goldFeedback: boolean;
@@ -51,7 +56,8 @@ export function takeBackUntil(submittedAt: Date): Date {
  *   window could be stretched for ever.
  * - Waiting for review (`PENDING`), not held by a reviewer and never
  *   reviewed; or accepted without review (`NOT_REQUIRED`) on a task that is
- *   still open, so no consensus was built from it.
+ *   still open and whose agreement was not measured yet (no extra slots, no
+ *   stored agreement), so no consensus or agreement was built from it.
  * - Gold: with gold feedback on the annotator has seen the expected answer,
  *   so it must not be taken back. With feedback off, refusing it would tell
  *   gold apart from other work, so it is offered like any other task and
@@ -66,7 +72,9 @@ export function takeBackRefusal(state: TakeBackState, now: Date): TakeBackRefusa
   if (state.reviewed) return 'reviewed';
   if (state.reviewStatus === 'PENDING') return state.held ? 'held' : null;
   if (state.reviewStatus === 'NOT_REQUIRED') {
-    return state.taskStatus === 'OPEN' ? null : 'complete';
+    // accepted answers that were measured for agreement have been read
+    if (state.taskStatus !== 'OPEN' || state.agreementChecked) return 'complete';
+    return null;
   }
   return 'reviewed';
 }

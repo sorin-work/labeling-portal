@@ -1075,9 +1075,10 @@ describe('taking back the last submission', () => {
       { answer: { labels: ['negative'] }, activeSeconds: 10 },
       later,
     );
+    // payable from the first submission still, so no pay period changes
     expect(await row(submission.id)).toMatchObject({
       reviewStatus: 'NOT_REQUIRED',
-      payableAt: later,
+      payableAt: submission.payableAt,
     });
     expect((await prisma.task.findUniqueOrThrow({ where: { id: tasks[0].id } })).status).toBe(
       'OPEN',
@@ -1124,6 +1125,38 @@ describe('taking back the last submission', () => {
       ok: false,
       error: 'reviewed',
     });
+  });
+
+  it('refuses work accepted without review once its task was measured for agreement', async () => {
+    const { ann, submission, soon, tasks } = await handedIn({ overlap: 2, reviewRequired: false });
+    await prisma.task.update({ where: { id: tasks[0].id }, data: { extraSlots: 1 } });
+    expect(await takeBackSubmission(submission.id, ann.id, soon)).toEqual({
+      ok: false,
+      error: 'complete',
+    });
+  });
+
+  it('never takes back work a spot check reaches at the same moment', async () => {
+    const { recordSpotCheck } = await import('~/models/reviews.server');
+    for (let round = 0; round < 4; round++) {
+      await resetDb();
+      const { org, ann, submission, soon } = await handedIn({ overlap: 2, reviewRequired: false });
+      const reviewer = await createMember(org.id, 'REVIEWER');
+      const [taken, checked] = await Promise.all([
+        takeBackSubmission(submission.id, ann.id, soon),
+        recordSpotCheck(submission.id, reviewer.id, {
+          verdict: 'APPROVE',
+          qaScore: 4,
+          feedback: '',
+        }),
+      ]);
+      // exactly one of them gets through
+      expect([taken.ok, checked.ok].filter(Boolean)).toHaveLength(1);
+      const after = await row(submission.id);
+      const reviews = await prisma.review.count({ where: { assignmentId: submission.id } });
+      if (taken.ok) expect(reviews).toBe(0);
+      else expect(after.reviewStatus).toBe('NOT_REQUIRED');
+    }
   });
 
   it('only takes back the last submission, and only the annotator’s own', async () => {
