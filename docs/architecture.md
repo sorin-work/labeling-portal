@@ -42,6 +42,17 @@ tests/integration/  loaders and actions against a real PostgreSQL
    not done or skipped by them, not in a paused batch, fewer live claims and
    submissions than the project's overlap) in the order described in "Which
    task comes next" below. The task row is locked while the claim is created.
+   With a daily task limit on the project (`Project.dailyTaskLimit`), the
+   claim is refused (`reason: 'limit'`) once the person's submissions in the
+   project since midnight UTC plus the claims they hold reach it. That is the
+   "done today" count of the work page plus open claims; skips do not count.
+   The count is taken in the claim's transaction under a lock on the
+   person's work clock, so two tabs claiming at once are counted one after
+   the other, and a tab that finds the other tab's new claim under the lock
+   resumes it. `countAvailable` answers 0 for a project whose limit the
+   person has reached, so the dashboard does not offer work the claim would
+   refuse. A resubmission moves `submittedAt`, so revising sent-back work
+   counts towards the day it is handed in again.
 2. The claim expires after the project's time limit. In the last two minutes
    the annotator can ask for more time, up to three times per claim
    (`MAX_EXTENSIONS` in `domain/time-limit.ts`), and each time adds another
@@ -51,6 +62,12 @@ tests/integration/  loaders and actions against a real PostgreSQL
    cannot be stacked, and only updates the claim as it read it, so two
    requests at once count once. However many extensions a claim got, its
    first submission is credited at most two limits (see "Pay").
+   An admin or project manager can release a claim from the task page
+   (`releaseClaim`). That is the annotator's own release without the owner
+   check: the draft is dropped and the task goes back to the queue, with an
+   `assignment.released` entry in the audit trail in the same transaction.
+   On an hourly project the working time the draft saves recorded is
+   credited as a submission's would be (see "Pay").
    Expired claims are released lazily the next time anyone asks for work in
    that project, and a submission that arrives after the limit is refused.
 3. On submit the answer is validated against the schema. A text without
@@ -154,7 +171,9 @@ locks in one order, so two of them can only queue, never wait for each other
 in a circle:
 
 1. the person's work clock (their `Membership` row, `lockWorkClock`), for
-   the transactions that credit time: a submission and a revision;
+   the transactions that credit time: a submission, a revision and a
+   manager's release of a claim, and for a claim in a project with a daily
+   limit, which counts under it;
 2. task rows, in id order when there are several (`lockTaskOfAssignment` in
    `lib/db.server.ts` for one; `expireClaims` and `promoteToGold` lock theirs
    `ORDER BY id`; a claim takes its task through the pick's `FOR UPDATE`);
@@ -175,13 +194,14 @@ upgraded in a circle. Writes that never change an assignment's state and never
 lock a task or a clock (draft saves, extensions, renewing a review hold, the
 single-statement reservation of the next review) take only the assignment
 row. As a backstop, `retryOnLockConflict` runs the claim, a submission, a
-skip, a release, expiry, a revision, a gold promotion and a review hold once
-more if PostgreSQL still aborts one with a deadlock (40P01) or a
-serialization failure (40001). The cost: writers of the same task queue on its
-row for the moment each takes, including annotators submitting the same gold
-task. `tests/integration/lock-order.test.ts` holds locks from a second
+skip, a release (the annotator's or a manager's), expiry, a revision, a gold
+promotion and a review hold once more if PostgreSQL still aborts one with a
+deadlock (40P01) or a serialization failure (40001). The cost: writers of the
+same task queue on its row for the moment each takes, including annotators
+submitting the same gold task. `tests/integration/lock-order.test.ts` holds locks from a second
 connection and checks the order for skips, releases, submissions (gold among
-them), expiry, revisions and review holds.
+them), expiry, revisions, review holds, a manager's release and a claim
+under a daily limit.
 
 The migration puts the trigger in place and fills the counters in one
 statement, with the `Assignment` table locked against writes, so nothing
@@ -834,6 +854,18 @@ same way.
   (`Assignment_submitted_has_rate`) refuses a submitted row without the
   copy, so code that writes submissions directly, such as a seed or a test,
   has to set both columns.
+- **A claim a manager releases is paid on hourly projects.** The annotator
+  did nothing wrong, so `releaseClaim` credits the time the draft saves
+  recorded (`draftSeconds`) through the same `lockWorkClock` and
+  `creditTime` path as a submission, capped like a first submission and
+  ending at the claim's limit when it had run out. The released row gets the
+  credited seconds, the project's rate and pay mode and a `payableAt` of the
+  release, so it falls into the period of that day. Payouts and earnings
+  read it as time without a task (`PaidWork.released`). The check
+  `Assignment_accepted_has_payable_date` allows a payable date on a released
+  row only with an hourly rate on it. On a per-task project a release pays
+  nothing, since pay there is per accepted task. The annotator's own release
+  credits nothing, as before.
 - **Work counts on the day it became payable**, and that day is stored:
   `Assignment.payableAt`. The write that accepts the work sets it
   (`payableSince` in `app/domain/payouts.ts` is the rule): the review for work

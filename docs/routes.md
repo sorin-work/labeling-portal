@@ -55,6 +55,11 @@ The task page also takes what a manager does to a gold task as POSTs: change
 the expected answer, rescore, retire or bring back, and use a completed task
 as gold. Only admins and project managers may send them. Reviewers see on that
 page that a task is gold and how each answer scored, not the expected answer.
+Admins and project managers can also release a claim listed under "Claims"
+(`intent=release-claim` with the `assignmentId`). The confirmation says how
+long the claim has run, whether a draft is lost and whether its time is paid.
+The annotator's open page then answers "This task is no longer yours" on
+submit, and its draft saves get 409 `not_active`.
 The search on the batch page also finds a task by the reference an annotator
 quotes from the work page.
 

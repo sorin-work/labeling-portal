@@ -56,7 +56,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 16  | API tokens and a JSON API                    | Shipped | api           | L    | -          |
 | 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Shipped | labeling      | L    | -          |
-| 19  | Releasing a claim and a daily task limit     | Next    | queue         | M    | -          |
+| 19  | Releasing a claim and a daily task limit     | Shipped | queue         | M    | -          |
 | 20  | Signing out everywhere                       | Next    | security      | S    | -          |
 | 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
 | 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
@@ -72,56 +72,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 32  | Keeping the audit trail for a set time       | Maybe   | ops           | M    | 26         |
 
 ## Next
-
-### 19. Releasing a claim and a daily task limit
-
-Improves item 12, which left both out. A claim somebody walked away from
-keeps its slot until the time limit runs out, which can be eight hours
-(`timeLimitMinutes` goes up to 480) and more with extensions. A manager sees
-it under "Claims" on the task page (`routes/task-detail.tsx`) and can do
-nothing about it. And one fast annotator can still label most of a project in
-a day, which is bad for agreement numbers and for everyone else's pay.
-
-- Release: an `intent=release-claim` on the task page for admins and project
-  managers, next to `escalate` and the gold intents. A new
-  `releaseClaim(assignmentId, actor, now)` in `models/queue.server.ts` does
-  what `releaseAssignment` does without the owner check: the task row first
-  (`lockTaskOfAssignment`), then a conditional `updateMany` from `ACTIVE` to
-  `RELEASED` with `NO_DRAFT`, and an audit entry (`assignment.released`:
-  whose claim, which task) in the same transaction, as item 15 does for every
-  manager action.
-- The annotator's open page needs nothing new: submitting answers "This task
-  is no longer yours" and the draft save answers 409 `not_active`, both of
-  which exist.
-- Daily limit: `dailyTaskLimit Int?` on `Project`, empty for no limit, in the
-  settings form (`domain/project-form.ts`) and in the settings audit diff.
-  `claimNextTask` counts the person's submissions in the project since the
-  start of the UTC day, the same count as "done today" on the work page, and
-  answers `{ ok: false, reason: 'limit' }`. `ClaimResult` gets the reason and
-  `lib/queue-messages.ts` a text that says when the next day starts.
-- Tricky: a release throws away the annotator's draft and, like their own
-  release, credits no time. On an hourly project that is unpaid work. The
-  confirmation should say how long the claim has run and whether it has a
-  draft, and the item has to decide whether a manager's release credits the
-  time the draft saves recorded (`draftSeconds`). I lean towards crediting it
-  through the same `lockWorkClock` and `creditTime` path as a submission,
-  because the annotator did nothing wrong.
-- Tricky: `countAvailable` feeds "N tasks available" and the Start button on
-  the dashboard. It must answer 0 for someone at the limit, or the dashboard
-  offers work that the claim refuses.
-- Tricky: two tabs claiming at the same moment can both pass the count. The
-  claim does not hold anything per person today. Either count inside a lock
-  on the person (the work clock row that submissions already lock) or accept
-  that the limit can be passed by one. I lean towards the lock, since the
-  limit is a promise to the other annotators.
-- Undecided: whether skipped tasks count towards the limit (I lean no, a skip
-  earns nothing), and whether a manager can raise the limit for one person.
-  I would leave the second out.
-- Tests: in `tests/integration/queue.test.ts`: a manager releases a claim,
-  a reviewer may not, an already submitted claim is not touched, the
-  annotator's submit after a release is refused; the limit with `now` passed
-  in, across a UTC midnight, two claims at once, and `countAvailable`
-  agreeing with the claim.
 
 ### 20. Signing out everywhere
 
@@ -939,3 +889,29 @@ touched, and taking a suggestion is recorded on the server when it happens.
 Still open: the rule runs in the web process, so a run cut short by a restart
 only goes on when its batch page is opened; the CSV export does not carry
 suggestions; image classification and boxes have no rule.
+
+### 19. Releasing a claim and a daily task limit
+
+Admins and project managers release a claim from "Claims" on the task page
+(`intent=release-claim`, `releaseClaim` in `models/queue.server.ts`), under the
+lock order of a submission: the annotator's work clock, the task row, then
+the claim, with an `assignment.released` audit entry in the same
+transaction. The confirmation says how long the claim has run, whether a
+draft is lost and whether its time is paid. As the item leaned, the release
+credits the time the draft saves recorded through `lockWorkClock` and
+`creditTime`, but only on hourly projects, where time is what is paid; a
+per-task project pays per accepted task, so nothing is credited there. The
+released row carries the credited seconds, the rate and a payable date, and
+payouts and earnings count it as time without a task, which needed the
+payable-date check constraint widened for released rows with an hourly rate.
+`Project.dailyTaskLimit` (empty is no limit) is in the settings form and the
+settings audit diff. A claim counts the person's submissions in the project
+since midnight UTC plus the claims they hold, under a lock on their work
+clock as the item leaned, so two tabs cannot both pass; a tab that finds the
+other tab's new claim under the lock resumes it. Skips do not count.
+`countAvailable` answers 0 at the limit, and the project page says when the
+next day starts. Different from the design: `releaseClaim` also takes the
+project, so a claim can only be released from its own project's page. Left
+out, as the item suggested: raising the limit for one person. Still open: a
+resubmission moves `submittedAt`, so revising sent-back work counts towards
+the day it is handed in again.

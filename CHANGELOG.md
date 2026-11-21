@@ -18,6 +18,15 @@
 
 ### Importing and labeling
 
+- A daily task limit per project (Settings, Queue). One person may hand in
+  that many tasks in the project per UTC day, and a claim they still hold
+  counts too; skips do not. A claim past the limit is refused with a message
+  that says when the next day starts, and the dashboard offers no work there.
+  The count is taken under a lock on the person, so two tabs claiming at once
+  cannot both pass it
+- Managers can release someone's claim from "Claims" on the task page. The
+  confirmation says how long the claim ran and whether a draft is lost. The
+  task goes back to the queue and the release is in the audit trail
 - Suggested answers. A `_prediction` column in an import file, or a project
   rule set under Settings (keyword lists per label for text classification,
   phrase lists per entity type for spans), suggests an answer for each task.
@@ -171,6 +180,10 @@
 
 ### Pay and export
 
+- A claim a manager releases on an hourly project is paid the working time
+  its draft saves recorded, credited like a submission's time, so the same
+  minutes are not paid twice. It shows on the payouts and earnings pages as
+  time without a task. On per-task projects nothing is paid for it
 - Earnings page: everyone sees their own pay for a date range, split into
   what is payable, what is waiting for review and what was sent back, with
   the rules it is counted by
