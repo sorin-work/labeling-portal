@@ -217,6 +217,11 @@ the period of its approval.
 
 ### Operations
 
+- Backup status the app can see: the backup service writes a row to
+  `BackupRun` after every dump attempt, and admins see "The last dump failed"
+  or "No dump for N hours" on the dashboard's needs-attention list, with the
+  last good dump. Nothing is said before the service has written a row. The
+  restore check leaves the table out of its row count comparison
 - Sign out everywhere: a button on the account page signs you out in every
   browser, and admins can end a person's sessions on People. Setting a
   password, your own or someone else's, ends the other sessions too; the tab

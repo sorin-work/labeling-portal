@@ -848,6 +848,25 @@ breaking one of them loses backups:
   the loop would then dump that while the real data sat under another name.
   A swap that is refused names the clients that are still connected.
 
+- After each attempt `record` writes a `BackupRun` row with `psql`: start and
+  end, whether it worked, the file and its size, the last line `pg_dump`
+  wrote for a failure, and the interval. The values go in as psql variables,
+  so a message with quotes cannot break the statement. A failed insert (no
+  table yet) is a line in the log and never fails the dump. `BACKUP_STATUS=off`
+  writes nothing.
+- The app only reads the table. `backupStatus` in
+  `app/models/attention.server.ts` takes the newest row and the newest good
+  one, and `backupAttention` in `app/domain/backups.ts` turns them into "The
+  last dump failed" and "No dump for N hours" (newest good dump older than
+  1.5 times the interval of the newest row), or "No dump has worked yet".
+  No rows, no items. Only admins see them, on the dashboard's needs-attention
+  list, because a dump holds every organisation. `/healthz` does not carry
+  backup state: a late dump is not a reason to take the app out of a load
+  balancer.
+- A row is in the next dump, not its own, so a restored database lists the
+  runs up to the dump before the restored one, and the dashboard says so.
+  Rows are never pruned; one a day is small.
+
 `docker/check-backup-loop.sh` checks the loop, the pruning and the restore
 with stand-ins for the database tools, a pretend set of databases and dump
 files with made-up dates. `docker/check-backup.sh` runs it and then works on
@@ -855,7 +874,11 @@ a real server: it makes dumps, checks that a damaged dump and a restore
 while something is connected leave a database with other data alone, then
 replaces that database with the newest dump and compares the row counts,
 where only the application's tables count as data (Prisma's migrations table
-always has rows). CI runs it after the tests, once the demo data is in.
+always has rows). `BackupRun` is left out of that comparison, because the
+source has the row of the newest dump and the dump does not: the check wants
+exactly one row fewer in the copy, and a row with file and size for each of
+its three dumps. The loop check covers a failed dump's row, a missing table
+and `BACKUP_STATUS=off`. CI runs it after the tests, once the demo data is in.
 
 ## Pay
 

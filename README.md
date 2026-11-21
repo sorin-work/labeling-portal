@@ -191,6 +191,20 @@ everywhere:
 | `BACKUP_DIR`              | `./backups` | Folder on the host the dumps go to    |
 | `BACKUP_KEEP`             | `7`         | How many dumps to keep                |
 | `BACKUP_INTERVAL_SECONDS` | `86400`     | Seconds from one dump to the next one |
+| `BACKUP_STATUS`           | `on`        | `off` stops writing the status rows   |
+
+After every dump, whether it worked or not, the service writes a row to the
+app's `BackupRun` table, and admins see on the dashboard, under "Needs
+attention", when the last dump failed or when there has been no good dump for
+one and a half intervals (36 hours by default), with the newest good dump
+under it. Before the service has written its first row nothing is said, so a
+stack without the backup profile is not warned. A database without the table
+yet (an older app, or one still migrating) gets no row and a line in the log;
+the dump itself is not affected.
+
+A row is written after its dump, so it is in the next dump and not its own.
+After a restore the table ends at the dump before the one that was restored,
+and the dashboard says so.
 
 A dump right now, for example before an upgrade:
 
@@ -238,14 +252,17 @@ Good to know:
 - A dump holds the accounts with their password hashes, every answer and the
   pay data, and it is not encrypted. The files can only be read by their
   owner. On Linux that is the owner of the folder they are in, not root.
+  Encrypting them is left to the disk (an encrypted volume or share): a
+  passphrase in the service would be one more thing to lose, and a lost
+  passphrase is a lost backup.
 - `./backups` is in `.gitignore` and `.dockerignore`, so dumps are neither
   committed nor sent to an image build. If `BACKUP_DIR` points at another
   folder inside the checkout, add that one to both files.
 - The dumps sit on the same disk as the database unless `BACKUP_DIR` points
   somewhere else. Copying them to another machine is up to you.
-- Nothing warns you when a dump fails. `docker compose logs backup` shows
-  every dump and every failure, and a failed dump is tried again a minute
-  later.
+- A failed or late dump shows on the admin's dashboard (see above).
+  `docker compose logs backup` shows every dump and every failure, and a
+  failed dump is tried again a minute later.
 - `docker compose down -v` removes the database volume, not the dumps.
 - The images of image classification and box projects are not in the
   database. A task only holds their URL, so the files stay wherever that
