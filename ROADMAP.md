@@ -68,7 +68,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 28  | Two-step sign-in                             | Shipped | security      | M    | 20         |
 | 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
 | 30  | Webhooks                                     | Later   | api           | L    | 26         |
-| 31  | Rate limits shared between processes         | Maybe   | security      | S    | -          |
+| 31  | Rate limits shared between processes         | Shipped | security      | S    | -          |
 | 32  | Keeping the audit trail for a set time       | Maybe   | ops           | M    | 26         |
 
 ## Next
@@ -265,29 +265,6 @@ task is complete or a batch is done.
   rolled-back transaction.
 
 ## Maybe
-
-### 31. Rate limits shared between processes
-
-Improves item 16 and the sign-in limit. `RateLimiter` in
-`lib/rate-limit.server.ts` is a `Map` in memory: restarting the app clears a
-sign-in lockout (the README says so), and two app processes behind a load
-balancer would each count on their own, so the limits double. The app runs
-as one process today, which is why this is here.
-
-- A fixed-window counter in PostgreSQL: one row per key and window,
-  `INSERT ... ON CONFLICT DO UPDATE SET count = count + 1 RETURNING count`.
-  The same `hit(key, now)` shape, made async, for `loginLimiter` and the API
-  limiter.
-- Tricky: a write on every API request, up to 120 a minute per token. An
-  `UNLOGGED` table keeps that out of the write-ahead log; losing the counts
-  in a crash is fine. Old windows are removed by the next hit that finds
-  more than a few thousand rows, as `prune` does now.
-- Tricky: `justLocked` must still be true for exactly one refused attempt, so
-  the lockout is recorded in the audit trail once.
-- Undecided: whether to keep the memory limiter as the default. I lean
-  towards always using the table; one code path is easier to trust.
-- Tests: integration tests that two limiter instances share a count and that
-  a lockout is reported once.
 
 ### 32. Keeping the audit trail for a set time
 
@@ -849,3 +826,17 @@ kept on their account page until they set it up; an admin can only turn the
 rule on with their own on. Turning it on and an admin's reset end the
 person's sessions. Still open: passkeys, and new recovery codes without a
 reset.
+
+### 31. Rate limits shared between processes
+
+`RateLimiter` counts in the UNLOGGED table `RateLimitHit` with one `INSERT
+... ON CONFLICT DO UPDATE ... RETURNING count` per attempt, for the sign-in,
+the second step (item 28) and the API. `hit` and `reset` are async; a
+limiter has a name that prefixes its keys. Different from the design: one
+row per key rather than per key and window, rolled over in place when its
+window is past, so a window still starts with the first attempt as before
+and a burst is never split by a clock boundary. `justLocked` is true for
+exactly one attempt, since the row puts concurrent ones in line. Decided:
+always the table, no memory limiter left, so there is one code path. Old
+rows go every thousandth attempt in a process, not on a row count. Still
+open: nothing.
