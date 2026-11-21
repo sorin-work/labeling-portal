@@ -60,7 +60,7 @@ export async function action({ request }: Route.ActionArgs) {
   });
   return createUserSession(
     request,
-    { userId: result.user.id, orgId: result.membership.orgId },
+    { userId: result.user.id, orgId: result.membership.orgId, v: result.user.sessionVersion },
     next,
   );
 }

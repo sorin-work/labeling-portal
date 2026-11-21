@@ -80,6 +80,10 @@ or fix the work.
 - **JSON API** under `/api/v1/` with tokens made on the account page:
   projects, batch upload with an `Idempotency-Key`, label export and task
   lookup. See [docs/api.md](docs/api.md)
+- **Sign out everywhere** on the account page, and **End sessions** for a
+  person on People. A new password, set by an admin or by the person, signs
+  out every other browser too. API tokens keep working and are listed with a
+  way to revoke them
 - Needs-attention list for managers, demo data
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).

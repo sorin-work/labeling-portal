@@ -11,7 +11,7 @@ import { parseAnswerJson, type Answer } from '~/domain/answers';
 import { formatGoldScore, parseGoldReason } from '~/domain/gold';
 import { finalAnswer, isAccepted } from '~/domain/outcome';
 import { assignmentRef } from '~/domain/reference';
-import { releaseConfirmation } from '~/domain/release-claim';
+import { releaseConfirmation, spokenDuration } from '~/domain/release-claim';
 import { activeHold } from '~/domain/review-hold';
 import { SAMPLE_LABELS } from '~/domain/review-sampling';
 import { requireUser } from '~/lib/auth.server';
@@ -249,6 +249,13 @@ export async function action({ request, params }: Route.ActionArgs) {
       current.user.id,
     );
     if (!result.ok && result.error === 'not_found') throw notFound('Claim not found');
+    if (!result.ok && result.error === 'expired') {
+      return redirectWithFlash(
+        request,
+        here,
+        'That claim had already run out of time, so it was marked as expired and nothing was credited. The task is back in the queue.',
+      );
+    }
     if (!result.ok) {
       return data(
         { error: 'That claim is not active any more: it was submitted, skipped or released.' },
@@ -259,7 +266,7 @@ export async function action({ request, params }: Route.ActionArgs) {
       request,
       here,
       result.creditedSeconds > 0
-        ? `Released. The task is back in the queue, and ${Math.round(result.creditedSeconds / 60)} minutes of the annotator's time were credited.`
+        ? `Released. The task is back in the queue, and ${spokenDuration(result.creditedSeconds)} of the annotator's time was credited.`
         : 'Released. The task is back in the queue.',
     );
   }

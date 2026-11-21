@@ -7,6 +7,7 @@
  * a gold edit names the task, not what was answered.
  */
 import { centsToDecimal } from './payouts';
+import { spokenDuration } from './release-claim';
 import { describeSchemaChange } from './schema-diff';
 
 /** Every action the trail records, with how the filter on `/audit` names it. */
@@ -41,6 +42,7 @@ export const ACTIVITY_ACTIONS = {
   'person.role': 'Role changed',
   'person.password': 'Password set by an admin',
   'person.removed': 'Person removed',
+  'person.sessions_ended': 'Sessions ended',
   'account.password': 'Own password changed',
   'token.created': 'API token made',
   'token.revoked': 'API token revoked',
@@ -250,7 +252,7 @@ export function describeActivity(action: string, detail: unknown): string {
     case 'assignment.released':
       return `released the claim of ${who} on task #${String(d.position)}${
         typeof d.seconds === 'number' && d.seconds > 0
-          ? `, crediting ${Math.round(d.seconds / 60)} minutes of their time`
+          ? `, crediting ${spokenDuration(d.seconds)} of their time`
           : ''
       }`;
     case 'member.added':
@@ -293,12 +295,14 @@ export function describeActivity(action: string, detail: unknown): string {
       return `set a new password for ${who}`;
     case 'person.removed':
       return `removed ${who} from the organisation`;
+    case 'person.sessions_ended':
+      return d.own === true ? 'signed out everywhere' : `ended every session of ${who}`;
     case 'account.password':
       return 'changed their own password';
     case 'token.created':
       return `made the ${d.readOnly === false ? 'read and write' : 'read-only'} API token “${String(d.name)}” (${String(d.prefix)}…)`;
     case 'token.revoked':
-      return `revoked the API token “${String(d.name)}” (${String(d.prefix)}…)`;
+      return `revoked the API token “${String(d.name)}” (${String(d.prefix)}…)${typeof d.userName === 'string' ? ` of ${who}` : ''}`;
     case 'auth.signed_in':
       return 'signed in';
     case 'auth.locked':

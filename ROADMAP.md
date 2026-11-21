@@ -57,7 +57,7 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 17  | Faster on large projects                     | Shipped | performance   | L    | 12         |
 | 18  | Pre-labeling hook                            | Shipped | labeling      | L    | -          |
 | 19  | Releasing a claim and a daily task limit     | Shipped | queue         | M    | -          |
-| 20  | Signing out everywhere                       | Next    | security      | S    | -          |
+| 20  | Signing out everywhere                       | Shipped | security      | S    | -          |
 | 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
 | 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Next    | ops           | S    | -          |
@@ -72,46 +72,6 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 32  | Keeping the audit trail for a set time       | Maybe   | ops           | M    | 26         |
 
 ## Next
-
-### 20. Signing out everywhere
-
-Improves the sign-in and the People page, which came before the roadmap. The
-session is a signed cookie (`lib/session.server.ts`) that lives for 14 days
-and is checked only against the membership (`getCurrentUser` in
-`lib/auth.server.ts`). Nothing on the server knows which cookies exist. When
-an admin sets a new password for someone whose account was taken over
-(`setPassword` in `models/people.server.ts`), or a person changes their own
-on the account page, every cookie made before keeps working for up to two
-weeks. Signing out removes the cookie in that one browser only.
-
-- Data: `sessionVersion Int @default(0)` on `User`. The cookie carries the
-  version it was made with (`SessionData` gets `v`). `getCurrentUser` already
-  reads the membership with the user; it reads `sessionVersion` in the same
-  query and treats a cookie with another version as no session. No extra
-  query per request.
-- The version goes up when an admin sets a password, when a person changes
-  their own (the tab that changed it gets a fresh cookie and stays signed
-  in), and with a new "Sign out everywhere" button on the account page. On
-  People an admin gets "End sessions" for a person. Both are audit entries
-  (`person.sessions_ended`).
-- Removing a person already works, because the membership is gone. A role
-  change is read on every request and needs nothing.
-- Tricky: cookies made before the upgrade have no `v`. Reading a missing `v`
-  as 0 signs nobody out by the upgrade; reading it as invalid signs everyone
-  out once. I lean towards 0.
-- Tricky: API tokens (item 16) are not sessions. A password change does not
-  revoke them, and a script that stops working without a word is its own
-  problem. I lean towards listing the person's active tokens on the
-  confirmation with a link to revoke them, and leaving them alone otherwise.
-- Tricky: an open work page whose session ended gets a redirect from its next
-  draft save. The page already says "Draft not saved" for a sign-out; check
-  that this path still reaches it.
-- Left out: a list of sessions with device and time. It needs a table of
-  sessions and a write on every sign-in, which a version number does not.
-- Tests: integration tests next to the account and people tests: an old
-  cookie is refused after `setPassword`, the tab that changed its own
-  password stays signed in, a cookie without `v` is accepted, and both new
-  actions are in the audit trail.
 
 ### 21. Spot checks and letting go of a review hold
 
@@ -915,3 +875,25 @@ project, so a claim can only be released from its own project's page. Left
 out, as the item suggested: raising the limit for one person. Still open: a
 resubmission moves `submittedAt`, so revising sent-back work counts towards
 the day it is handed in again.
+
+### 20. Signing out everywhere
+
+`User.sessionVersion` and a `v` in the cookie, compared in the query
+`getCurrentUser` already makes. The number goes up when an admin sets a
+password, when a person changes their own (that tab gets a new cookie in the
+same response), with "Sign out everywhere" on the account page and with "End
+sessions" on People; the last two are `person.sessions_ended`, told apart by
+`detail.own`. A cookie without `v` reads as 0, so the upgrade signed nobody
+out. API tokens are left alone: the account page names the ones that still
+work next to the button and after a password change, and People shows the
+person's working tokens after "End sessions" or a new password, each with a
+Revoke button. Different from the design: that admin revoke is new
+(`revokeApiTokenOf`, recorded with whose token it was), since a link to the
+person's own account page would not have helped the admin. "Sign out
+everywhere" signs out this browser too, and admins end their own sessions from
+the account page, not People. An open work page still reaches "Draft not
+saved" through the redirect. Also beyond the design: removing a person bumps
+the version and revokes their tokens in that organisation, so a re-add brings
+neither back. The version is per account, so ending sessions signs the person
+out of their other organisations too, and People says so. Still open: a list of sessions with device and
+time, which needs a table of sessions.
