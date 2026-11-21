@@ -3,7 +3,8 @@ import { data, Form, redirect, useNavigation, useSearchParams } from 'react-rout
 import { Alert, Button, Field, Input } from '~/components/ui';
 import { authenticate, getCurrentUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
-import { loginLimiter } from '~/lib/rate-limit.server';
+import { clientAddress } from '~/lib/client-address.server';
+import { BUSY_EMAIL_TRIES, loginEmailLimiter, loginLimiter } from '~/lib/rate-limit.server';
 import { safeRedirect } from '~/lib/redirect';
 import { createUserSession, startPendingSignIn } from '~/lib/session.server';
 import { logActivity } from '~/models/activity.server';
@@ -32,27 +33,37 @@ export async function action({ request }: Route.ActionArgs) {
   const password = String(form.get('password') ?? '');
   const next = safeRedirect(form.get('next'));
 
-  if (!email || !password) {
-    return data({ error: 'Enter your email and password.', email }, { status: 400 });
-  }
-  const key = email.trim().toLowerCase();
-  const limit = await loginLimiter.hit(key);
-  if (!limit.allowed) {
-    if (limit.justLocked) await recordLockout(key);
-    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+  // no address is longer than 254 characters; a longer one is not looked up
+  if (!email || !password || email.length > MAX_EMAIL_LENGTH) {
     return data(
-      {
-        error: `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
-        email,
-      },
-      { status: 429, headers: { 'Retry-After': String(limit.retryAfterSeconds) } },
+      { error: 'Enter your email and password.', email: email.slice(0, MAX_EMAIL_LENGTH) },
+      { status: 400 },
     );
   }
+  const key = email.trim().toLowerCase();
+  const address = clientAddress(request) ?? 'any';
+  // only wrong passwords count, per email and address; while many places are
+  // guessing at an email, each address gets fewer tries of its own
+  const [pair, everywhere] = await Promise.all([
+    loginLimiter.peek(key, Date.now(), address),
+    loginEmailLimiter.peek(key),
+  ]);
+  const tries =
+    everywhere.count >= loginEmailLimiter.limitPerWindow
+      ? BUSY_EMAIL_TRIES
+      : loginLimiter.limitPerWindow;
+  if (pair.count >= tries) return tooMany(email, pair.retryAfterSeconds || 15 * 60);
   const result = await authenticate(email, password);
   if (!result) {
+    const [counted] = await Promise.all([
+      loginLimiter.hit(key, Date.now(), address),
+      loginEmailLimiter.hit(key),
+    ]);
+    // recorded once, by the wrong password that locks this email and address
+    if (counted.count === tries) await recordLockout(key);
     return data({ error: 'That email and password do not match.', email }, { status: 401 });
   }
-  await loginLimiter.reset(key);
+  await loginLimiter.reset(key, address);
   const signingIn = {
     userId: result.user.id,
     orgId: result.membership.orgId,
@@ -67,6 +78,19 @@ export async function action({ request }: Route.ActionArgs) {
     action: 'auth.signed_in',
   });
   return createUserSession(request, signingIn, next);
+}
+
+const MAX_EMAIL_LENGTH = 254;
+
+function tooMany(email: string, retryAfterSeconds: number) {
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return data(
+    {
+      error: `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      email,
+    },
+    { status: 429, headers: { 'Retry-After': String(retryAfterSeconds) } },
+  );
 }
 
 /**
