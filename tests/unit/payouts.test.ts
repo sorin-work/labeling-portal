@@ -206,3 +206,22 @@ describe('money helpers', () => {
     expect(parseMoney('abc')).toBeNull();
   });
 });
+
+describe('closing a period', () => {
+  it('only closes a period that is over and overlaps no run', async () => {
+    const { closeRefusal, periodBounds } = await import('~/domain/pay-runs');
+    const march = periodBounds({ from: '2026-03-01', to: '2026-03-31' });
+    expect(march.end.toISOString()).toBe('2026-04-01T00:00:00.000Z');
+    expect(closeRefusal(march, new Date('2026-03-31T23:59:59Z'), [])).toBe('not_over');
+    expect(closeRefusal(march, new Date('2026-04-01T00:00:00Z'), [])).toBeNull();
+    const april = periodBounds({ from: '2026-04-01', to: '2026-04-30' });
+    const later = new Date('2026-06-01T00:00:00Z');
+    expect(closeRefusal(april, later, [march])).toBeNull();
+    expect(
+      closeRefusal(periodBounds({ from: '2026-03-31', to: '2026-04-02' }), later, [march]),
+    ).toBe('overlap');
+    expect(closeRefusal(periodBounds({ from: '2026-04-02', to: '2026-04-01' }), later, [])).toBe(
+      'order',
+    );
+  });
+});

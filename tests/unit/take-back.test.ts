@@ -13,6 +13,7 @@ const pending: TakeBackState = {
   held: false,
   taskStatus: 'OPEN',
   agreementChecked: false,
+  paid: false,
   isGold: false,
   goldFeedback: true,
   takenBackAt: null,
@@ -31,6 +32,8 @@ describe('takeBackRefusal', () => {
     expect(takeBackRefusal({ ...accepted, taskStatus: 'ADJUDICATION' }, now)).toBe('complete');
     // the task got extra slots: its accepted answers were measured already
     expect(takeBackRefusal({ ...accepted, agreementChecked: true }, now)).toBe('complete');
+    // a pay run that closed the day at midnight paid it already
+    expect(takeBackRefusal({ ...accepted, paid: true }, now)).toBe('complete');
     // work waiting for review was not among the measured answers
     expect(takeBackRefusal({ ...pending, agreementChecked: true }, now)).toBeNull();
   });

@@ -324,6 +324,20 @@ const payouts: Data<typeof payoutsLoader> = {
   range: { from: '2026-11-01', to: '2026-11-20' },
   projectId: null,
   projects: [{ id: 'p1', name: 'Reviews' }],
+  canClose: true,
+  closeRefused: null,
+  runs: [
+    {
+      id: 'r1',
+      from: '2026-10-01',
+      to: '2026-10-31',
+      closedBy: 'Ada',
+      closedAt: new Date('2026-11-02T09:00:00Z'),
+      totalCents: 12000,
+      note: '',
+      lines: 3,
+    },
+  ],
   lines: [
     {
       userId: 'u1',
@@ -394,6 +408,10 @@ describe('manager pages have no axe violations', () => {
         totalCents: 50,
       },
       sentBack: { blocks: [], tasks: 0, seconds: 0, totalCents: 0 },
+      split: {
+        unpaid: { blocks: [block], tasks: 12, seconds: 840, totalCents: 300 },
+        paid: [],
+      },
     };
     renderPage({ path: '/earnings', url: '/earnings', Component: Earnings, loaderData: earnings });
     await screen.findAllByText('Reviews');
