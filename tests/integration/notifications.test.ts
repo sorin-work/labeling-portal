@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { openDispute, resolveDispute } from '~/models/disputes.server';
 import { applyRescore, previewRescore } from '~/models/gold.server';
-import { openNotifications } from '~/models/notifications.server';
+import { listNotifications, markRead } from '~/models/notifications.server';
 import { claimNextTask, releaseClaim } from '~/models/queue.server';
 import { recordReview } from '~/models/reviews.server';
 import { loader as layoutLoader } from '~/routes/app-layout';
-import { loader as notificationsLoader } from '~/routes/notifications';
+import {
+  action as notificationsAction,
+  loader as notificationsLoader,
+} from '~/routes/notifications';
 
 import {
   addToProject,
@@ -20,6 +23,7 @@ import {
   prisma,
   resetDb,
   run,
+  statusOf,
   submitWork,
 } from './helpers';
 
@@ -186,16 +190,78 @@ describe('notifications', () => {
       notificationsLoader,
       makeRequest('/notifications', { cookie: annCookie }),
     );
-    const shown = payload<{ notifications: Array<{ isNew: boolean; text: string }> }>(page);
+    const shown = payload<{
+      notifications: Array<{ isNew: boolean; text: string }>;
+      upTo: string;
+    }>(page);
     expect(shown.notifications).toHaveLength(1);
     expect(shown.notifications[0]).toMatchObject({ isNew: true });
     expect(shown.notifications[0].text).toContain('sent back your work on task #');
+    // loading the page changes nothing
+    const still = await run(layoutLoader, makeRequest('/', { cookie: annCookie }));
+    expect(payload<{ unread: number }>(still).unread).toBe(1);
+
+    // a post from another site is refused
+    const foreign = await run(
+      notificationsAction,
+      makeRequest('/notifications', {
+        cookie: annCookie,
+        form: { upTo: shown.upTo },
+        headers: { Origin: 'https://evil.example' },
+      }),
+    );
+    expect(statusOf(foreign)).toBe(403);
+    // the page's own post marks them read
+    await run(
+      notificationsAction,
+      makeRequest('/notifications', { cookie: annCookie, form: { upTo: shown.upTo } }),
+    );
     const after = await run(layoutLoader, makeRequest('/', { cookie: annCookie }));
     expect(payload<{ unread: number }>(after).unread).toBe(0);
     // the reviewer's own notification is untouched
     expect(
       await prisma.notification.count({ where: { userId: s.reviewer.id, readAt: null } }),
     ).toBe(1);
+  });
+
+  it('shows unread ones first, pages through 120 of them and marks up to the newest shown', async () => {
+    const s = await setup();
+    const start = Date.now() - 200 * 60_000;
+    await prisma.notification.createMany({
+      data: Array.from({ length: 130 }, (_, i) => ({
+        userId: s.ann.id,
+        orgId: s.org.id,
+        kind: 'review.fixed',
+        link: '/',
+        createdAt: new Date(start + i * 60_000),
+        // the ten newest are read already, the 120 before them are not
+        readAt: i >= 120 ? new Date() : null,
+      })),
+    });
+    const first = await listNotifications(s.ann.id, s.org.id, 1);
+    expect(first.unread).toBe(120);
+    expect(first.notifications).toHaveLength(50);
+    expect(first.notifications.every((n) => n.isNew)).toBe(true);
+    expect(first.hasOlder).toBe(true);
+    const third = await listNotifications(s.ann.id, s.org.id, 3);
+    expect(third.notifications.filter((n) => n.isNew)).toHaveLength(20);
+    expect(third.hasOlder).toBe(false);
+
+    // a notification that arrives after the page loaded stays unread
+    const later = new Date(Date.now() + 60_000);
+    await prisma.notification.create({
+      data: {
+        userId: s.ann.id,
+        orgId: s.org.id,
+        kind: 'review.fixed',
+        link: '/',
+        createdAt: later,
+      },
+    });
+    await markRead(s.ann.id, s.org.id, first.upTo!);
+    const left = await listNotifications(s.ann.id, s.org.id, 1);
+    expect(left.unread).toBe(1);
+    expect(left.notifications[0]).toMatchObject({ isNew: true });
   });
 
   it('keeps each organisation’s notifications apart and removes old read ones', async () => {
@@ -220,10 +286,11 @@ describe('notifications', () => {
         },
       ],
     });
-    const shown = await openNotifications(s.ann.id, s.org.id, now);
-    // the other organisation's is not shown here; the old read one is gone,
-    // the old unread one stays until it has been seen
-    expect(shown).toHaveLength(1);
+    const shown = await listNotifications(s.ann.id, s.org.id, 1);
+    // the other organisation's is not shown here
+    expect(shown.notifications).toHaveLength(2);
+    await markRead(s.ann.id, s.org.id, now, now);
+    // the old read one is gone, the old unread one stays, read only now
     expect(await prisma.notification.count({ where: { userId: s.ann.id } })).toBe(2);
     expect(await prisma.notification.count({ where: { orgId: other.id, readAt: null } })).toBe(1);
   });
