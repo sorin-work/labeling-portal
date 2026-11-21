@@ -319,7 +319,11 @@ export async function recordReview(
             projectId: assignment.projectId,
             kind: input.decision === 'SEND_BACK' ? 'review.sent_back' : 'review.fixed',
             link: `/my-work/${assignment.id}`,
-            detail: { projectName: project.name, position: task.position, actorName: reviewer.name },
+            detail: {
+              projectName: project.name,
+              position: task.position,
+              actorName: reviewer.name,
+            },
             createdAt: now,
           },
         ],

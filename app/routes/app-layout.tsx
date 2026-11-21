@@ -9,6 +9,7 @@ import { requireUser } from '~/lib/auth.server';
 import { prisma } from '~/lib/db.server';
 import { consumeFlash } from '~/lib/flash.server';
 import { can, ROLE_LABELS } from '~/lib/permissions';
+import { unreadCount } from '~/models/notifications.server';
 
 import type { Route } from './+types/app-layout';
 
@@ -19,14 +20,16 @@ export async function loader({ request }: Route.LoaderArgs) {
     select: { name: true },
   });
   const flash = await consumeFlash(request);
+  // one indexed count per page, for the signed-in organisation
+  const unread = await unreadCount(user.id, membership.orgId);
   return data(
-    { user, role: membership.role, orgName: org.name, flash: flash.message },
+    { user, role: membership.role, orgName: org.name, flash: flash.message, unread },
     { headers: flash.headers },
   );
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, role, orgName, flash } = loaderData;
+  const { user, role, orgName, flash, unread } = loaderData;
   const links = [
     { to: '/', label: 'Dashboard', show: true },
     { to: '/projects', label: 'Projects', show: true },
@@ -103,7 +106,22 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
               </NavLink>
             ))}
           </nav>
-          <Link to="/account" className="ml-auto text-right hover:opacity-80 sm:ml-0">
+          <Link
+            to="/notifications"
+            className="ml-auto rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 sm:ml-0"
+            aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+          >
+            Notifications
+            {unread > 0 && (
+              <span
+                aria-hidden
+                className="ml-1 rounded-full bg-indigo-600 px-1.5 py-0.5 text-xs font-medium text-white"
+              >
+                {unread > 99 ? '99+' : unread}
+              </span>
+            )}
+          </Link>
+          <Link to="/account" className="text-right hover:opacity-80">
             <div className="text-sm font-medium">{user.name}</div>
             <div className="text-xs text-slate-500">{ROLE_LABELS[role]}</div>
           </Link>
