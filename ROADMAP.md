@@ -61,6 +61,13 @@ file are not listed there; the bigger overlaps are mentioned in the items.
 | 21  | Spot checks and letting go of a review hold  | Next    | review        | M    | -          |
 | 22  | Taking back the last submission              | Next    | labeling      | M    | -          |
 | 23  | Backup status the app can see                | Next    | ops           | S    | -          |
+| 24  | Notifications inside the app                 | Later   | ui            | M    | -          |
+| 25  | Marking a pay period as paid                 | Later   | payouts       | M    | -          |
+| 26  | Background jobs that survive a restart       | Later   | ops           | M    | -          |
+| 27  | Undo and redo for entity spans               | Later   | labeling      | S    | -          |
+| 28  | Two-step sign-in                             | Later   | security      | M    | 20         |
+| 29  | Ranking several responses                    | Later   | labeling      | L    | -          |
+| 30  | Webhooks                                     | Later   | api           | L    | 26         |
 
 ## Next
 
@@ -260,6 +267,220 @@ month old.
   good and a failed dump.
 
 ## Later
+
+### 24. Notifications inside the app
+
+Improves items 9 and 4. Nobody is told anything except through tab counts and
+the "My work" page: not about a send-back or a correction, a new dispute, its
+outcome, or a rescore that changed a gold score. The app sends no mail and
+has no mail service, and adding a hosted one is against how it is run.
+
+- Data: `Notification` (user, organisation, kind, project, link, created,
+  read), written in the same transaction as the event, the way `logActivity`
+  is. A count of unread ones in `routes/app-layout.tsx` (one indexed count per
+  page, `@@index([userId, readAt])`) and a `/notifications` page that marks
+  them as read.
+- Events: work sent back or fixed (`recordReview`), a dispute opened (to the
+  project's managers), a dispute settled (to the annotator and the reviewer
+  who decided), a gold rescore that changed your score, a claim released by
+  a manager (item 19), and changed instructions (`instructionsUpdatedAt`,
+  which the work page already uses for its banner).
+- Tricky: gold must not stand out. A rescore notice says the task was gold,
+  which is fine only where gold feedback already says so after submitting.
+  With feedback off, no notice.
+- Tricky: a dispute can be settled by any reviewer of the project except the
+  one who decided. Notifying all of them is noise; I lean towards the
+  managers only, and the Disputes tab count for reviewers.
+- Tricky: the table grows. Read notifications older than 90 days can go; who
+  removes them depends on item 26, or on a cleanup when the page is opened.
+- Undecided: mail through an SMTP server the owner runs (`SMTP_URL`, off by
+  default). Self-hostable and optional, so it fits the rules, but it brings
+  bounce handling and unsubscribing. I would leave it to a later item.
+- Tests: integration tests that each event writes its notification in the
+  same transaction (a refused review writes none), gold without feedback
+  writes none, the count, and that nobody reads another person's.
+
+### 25. Marking a pay period as paid
+
+Improves item 5, which says on the page that nothing is marked as paid. The
+payouts report is worked out again every time it is opened, and the CSV is
+what the owner pays from. Nothing records which CSV was paid, so paying a
+period twice, or forgetting a person, is only noticed by hand.
+
+- Data: `PayRun` (organisation, from, to, who closed it, when, total, note)
+  and `PayRunLine` (person, project, pay mode, rate, units, amount), copied
+  from `payoutReport` when an admin closes the period on `/payouts`. Each
+  payable assignment gets `payRunId`, set in the closing transaction with
+  `payRunId IS NULL` in the `where`, so no work is in two runs.
+- `/earnings` shows each block as paid (with the run's date) or not yet, and
+  `/payouts` lists the runs with their CSV, read from the lines, so the file
+  of a closed run is the same forever.
+- Tricky: the period. Work becomes payable "now" (`payableAt`), so closing a
+  period that ends today or later lets new work fall into it after the close.
+  Refuse a period that is not over in UTC, and refuse one that overlaps a run.
+- Tricky: hourly work is credited by stretches of time (`CreditedInterval`),
+  and a revision adds time later. Added time after the close belongs to the
+  next run, not to the closed one; that needs the credit to know its own date.
+- Tricky: an overturned send-back (item 9) becomes payable at the overturn, so
+  it lands in an open period, which is right. Nothing should ever move
+  `payableAt` into a closed period; a check constraint or a trigger can say
+  so.
+- Undecided: reopening a run. I lean towards no, with adjustment lines (an
+  amount and a reason, for one person) for mistakes and bonuses.
+- Audit entries for closing and for adjustments.
+- Tests: `tests/integration/payouts.test.ts`: close, refuse overlap and an
+  open period, earnings show paid, no assignment in two runs, revision time
+  after the close goes to the next run.
+
+### 26. Background jobs that survive a restart
+
+Improves item 18, whose notes say that the rule runs in the web process, so a
+run cut short by a restart only goes on when its batch page is opened.
+`startPrelabel` keeps a `Map` of running promises in
+`models/prelabel.server.ts`; two app processes would each think nothing is
+running. Items 24, 30 and 32 need work that runs later too.
+
+- Data: `Job` (kind, payload, run at, attempts, locked until, last error,
+  done at). A loop in `lib/jobs.server.ts` takes due jobs with
+  `FOR UPDATE SKIP LOCKED`, sets a lease, runs the handler that a registry
+  names for the kind, and marks it done or puts it back with a growing delay.
+- The web process runs the loop, unless `JOBS_IN_WEB=false`; then a `worker`
+  service in `docker-compose.yml` runs the same image with another command.
+  No new service of any other kind.
+- The rule moves to it: `startPrelabel` adds a job, `isPrelabelRunning` reads
+  the job, and "Continue" and "Run again from scratch" stay as they are.
+- Tricky: a lease that runs out while a handler still works means two runs of
+  one job. Handlers must be safe to run twice; the rule already continues
+  where it stopped and never touches tasks someone was handed.
+- Tricky: tests. No timers: a `runDueJobs(now)` that the tests call, in place
+  of `prelabelsSettled`.
+- Tricky: shutdown. On SIGTERM the loop stops taking jobs and lets its leases
+  run out.
+- Undecided: polling every few seconds or waking up through
+  `LISTEN`/`NOTIFY`. I lean towards polling; it is one indexed query.
+- Tests: `tests/integration/jobs.test.ts`: two loops never run one job, a
+  failed job comes back later and stops after its attempts, a lease that ran
+  out is taken again; the prelabel tests go through the job.
+
+### 27. Undo and redo for entity spans
+
+Improves items 3 and 13, whose notes say that a removed span can be put back
+once and that spans do not use the history yet. Boxes have full undo and redo
+through `domain/history.ts`. In `components/labeling/ner.tsx` only the last
+removed span comes back (the `removed` state), and a wrong type or a span
+added by mistake cannot be undone.
+
+- The spans list goes through `domain/history.ts` like the boxes: `Ctrl+Z`,
+  `Ctrl+Shift+Z` and buttons, as rows of the key map in `domain/hotkeys.ts`,
+  in place of `undoRemove`. The selection travels with each step, as it does
+  for boxes.
+- Tricky: the word cursor from item 8 and the live region. Each undo says
+  what came back or went, as the box interface does.
+- Tricky: "Start from the suggestion" (item 18) is a step too, so undo goes
+  back to an empty answer, not past it.
+- Tricky: the history lives in memory per assignment. A reload starts from
+  the draft with no history, the same as boxes; say so in the docs instead of
+  storing history in the draft.
+- Tests: unit tests in `tests/unit/history.test.ts` with span lists; a DOM
+  test for the keys and the announcements, with axe.
+
+### 28. Two-step sign-in
+
+A new feature. A password is the only thing between the internet and an
+admin who can read every answer, change pay rates and download every export.
+Other labeling tools offer a second step, and an authenticator app needs no
+service.
+
+- TOTP (RFC 6238, six digits, 30 seconds) in a pure `domain/totp.ts` with
+  `node:crypto`'s HMAC, tested against the RFC's vectors. Enrolment on the
+  account page shows the secret as text and as a QR code, asks for one code
+  before turning it on, and gives ten one-time recovery codes, stored hashed.
+- Sign-in: after the password, a second page. Until the code is right the
+  cookie holds only a pending user, which `getCurrentUser` does not accept.
+  Codes are rate limited per person like passwords.
+- An organisation setting can require it for admins and project managers.
+  An admin can reset someone's second step from People, with an audit entry.
+  Turning it on and resetting it end other sessions, which is why it depends
+  on item 20.
+- Tricky: where the secret is kept. It has to be read back, so it cannot be
+  hashed. Encrypting it with a key derived from `SESSION_SECRET` ties two
+  things together that rotate differently; a separate `TOTP_KEY` is one more
+  variable to lose. Undecided; I lean towards the separate key, required as
+  soon as anyone turns the feature on.
+- Tricky: a code can be used twice within its 30 seconds. Store the last used
+  time step and refuse it again. Allow one step of clock drift either way.
+- Tricky: the QR code. A package such as `qrcode` that renders SVG on the
+  server is simpler than writing an encoder, and sends nothing anywhere.
+- Undecided: passkeys (WebAuthn). Better, but more code and harder to test
+  without a browser; a later item.
+- Tests: unit tests for the codes; integration tests for enrolment, sign-in
+  with and without the second step, a replayed code, a recovery code used
+  once, the organisation rule and an admin's reset.
+
+### 29. Ranking several responses
+
+A new labeling kind. Pairwise compares two responses. Comparing model output
+often needs three to six at once, and doing that in pairs takes n(n-1)/2
+tasks whose answers can contradict each other. A `ranking` kind shows a
+prompt and several responses, and the annotator puts them in order, with an
+optional rubric per response and a rationale.
+
+- Schema: `promptField`, `responseFields` (2 to 6 field names), `allowTies`,
+  optional `dimensions` like pairwise, `minRationaleLength`. The answer is an
+  ordered list of groups of field names, so a tie is one group.
+- It goes through every step of "Adding a labeling kind" in
+  `docs/architecture.md`: validation and drafts, consensus (average rank,
+  with ties broken by field order), gold scoring (Kendall's tau distance
+  scaled to 0 to 1), agreement (`categoricalValue` has to decide; ranks are
+  not categories, so I would add Kendall's W instead of kappa), export (JSON
+  Lines with the order, and an option that writes each ranking as preference
+  pairs, which is what reward model training reads), `schema-diff.ts` (a
+  changed response field breaks once tasks exist) and the key map.
+- Tricky: ordering without a mouse. Drag and drop alone fails item 8. Number
+  keys pick a response, arrows move it, and the live region says the new
+  place.
+- Tricky: position bias. Show the responses in an order of their own for each
+  annotator, from the same HMAC as the shuffled queue (item 12), and store the
+  answer by field name, never by position on the screen.
+- Tricky: suggestions (item 18). No rule for this kind, but a `_prediction`
+  must pass the same validation.
+- Undecided: named fields or one array field per task. Named fields fit the
+  CSV import; an array fits JSON Lines. I lean towards named fields.
+- Tests: unit tests for validation, consensus, gold scoring and W;
+  integration tests for import, submit, review and export; a DOM test with
+  axe for the interface.
+
+### 30. Webhooks
+
+Improves item 16, whose notes leave webhooks open. A script that wants new
+labels has to poll the export or the task lookup. A webhook tells it when a
+task is complete or a batch is done.
+
+- Data: `Webhook` (project, address, secret, events, on or off, who made it)
+  and the deliveries as jobs of item 26, with a `WebhookDelivery` row per
+  attempt (status code, time, error) shown on a project settings tab for
+  admins and project managers.
+- Events: `task.completed` (with the consensus answer and how it was
+  reached) and `batch.completed`. Payloads hold ids, the answer and links to
+  the JSON API, never annotator addresses.
+- Each request is signed: a header with a time and the HMAC-SHA256 of time
+  and body under the webhook's secret, which is shown once like a token.
+- Tricky: the server now sends requests to addresses that managers type. Item
+  14 kept the server from ever fetching image addresses for this reason.
+  Refuse loopback, private and link-local addresses after resolving the name,
+  connect to the address that was checked (so a second lookup cannot point
+  elsewhere), follow no redirects, and allow internal hosts only through a
+  variable like `INTERNAL_IMAGE_HOSTS`.
+- Tricky: the job is written in the transaction of the event (an outbox), so
+  a rolled-back change sends nothing and a crash after the commit loses
+  nothing.
+- Retries with a growing delay, a webhook turned off after a day of failures
+  with a notice to the person who made it, and a "Send a test" button.
+- Undecided: one webhook per project or per organisation. I lean towards per
+  project, which follows the permissions that exist.
+- Tests: integration tests with a local HTTP server in the test: signature,
+  retry, turned off after failures, refused addresses, no delivery from a
+  rolled-back transaction.
 
 ## Maybe
 
