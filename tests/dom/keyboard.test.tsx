@@ -78,7 +78,7 @@ describe('entity text with the keyboard', () => {
     expect(status()).toBe('Redone, back: PERSON “Ada Lovelace”. 1 span.');
 
     // a wrong type is a step too
-    await user.click(screen.getByRole('button', { name: /PERSON “Ada Lovelace”/ }));
+    await user.click(screen.getByRole('button', { name: 'PERSON “Ada Lovelace”' }));
     await user.keyboard('2');
     expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PLACE' }] });
     await user.click(screen.getByRole('button', { name: 'Undo' }));
