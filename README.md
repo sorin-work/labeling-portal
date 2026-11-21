@@ -73,6 +73,9 @@ or fix the work.
 - **Time tracking** of active time per task and a **payouts** report (per task
   or hourly) with CSV download. Each submission keeps the rate its project
   had when it was made, and work counts in the period it became payable
+- **Pay runs**: an admin closes a period that is over as paid. The report is
+  copied into a run whose CSV never changes, the work in it is marked so it
+  is never paid twice, and the earnings page shows what was paid
 - **Earnings** page where everyone sees their own money: what is payable for
   a period and what is still waiting for review or was sent back
 - **Export** of finished labels as JSON Lines or CSV (both can be imported
