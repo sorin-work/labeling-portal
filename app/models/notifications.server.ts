@@ -56,35 +56,65 @@ export function unreadCount(userId: string, orgId: string): Promise<number> {
 }
 
 /**
- * The person's notifications in the organisation they are signed in to,
- * newest first. Opening the page reads them: what was unread is marked read
- * here and comes back flagged as new. Read ones older than the retention are
- * removed first, so the table holds a few months per person.
+ * One page of the person's notifications in the organisation they are signed
+ * in to: unread ones first, then read ones, each newest first, so nothing
+ * unread is ever behind a page of read ones. Reading changes nothing; the
+ * page marks them read with a POST (`markRead`).
  */
-export async function openNotifications(userId: string, orgId: string, now = new Date()) {
+export async function listNotifications(userId: string, orgId: string, page = 1) {
+  const where = { userId, orgId };
+  const [total, unread, rows] = await Promise.all([
+    prisma.notification.count({ where }),
+    prisma.notification.count({ where: { ...where, readAt: null } }),
+    prisma.notification.findMany({
+      where,
+      // nulls first: unread before read
+      orderBy: [
+        { readAt: { sort: 'desc', nulls: 'first' } },
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
+      skip: (Math.max(1, page) - 1) * NOTIFICATIONS_SHOWN,
+      take: NOTIFICATIONS_SHOWN,
+    }),
+  ]);
+  const newest = rows.reduce<Date | null>(
+    (at, r) => (at === null || r.createdAt > at ? r.createdAt : at),
+    null,
+  );
+  return {
+    total,
+    unread,
+    hasOlder: page * NOTIFICATIONS_SHOWN < total,
+    /** what "mark as read" covers: everything up to the newest one shown */
+    upTo: newest,
+    notifications: rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      text: describeNotification(r.kind, r.detail),
+      link: r.link,
+      createdAt: r.createdAt,
+      isNew: r.readAt === null,
+    })),
+  };
+}
+
+/**
+ * Marks the person's unread notifications in the organisation as read, all
+ * of them up to `upTo` (the newest one the page showed), so one that arrived
+ * after the page was loaded stays unread. Read ones older than the retention
+ * are removed at the same moment, so the table holds a few months per person.
+ * Only ever the person's own rows.
+ */
+export async function markRead(userId: string, orgId: string, upTo: Date, now = new Date()) {
   const horizon = new Date(now.getTime() - NOTIFICATION_RETENTION_DAYS * 24 * 3600_000);
-  await prisma.notification.deleteMany({
-    where: { userId, readAt: { not: null }, createdAt: { lt: horizon } },
-  });
-  const rows = await prisma.notification.findMany({
-    where: { userId, orgId },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: NOTIFICATIONS_SHOWN,
-  });
-  const unread = rows.filter((r) => r.readAt === null).map((r) => r.id);
-  if (unread.length > 0) {
-    // only the person's own rows, whatever ids came in
-    await prisma.notification.updateMany({
-      where: { id: { in: unread }, userId, readAt: null },
+  await prisma.$transaction([
+    prisma.notification.updateMany({
+      where: { userId, orgId, readAt: null, createdAt: { lte: upTo } },
       data: { readAt: now },
-    });
-  }
-  return rows.map((r) => ({
-    id: r.id,
-    kind: r.kind,
-    text: describeNotification(r.kind, r.detail),
-    link: r.link,
-    createdAt: r.createdAt,
-    isNew: r.readAt === null,
-  }));
+    }),
+    prisma.notification.deleteMany({
+      where: { userId, readAt: { not: null, lt: horizon } },
+    }),
+  ]);
 }

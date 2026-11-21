@@ -787,9 +787,11 @@ score (only with gold feedback on), a claim a manager released and changed
 instructions (to the project's members). Nobody is told about their own
 action, and a notification holds no answer, feedback or reason. The header
 counts the unread ones of the signed-in organisation; `/notifications`
-shows the latest 50 and opening it reads them. Read ones older than 90 days
-are removed when the page is opened; a job of item 26 could do it instead,
-but a person's own page is the one place that reads them. Left
+pages through them, unread first, and marks them read with a POST once they
+are on screen (or "Mark all as read"), never on a GET. Read ones older than
+90 days are removed by that post; a job of item 26 could do it instead, but
+a person's own page is the one place that reads them. The instructions
+notices are written after the settings save commits. Left
 out, as the item suggested: mail through an SMTP server. Still open: no
 notice reaches someone who never opens the app, and a qualification test or
 a review queue that fills up tells nobody.

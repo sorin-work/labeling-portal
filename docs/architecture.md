@@ -853,9 +853,15 @@ created, read) is written in the same transaction as the event, through
 `notify` in `app/models/notifications.server.ts`, so a refused or rolled
 back change tells nobody, and nobody is told about their own action. The
 header shows the unread count for the signed-in organisation, one count on
-`(userId, readAt)` per page, and `/notifications` lists the latest 50.
-Opening it marks those as read; read ones older than 90 days are removed at
-the same moment, so no background job is needed for it.
+`(userId, readAt)` per page, and `/notifications` lists them 50 to a page,
+unread ones first, with "Show older". Loading the page changes nothing, so a
+link from another site or a prefetch cannot mark anything read: once it is
+on screen the page posts a mark-as-read (also a "Mark all as read" button),
+which covers every unread one up to the newest one shown, so one that came
+in after the page loaded stays unread. That post also removes read ones
+older than 90 days, so no background job is needed for it. The notices for
+changed instructions go to every member of the project, so they are written
+after the settings save has committed and do not hold the project row.
 
 | Event                                           | Who is told                                |
 | ----------------------------------------------- | ------------------------------------------ |
