@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Span } from '~/domain/answers';
 import {
   amend,
   canRedo,
@@ -10,6 +11,7 @@ import {
   startHistory,
   undo,
 } from '~/domain/history';
+import { addSpan, describeSpanStep, relabelSpan, removeSpan } from '~/domain/spans';
 
 describe('history', () => {
   it('starts with nothing to undo or redo', () => {
@@ -86,5 +88,47 @@ describe('history', () => {
     for (let i = 1; i <= HISTORY_LIMIT + 20; i++) history = commit(history, i);
     expect(history.past).toHaveLength(HISTORY_LIMIT);
     expect(history.past[0]).toBe(20);
+  });
+});
+
+describe('history of entity spans', () => {
+  const text = 'Ada Lovelace was born in London.';
+  const ada: Span = { start: 0, end: 12, label: 'PERSON' };
+  const london: Span = { start: 25, end: 31, label: 'PLACE' };
+
+  it('walks spans back and forth, the picked span with them', () => {
+    let h = startHistory<{ spans: Span[]; picked: Pick<Span, 'start' | 'end'> | null }>({
+      spans: [],
+      picked: null,
+    });
+    h = commit(h, { spans: addSpan([], ada), picked: null });
+    h = commit(h, { spans: addSpan(h.present.spans, london), picked: london });
+    h = commit(h, { spans: relabelSpan(h.present.spans, london, 'ORG'), picked: london });
+    h = commit(h, { spans: removeSpan(h.present.spans, ada), picked: london });
+    expect(h.present.spans).toEqual([{ ...london, label: 'ORG' }]);
+
+    h = undo(h);
+    expect(h.present.spans).toEqual([ada, { ...london, label: 'ORG' }]);
+    h = undo(h);
+    expect(h.present).toEqual({ spans: [ada, london], picked: london });
+    h = undo(h);
+    h = undo(h);
+    expect(h.present.spans).toEqual([]);
+    expect(canUndo(h)).toBe(false);
+    h = redo(h);
+    expect(h.present.spans).toEqual([ada]);
+  });
+
+  it('says what came back, went or changed type', () => {
+    expect(describeSpanStep(text, [ada], [], 'Undone')).toBe(
+      'Undone, gone: PERSON “Ada Lovelace”. 0 spans.',
+    );
+    expect(describeSpanStep(text, [], [ada], 'Redone')).toBe(
+      'Redone, back: PERSON “Ada Lovelace”. 1 span.',
+    );
+    expect(describeSpanStep(text, [{ ...ada, label: 'ORG' }], [ada, london], 'Undone')).toBe(
+      'Undone, “Ada Lovelace” is PERSON, was ORG; back: PLACE “London”. 2 spans.',
+    );
+    expect(describeSpanStep(text, [ada], [ada], 'Undone')).toBe('Undone. 1 span.');
   });
 });

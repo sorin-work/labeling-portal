@@ -500,8 +500,9 @@ describe('entity spans', () => {
     expect(interfaceAction(ner, 'Backspace', editing(at(null)))).toBeNull();
   });
 
-  it('can be put back with the undo key, which a text box keeps for itself', () => {
-    expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undoRemove');
+  it('have undo and redo, keys a text box keeps for itself', () => {
+    expect(interfaceAction(ner, 'Mod+z', editing(at(null)))?.action).toBe('undo');
+    expect(interfaceAction(ner, 'Mod+Shift+z', editing(at(null)))?.action).toBe('redo');
     expect(interfaceAction(ner, 'Mod+z', editing(at(null, '', { typing: true })))).toBeNull();
   });
 

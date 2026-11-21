@@ -60,6 +60,74 @@ describe('entity text with the keyboard', () => {
     await expectAccessible();
   });
 
+  it('undoes and redoes marking, removing and retyping, and says what changed', async () => {
+    const user = userEvent.setup();
+    let answer: Answer | null = null;
+    render(<Labeling kind="ner" onAnswer={(a) => (answer = a)} />);
+    const text = screen.getByRole('group', { name: 'Text to label' });
+    const status = () => screen.getByRole('status').textContent;
+    while (document.activeElement !== text) await user.tab();
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}{Enter}');
+    expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PERSON' }] });
+
+    await user.keyboard('{Control>}z{/Control}');
+    expect(answer).toEqual({ spans: [] });
+    expect(status()).toBe('Undone, gone: PERSON “Ada Lovelace”. 0 spans.');
+    await user.keyboard('{Control>}{Shift>}z{/Shift}{/Control}');
+    expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PERSON' }] });
+    expect(status()).toBe('Redone, back: PERSON “Ada Lovelace”. 1 span.');
+
+    // a wrong type is a step too
+    await user.click(screen.getByRole('button', { name: /PERSON “Ada Lovelace”/ }));
+    await user.keyboard('2');
+    expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PLACE' }] });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PERSON' }] });
+    expect(status()).toBe('Undone, “Ada Lovelace” is PERSON, was PLACE. 1 span.');
+
+    // and a removal comes back
+    await user.click(screen.getByRole('button', { name: 'Remove PERSON “Ada Lovelace”' }));
+    expect(answer).toEqual({ spans: [] });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(answer).toEqual({ spans: [{ start: 0, end: 12, label: 'PERSON' }] });
+    await expectAccessible();
+  });
+
+  it('counts an answer set from outside (a suggestion taken) as one step', async () => {
+    const user = userEvent.setup();
+    let answer: Answer | null = null;
+    function WithSuggestion() {
+      const [value, setValue] = useState<Answer | null>(null);
+      const { schema, data } = KINDS.ner;
+      return (
+        <main>
+          <button
+            type="button"
+            onClick={() => setValue({ spans: [{ start: 0, end: 12, label: 'PERSON' }] })}
+          >
+            Start from the suggestion
+          </button>
+          <LabelingInterface
+            schema={schema}
+            data={data}
+            value={value}
+            onChange={(next) => {
+              setValue(next);
+              answer = next;
+            }}
+          />
+        </main>
+      );
+    }
+    render(<WithSuggestion />);
+    expect(screen.getByRole('button', { name: 'Undo' })).toHaveProperty('disabled', true);
+    await user.click(screen.getByRole('button', { name: 'Start from the suggestion' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    // back to the empty answer, and no further
+    expect(answer).toEqual({ spans: [] });
+    expect(screen.getByRole('button', { name: 'Undo' })).toHaveProperty('disabled', true);
+  });
+
   it('leaves the arrows and Enter alone while the text does not have focus', async () => {
     const user = userEvent.setup();
     let answer: Answer | null = null;
