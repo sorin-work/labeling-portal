@@ -85,8 +85,9 @@ or fix the work.
   lookup. See [docs/api.md](docs/api.md)
 - **Two-step sign-in** with an authenticator app (six-digit codes) and ten
   one-time recovery codes, set up on the account page. An admin can require
-  it for admins and project managers, and reset someone's second step on
-  People
+  it for admins and project managers (their API tokens too), and reset
+  someone's second step on People; whoever lost their phone should change
+  their password before asking for that
 - **Sign out everywhere** on the account page, and **End sessions** for a
   person on People. A new password, set by an admin or by the person, signs
   out every other browser too. API tokens keep working and are listed with a
@@ -125,7 +126,9 @@ test. Every demo account uses the password `labeling-demo`:
 | `annotator2@example.com` | Annotator       | Qualified for the pairwise project, has returned work, and Earnings shows a project at two rates |
 | `annotator3@example.com` | Annotator       | Lower gold accuracy, shows up in "needs attention"                                               |
 
-Change the port with `WEB_PORT=8080 docker compose up`. Data lives in the
+Change the port with `WEB_PORT=8080 docker compose up`. The app is published
+on 127.0.0.1 only; to serve it to others, put a proxy in front and set
+`TRUST_PROXY=true`. Data lives in the
 `db-data` volume; `docker compose down -v` starts fresh. For daily dumps of
 that volume see [Backup and restore](#backup-and-restore).
 

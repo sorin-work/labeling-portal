@@ -847,5 +847,9 @@ never sees the socket, and without it the limit is per account. The
 organisation rule on People asks it of admins and project managers, who are
 kept on their account page until they set it up; an admin can only turn the
 rule on with their own on. Turning it on and an admin's reset end the
-person's sessions. Still open: passkeys, and new recovery codes without a
-reset.
+person's sessions. After review: the rule covers API tokens (none made
+while held, and existing ones refused until the person has a second step),
+twenty wrong codes per account per hour are refused from anywhere, turning
+it on or off asks for the password, and compose publishes the app on
+127.0.0.1 only and has no default `TOTP_KEY`. Still open: passkeys, and new
+recovery codes without a reset.

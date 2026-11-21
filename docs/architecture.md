@@ -790,7 +790,8 @@ against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
   hashed: AES-256-GCM in `lib/secret-box.server.ts` under a key made from
   `TOTP_KEY`, its own variable so that rotating `SESSION_SECRET` does not
   break every second step. Production asks for it only when someone sets up
-  or uses the feature. A changed key makes the secrets unreadable; the
+  or uses the feature, and refuses a sample value (anything with
+  `change-me`); the compose file has no default for it. A changed key makes the secrets unreadable; the
   second page says so and an admin resets the people concerned.
 - **Signing in.** After the right password the cookie holds only
   `pending` (who, the organisation, the session version and the time, for
@@ -811,15 +812,28 @@ against the RFC's vectors. The rest is `app/models/two-step.server.ts`.
   comes from the proxy: with `TRUST_PROXY=true`, the last `X-Forwarded-For`
   entry (`lib/client-address.server.ts`). Without a proxy nothing a client
   sends is believed and the limit is per account only, which a guesser can
-  use to hold the owner off for fifteen minutes.
+  use to hold the owner off for fifteen minutes. On top of that, twenty
+  wrong codes per account per hour from anywhere are refused
+  (`twoStepAccountLimiter`), so many addresses, or a faked header, do not
+  allow guessing either. That cap can hold the owner off too, which is
+  acceptable here: only someone who knows the password reaches this step.
+  The compose file publishes the app on 127.0.0.1 only, so nothing but a
+  proxy on the same machine can send it `X-Forwarded-For`.
 - **The organisation rule** (`Organization.twoStepRequired`, on People)
   asks it of admins and project managers. `getCurrentUser` reads the rule and
   whether the person has it in the query it already makes; `requireUser`
   sends those who have not set it up to `/account` until they do. An admin
   can only turn the rule on with their own second step on. API tokens are
-  not affected: they are made after a sign-in and revoked on their own.
-- **Reset** on People clears a person's secret and recovery codes and ends
-  their sessions (`person.two_step_reset`). One's own can be turned off on
+  covered too: a member the rule asks it of cannot make a token until they
+  have a second step, and `requireApiUser` answers 403 for the tokens of
+  such a member, also ones made before the rule or a reset, until they set
+  it up.
+- **The password** is asked for when turning it on and when turning it off,
+  as for a password change.
+- **Reset** on People clears a person's secret and recovery codes, for every
+  organisation they are in, and ends all their sessions
+  (`person.two_step_reset`). Someone who lost their phone should change
+  their password before asking for a reset, in case it is known too. One's own can be turned off on
   the account page with a code, unless the rule asks it of the role.
 - **Not here**: passkeys (WebAuthn), and making new recovery codes without
   a reset.
