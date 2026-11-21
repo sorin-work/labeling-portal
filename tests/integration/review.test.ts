@@ -1038,6 +1038,24 @@ describe('spot checks', () => {
     expect(statusOf(await spotCheck(submission.id, annCookie, fine))).toBe(403);
   });
 
+  it('gives two reviewers spot checking at the same moment one spot check between them', async () => {
+    const { org, project, submission, reviewer } = await unseen();
+    const second = await createMember(org.id, 'REVIEWER');
+    await addToProject(project.id, second);
+    const { recordSpotCheck } = await import('~/models/reviews.server');
+    const check = { verdict: 'APPROVE' as const, qaScore: 4, feedback: '' };
+    for (let round = 0; round < 3; round++) {
+      await prisma.review.deleteMany({ where: { assignmentId: submission.id } });
+      const results = await Promise.all([
+        recordSpotCheck(submission.id, reviewer.id, check),
+        recordSpotCheck(submission.id, second.id, check),
+      ]);
+      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      expect(results.find((r) => !r.ok)).toEqual({ ok: false, error: 'not_unseen' });
+      expect(await prisma.review.count({ where: { assignmentId: submission.id } })).toBe(1);
+    }
+  });
+
   it('needs a score, and feedback for "would have sent it back"', async () => {
     const { submission, cookie } = await unseen();
     expect(statusOf(await spotCheck(submission.id, cookie, { intent: 'spot_fine' }))).toBe(400);
