@@ -111,6 +111,7 @@ model Organization {
   activity    Activity[]
   apiTokens   ApiToken[]
   notifications Notification[]
+  payRuns     PayRun[]
 }
 
 model User {
@@ -380,6 +381,8 @@ model Assignment {
   /// the moment the work became payable, which puts it into a pay period;
   /// set by the write that accepts the work and empty while it is not accepted
   payableAt      DateTime?
+  /// the pay run that paid this work; once set, its pay fields never change
+  payRunId       String?
   skipReason     String?
   answer         Json?
   activeSeconds  Int              @default(0)
@@ -411,6 +414,7 @@ model Assignment {
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   reviewHeldBy   User?            @relation("ReviewHold", fields: [reviewHeldById], references: [id], onDelete: SetNull)
 
+  payRun         PayRun?          @relation(fields: [payRunId], references: [id], onDelete: NoAction)
   @@index([projectId, status])
   @@index([userId, status])
   @@index([taskId, status])
@@ -418,6 +422,7 @@ model Assignment {
   @@index([userId, submittedAt])
   @@index([projectId, submittedAt])
   @@index([userId, payableAt])
+  @@index([payRunId])
   @@index([projectId, payableAt])
 }
 
@@ -571,4 +576,46 @@ model Job {
 
   @@index([runAt])
   @@index([key])
+}
+
+/// A pay period an admin closed as paid: the lines are a copy of the payout
+/// report at that moment, and neither the run nor its lines ever change
+/// (a trigger refuses it). Work in it carries `Assignment.payRunId`.
+model PayRun {
+  id           String       @id @default(cuid())
+  orgId        String
+  /// the first day of the period, midnight UTC
+  periodStart  DateTime
+  /// midnight UTC after the last day of the period
+  periodEnd    DateTime
+  closedById   String
+  closedByName String
+  closedAt     DateTime     @default(now())
+  totalCents   Int
+  note         String       @default("")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lines        PayRunLine[]
+  assignments  Assignment[]
+
+  @@index([orgId, periodStart])
+}
+
+/// One block of a closed run: a person, a project, a pay mode and a rate, as
+/// the report showed it. Names are copied so the file never changes.
+model PayRunLine {
+  id          String  @id @default(cuid())
+  payRunId    String
+  userId      String
+  name        String
+  email       String
+  projectId   String
+  projectName String
+  payMode     PayMode
+  rateCents   Int
+  tasks       Int
+  seconds     Int
+  amountCents Int
+  payRun      PayRun  @relation(fields: [payRunId], references: [id], onDelete: Cascade)
+
+  @@index([payRunId])
 }
