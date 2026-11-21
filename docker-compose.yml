@@ -56,6 +56,7 @@ services:
       PGAPPNAME: labeling-backup
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_STATUS: ${BACKUP_STATUS:-on}
     depends_on:
       db:
         condition: service_healthy

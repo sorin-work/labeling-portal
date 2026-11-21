@@ -893,6 +893,31 @@ breaking one of them loses backups:
   the loop would then dump that while the real data sat under another name.
   A swap that is refused names the clients that are still connected.
 
+- After each attempt `record` writes a `BackupRun` row with `psql`: start and
+  end, whether it worked, the file and its size, the interval, and for a
+  failure the first `pg_dump: error:` line (or the first line), kept to
+  printable ASCII and 500 characters so a cut cannot split a character. The
+  values go in as psql variables, so a message with quotes cannot break the
+  statement. The same call keeps only the newest 500 rows, since a database
+  that is down gets an attempt a minute. A failed insert is a line in the log
+  that says whether the table is missing or what psql said, and never fails
+  the dump. `BACKUP_STATUS=off` writes nothing.
+- The app only reads the table. `backupStatus` in
+  `app/models/attention.server.ts` takes the newest row and the newest good
+  one by `id`, the order they were written in, not by `finishedAt`, which
+  comes from the backup container's clock: one row from a clock that ran
+  ahead would otherwise hide every failure after it. A good dump dated after
+  now counts as made now. Then `backupAttention` in `app/domain/backups.ts` turns them into "The
+  last dump failed" and "No dump for N hours" (newest good dump older than
+  1.5 times the interval of the newest row), or "No dump has worked yet".
+  No rows, no items. Only admins see them, on the dashboard's needs-attention
+  list, because a dump holds every organisation. `/healthz` does not carry
+  backup state: a late dump is not a reason to take the app out of a load
+  balancer.
+- A row is in the next dump, not its own, so a restored database lists the
+  runs up to the dump before the restored one, and the dashboard says so.
+  The script keeps the newest 500 rows.
+
 `docker/check-backup-loop.sh` checks the loop, the pruning and the restore
 with stand-ins for the database tools, a pretend set of databases and dump
 files with made-up dates. `docker/check-backup.sh` runs it and then works on
@@ -900,7 +925,11 @@ a real server: it makes dumps, checks that a damaged dump and a restore
 while something is connected leave a database with other data alone, then
 replaces that database with the newest dump and compares the row counts,
 where only the application's tables count as data (Prisma's migrations table
-always has rows). CI runs it after the tests, once the demo data is in.
+always has rows). `BackupRun` is left out of that comparison, because the
+source has the row of the newest dump and the dump does not: the check wants
+exactly one row fewer in the copy, and a row with file and size for each of
+its three dumps. The loop check covers a failed dump's row, a missing table
+and `BACKUP_STATUS=off`. CI runs it after the tests, once the demo data is in.
 
 ## Pay
 

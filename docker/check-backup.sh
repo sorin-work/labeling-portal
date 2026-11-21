@@ -12,7 +12,9 @@
 #      leave it exactly as it was.
 #   4. The newest dump then replaces it: the other data is gone, every table
 #      has the same number of rows as the source, and the application tables
-#      are not all empty.
+#      are not all empty. "BackupRun" is the exception: each dump writes its
+#      row after the dump, so the source has one row more than the newest
+#      dump holds, and the three rows of step 2 are checked on their own.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -53,6 +55,11 @@ export BACKUP_DIR="$work/dumps" BACKUP_KEEP=2
 mkdir "$BACKUP_DIR"
 echo "not a dump" >"$BACKUP_DIR/keep-me.txt"
 
+runs_in() {
+  psql -AtXq -d "$1" -c 'select count(*) from "BackupRun"'
+}
+runs_before=$(runs_in "$PGDATABASE")
+
 echo "== retention"
 sh "$here/backup.sh" once
 first=$(ls "$BACKUP_DIR" | grep '\.dump$')
@@ -70,6 +77,11 @@ fi
 [ -f "$BACKUP_DIR/keep-me.txt" ] || fail "a file that is not a dump was removed"
 [ -z "$(ls -A "$BACKUP_DIR" | grep '\.partial$' || true)" ] || fail "a partial dump was left behind"
 newest=$(echo "$left" | tail -n 1)
+
+echo "== each dump wrote its row"
+runs=$(psql -AtXq -d "$PGDATABASE" -c "select count(*) from \"BackupRun\" where ok and file like 'labeling-%.dump' and bytes > 0 and \"finishedAt\" >= \"startedAt\" and \"intervalSeconds\" = 86400")
+[ "$((runs - runs_before))" -eq 3 ] || fail "expected 3 new rows in BackupRun for the 3 dumps, found $((runs - runs_before))"
+[ -n "$(psql -AtXq -d "$PGDATABASE" -c "select 1 from \"BackupRun\" where file = '$newest'")" ] || fail "no row names $newest"
 mode=$(stat -c %a "$BACKUP_DIR/$newest")
 [ "$mode" = 600 ] || fail "$newest has mode $mode, it should be readable by its owner only"
 
@@ -141,8 +153,12 @@ PGDATABASE="$scratch" sh "$here/backup.sh" restore "$newest"
 [ "$(databases)" = "$scratch " ] || fail "databases left behind: $(databases)"
 
 echo "== row counts"
-row_counts "$PGDATABASE" >"$work/source.txt"
-row_counts "$scratch" >"$work/restored.txt"
+# The rows of the dumps are compared on their own: the newest dump holds the
+# rows of the dumps before it, not its own.
+[ "$(runs_in "$scratch")" -eq "$(($(runs_in "$PGDATABASE") - 1))" ] ||
+  fail "the restored copy has $(runs_in "$scratch") rows in BackupRun, expected one less than the $(runs_in "$PGDATABASE") of $PGDATABASE"
+row_counts "$PGDATABASE" | grep -v '^public\.BackupRun ' >"$work/source.txt"
+row_counts "$scratch" | grep -v '^public\.BackupRun ' >"$work/restored.txt"
 cat "$work/source.txt"
 diff "$work/source.txt" "$work/restored.txt" || fail "row counts differ between $PGDATABASE (-) and the restored copy (+)"
 # Prisma's own table always has rows. Only the application's tables say

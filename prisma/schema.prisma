@@ -501,3 +501,23 @@ model Activity {
   @@index([projectId, createdAt])
   @@index([actorId])
 }
+
+/// One attempt of the backup service (`docker/backup.sh`) to dump the
+/// database, written by the script with psql after the attempt. The app only
+/// reads it, for the admin's needs-attention list. Not tied to an
+/// organisation: a dump holds the whole database.
+model BackupRun {
+  id              Int      @id @default(autoincrement())
+  startedAt       DateTime
+  finishedAt      DateTime
+  ok              Boolean
+  /// the dump's file name, for a dump that worked
+  file            String?
+  bytes           BigInt?
+  /// pg_dump's error line, for a dump that failed
+  message         String?
+  /// BACKUP_INTERVAL_SECONDS of the service, so the app knows when a dump is late
+  intervalSeconds Int
+
+  @@index([finishedAt])
+}
