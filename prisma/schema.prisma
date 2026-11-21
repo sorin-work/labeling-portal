@@ -546,3 +546,29 @@ model Notification {
 
   @@index([userId, readAt])
 }
+
+/// Work that runs later, off the request: the loop in `lib/jobs.server.ts`
+/// takes due jobs with FOR UPDATE SKIP LOCKED, holds a lease while the
+/// handler for `kind` runs, and marks the job done or puts it back with a
+/// growing delay. Handlers must be safe to run twice: a lease that runs out
+/// while a handler still works lets another loop take the job.
+model Job {
+  id          String    @id @default(cuid())
+  kind        String
+  payload     Json
+  /// one open job per key (`prelabel:<batchId>`); adding another is a no-op
+  key         String?
+  runAt       DateTime
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  lockedUntil DateTime?
+  lockedBy    String?
+  lastError   String?
+  doneAt      DateTime?
+  /// set when the last attempt failed; the job is not tried again
+  failedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([runAt])
+  @@index([key])
+}

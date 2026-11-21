@@ -21,7 +21,8 @@ import {
 } from '~/models/batches.server';
 import { logActivity } from '~/models/activity.server';
 import { openBatches, promoteToGold } from '~/models/gold.server';
-import { continuePrelabel, resetRuleSuggestions, startPrelabel } from '~/models/prelabel.server';
+import { wakeJobs } from '~/lib/jobs.server';
+import { continuePrelabel, resetRuleSuggestions } from '~/models/prelabel.server';
 import { projectSchema, requireProject } from '~/models/projects.server';
 
 import type { Route } from './+types/batch-detail';
@@ -39,8 +40,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     where: { id: params.batchId, projectId: project.id },
   });
   if (!batch) throw notFound('Batch not found');
-  // a run that a restart cut short goes on when the batch is looked at
-  if (batch.prelabelState === 'PENDING') startPrelabel(batch.id);
 
   const url = new URL(request.url);
   const statusParam = url.searchParams.get('status');
@@ -149,7 +148,7 @@ export async function action({ request, params }: Route.ActionArgs) {
         detail: { batchId: batch.id, name: batch.name, reset },
       });
     }
-    startPrelabel(batch.id);
+    wakeJobs();
     return redirectWithFlash(
       request,
       `/projects/${project.id}/batches/${batch.id}`,

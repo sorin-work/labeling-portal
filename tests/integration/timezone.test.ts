@@ -11,6 +11,7 @@ const original = vi.hoisted(() => {
   return url;
 });
 
+import { enqueueJob, processDueJobs, takeJobs } from '~/lib/jobs.server';
 import { dailyThroughput } from '~/models/quality.server';
 import { claimNextTask, countAvailable } from '~/models/queue.server';
 import { reserveNextReview } from '~/models/reviews.server';
@@ -101,5 +102,27 @@ describe('a database session that is not in UTC', () => {
     expect(held.reviewHeldAt).toEqual(t0);
     const tooEarly = new Date(t0.getTime() + 14 * 60_000);
     expect(await reserveNextReview(project.id, other.id, tooEarly)).toBeNull();
+  });
+
+  it('takes a job when it is due, leases it for a minute and retries it later', async () => {
+    const t0 = new Date('2026-07-01T10:00:00Z');
+    await enqueueJob(prisma, { kind: 'zone', payload: {}, runAt: t0 });
+    expect(await takeJobs(new Date(t0.getTime() - 1000), 'w')).toHaveLength(0);
+    const [taken] = await takeJobs(t0, 'w');
+    expect(taken).toBeDefined();
+    const leased = await prisma.job.findFirstOrThrow();
+    expect(leased.lockedUntil).toEqual(new Date(t0.getTime() + 60_000));
+    // nobody else gets it inside the lease, someone does after it
+    expect(await takeJobs(new Date(t0.getTime() + 59_000), 'x')).toHaveLength(0);
+    expect(await takeJobs(new Date(t0.getTime() + 60_000), 'x')).toHaveLength(1);
+
+    await prisma.job.updateMany({ data: { lockedUntil: null, lockedBy: null } });
+    const failing = { zone: { run: async () => Promise.reject(new Error('no')) } };
+    await processDueJobs(failing, t0, { clock: () => t0 });
+    // the third attempt failed: two minutes until the fourth
+    const back = await prisma.job.findFirstOrThrow();
+    expect(back).toMatchObject({ attempts: 3, runAt: new Date(t0.getTime() + 120_000) });
+    expect((await processDueJobs(failing, new Date(t0.getTime() + 119_000))).taken).toBe(0);
+    expect((await processDueJobs(failing, new Date(t0.getTime() + 120_000))).taken).toBe(1);
   });
 });
