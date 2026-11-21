@@ -18,8 +18,8 @@
 
 ### Importing and labeling
 
-- Undo and redo for entity spans, as for boxes: Ctrl+Z, Ctrl+Shift+Z and two
-  buttons. Marking, removing and changing a span's type are steps, taking
+- Undo and redo for entity spans, as for boxes: Ctrl+Z, Ctrl+Shift+Z (or
+  Ctrl+Y, now in both) and two buttons. Marking, removing and changing a span's type are steps, taking
   the suggestion is one too, and each undo says what came back or went. It
   replaces putting back only the last removed span
 - "Take back the last task" on the work page for two minutes after a

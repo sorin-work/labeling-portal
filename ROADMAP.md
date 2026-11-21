@@ -825,8 +825,9 @@ the last removed span. `Ctrl+Z`, `Ctrl+Shift+Z` and two buttons, as `undo`
 and `redo` rows of the key map in place of `undoRemove`. Marking, removing
 and changing a type are steps. Any answer set from outside the interface is
 one step of its own, which covers "Start from the suggestion" as the item
-asked (undo goes back to the empty answer and stops) and also a tab's unsaved
-work put back on load. Each undo and redo says what came back, went or
+asked (undo goes back to the empty answer and stops, and takes back the
+server's mark that the suggestion was taken) and also a tab's unsaved work
+put back on load. `Ctrl+Y` is a second redo key for spans and boxes. Each undo and redo says what came back, went or
 changed type (`describeSpanStep`). The history is in memory per assignment;
 a reload starts from the draft with none, as the docs say. Still open: the
 word cursor stays where it was after an undo instead of moving to the span

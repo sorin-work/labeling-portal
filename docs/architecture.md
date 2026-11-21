@@ -525,11 +525,16 @@ meanings on one page.
   takes Delete (Backspace is left to text boxes), a span is let go when the
   cursor moves into a text box, and undo brings it back.
 - **Undo and redo for spans** use the same `domain/history.ts` as boxes, the
-  same keys (Ctrl+Z, Ctrl+Shift+Z) and two buttons. Marking, removing and
+  same keys (Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y for redo, in both interfaces)
+  and two buttons. Marking, removing and
   changing the type of a span are a step each, and the picked span travels
   with every step. An answer set from outside, "Start from the suggestion"
   or a tab's unsaved work put back, is a step of its own, so undo returns to
-  the answer before it and stops there. The live region says what came back,
+  the answer before it and stops there. An undo back to the answer before
+  the suggestion also takes back the server's mark that it was taken
+  (`intent=untake-suggestion`), and a redo marks it again, so the quality
+  page does not count an answer as started from a suggestion it no longer
+  holds. The live region says what came back,
   went or changed type (`describeSpanStep` in `domain/spans.ts`). The history
   lives in memory for one assignment: a reload starts from the draft with
   none, as for boxes.
